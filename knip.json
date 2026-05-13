@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "project": ["src/**/*.ts", "scripts/**/*.ts"],
+  "ignoreExportsUsedInFile": true,
+  "rules": {
+    "dependencies": "error",
+    "devDependencies": "warn",
+    "unlisted": "error",
+    "exports": "off",
+    "types": "off",
+    "files": "warn"
+  }
+}

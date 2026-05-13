@@ -1,0 +1,22 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: biome-check
+      glob: '*.{ts,js,mjs,json,jsonc}'
+      run: ./node_modules/.bin/biome check --no-errors-on-unmatched --write {staged_files}
+      stage_fixed: true
+
+pre-push:
+  parallel: true
+  jobs:
+    - name: typecheck
+      run: ./node_modules/.bin/tsc --noEmit
+
+    - name: test
+      run: ./node_modules/.bin/vitest run
+
+    - name: biome-ci
+      run: ./node_modules/.bin/biome ci .
+
+    - name: knip
+      run: ./node_modules/.bin/knip --no-progress

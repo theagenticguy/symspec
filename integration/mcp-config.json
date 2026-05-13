@@ -1,0 +1,18 @@
+{
+  "_comment": "Add this entry to .mcp.json alongside ERPAVal's existing servers. Adjust ERPAVAL_ROOT to point at your checkout, and REQ_DOC to scope the server to a per-session graph file. The Bedrock model ids and effort level can be overridden via env at any time without restarting Claude Code.",
+  "mcpServers": {
+    "ears-validated": {
+      "command": "node",
+      "args": ["${ERPAVAL_ROOT}/poc/bin/req-mcp.mjs"],
+      "env": {
+        "REQ_DOC": ".erpaval/specs/${SPEC_SLUG}/requirements.automerge",
+        "AWS_REGION": "us-east-1",
+        "BEDROCK_MODEL_PRIMARY": "amazon.nova-2-lite-v1:0",
+        "BEDROCK_MODEL_SECONDARY": "zai.glm-5-v1:0",
+        "BEDROCK_ARBITER_MODEL": "global.anthropic.claude-opus-4-7-v1:0",
+        "BEDROCK_ARBITER_EFFORT": "xhigh",
+        "BEDROCK_ARBITER_MAX_TOKENS": "64000"
+      }
+    }
+  }
+}

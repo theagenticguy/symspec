@@ -1,0 +1,5 @@
+## EARS requirements specs
+
+When authoring or modifying anything under `.erpaval/specs/`, use the **`ears-validated`** skill (and the MCP server of the same name). Do not write `spec.md` files directly — populate the typed graph via the MCP tools, then export. This is how Gate 1 receives a consistency-checked spec instead of unvalidated markdown.
+
+The graph lives at `.erpaval/specs/<slug>/requirements.automerge`. Findings come from a three-tier pipeline: deterministic heuristics, a two-model Bedrock ensemble (Nova 2 Lite + z.ai GLM-5), and a Claude Opus 4.7 arbiter at `xhigh` effort for disagreements. Treat `NeedsReview` findings as escalations to the human reviewer at Gate 1.

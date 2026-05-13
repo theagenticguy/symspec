@@ -1,0 +1,57 @@
+{
+  "name": "ears-validated-poc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "POC: SysML-v2-shaped requirements graph stored in Automerge, exposed via CLI + MCP",
+  "packageManager": "pnpm@11.1.1",
+  "bin": {
+    "req": "./bin/req.mjs",
+    "req-mcp": "./bin/req-mcp.mjs"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "cli": "tsx src/cli/index.ts",
+    "mcp": "tsx src/mcp/server.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "smoke:inc": "tsx scripts/smoke-incremental.ts",
+    "smoke:solvers": "tsx scripts/smoke-solvers.ts",
+    "smoke:all": "tsx scripts/smoke.ts && tsx scripts/smoke-incremental.ts && tsx scripts/smoke-solvers.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "biome check .",
+    "lint:fix": "biome check . --write",
+    "knip": "knip",
+    "check": "biome ci . && tsc --noEmit && vitest run && knip",
+    "hooks:install": "lefthook install"
+  },
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=11"
+  },
+  "dependencies": {
+    "@automerge/automerge": "^2.2.8",
+    "@aws-sdk/client-bedrock-runtime": "^3.1045.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "commander": "^12.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.6",
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^4.0.0",
+    "knip": "^5.85.0",
+    "lefthook": "^2.1.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "lefthook"
+    ]
+  }
+}

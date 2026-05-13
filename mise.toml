@@ -1,0 +1,39 @@
+[tools]
+node = "24"
+pnpm = "11"
+
+[tasks.install]
+description = "Install dependencies from lockfile"
+run = "pnpm install"
+
+[tasks.build]
+description = "Compile TypeScript to dist/"
+run = "pnpm build"
+
+[tasks.test]
+description = "Run vitest unit tests"
+run = "pnpm vitest run"
+
+[tasks.lint]
+description = "Lint + format check (biome)"
+run = "pnpm biome check ."
+
+[tasks."lint:fix"]
+description = "Lint + format auto-fix (biome)"
+run = "pnpm biome check . --write"
+
+[tasks.typecheck]
+description = "tsc --noEmit"
+run = "pnpm typecheck"
+
+[tasks.knip]
+description = "Find unused files, deps, and exports"
+run = "pnpm knip"
+
+[tasks.check]
+description = "Full quality gate: biome ci + typecheck + vitest + knip"
+depends = ["lint", "typecheck", "test", "knip"]
+
+[tasks.smoke]
+description = "Run all smoke scripts (concurrent merge, incremental, solvers)"
+run = "pnpm smoke:all"
