@@ -1,7 +1,7 @@
 {
   "_comment": "Add this entry to .mcp.json alongside ERPAVal's existing servers. Adjust ERPAVAL_ROOT to point at your checkout, and REQ_DOC to scope the server to a per-session graph file. The Bedrock model ids and effort level can be overridden via env at any time without restarting Claude Code.",
   "mcpServers": {
-    "ears-validated": {
+    "symspec": {
       "command": "node",
       "args": ["${ERPAVAL_ROOT}/poc/bin/req-mcp.mjs"],
       "env": {

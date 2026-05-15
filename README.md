@@ -1,6 +1,6 @@
-# ears-validated
+# symspec
 
-**Type a requirement's slots; get back a CRDT-merged graph, a rendered EARS sentence, and a three-tier solver verdict (deterministic → two-model Bedrock ensemble → Claude Opus 4.7 arbiter).** One core, two surfaces (CLI + MCP), one canonical SysML-v2-shaped JSON export.
+**A neurosymbolic spec validator.** Type a requirement's slots; get back a CRDT-merged graph, a rendered EARS sentence, and a three-tier solver verdict. The symbolic tier (deterministic Zod validation, EARS pattern rules, exact-duplicate hashing, lexical weasel scan, structural pairwise filter, DFS cycle detection) handles the cheap cases. On disagreement it escalates to the neural tier (two-model Bedrock ensemble, then Claude Opus 4.7 arbiter at `xhigh` effort). One core, two surfaces (CLI + MCP), one canonical SysML-v2-shaped JSON export.
 
 ## Quick start
 

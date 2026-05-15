@@ -48,7 +48,7 @@ async function ensureDoc() {
 }
 
 const server = new McpServer({
-  name: 'ears-validated',
+  name: 'symspec',
   version: '0.1.0',
 })
 

@@ -1,9 +1,9 @@
 ---
-name: ears-validated
-description: Use when authoring, refining, or validating EARS requirement specs through the ears-validated MCP server. Triggers when the user asks to "spec out", "write requirements for", "structure", or "review the spec for" a feature with non-trivial behavior; when CL-RIGOR routes to the EARS substep; when extending an existing requirements graph stored in `.erpaval/specs/*/requirements.automerge`; or when preparing a Gate 1 review artifact that includes consistency findings (contradictions, dangling references, ambiguities). Do NOT trigger for one-line bug fixes (CL-COMPLEXITY=1-file-fix), pure code edits, free-form prose specs where structure would hurt, or tasks with no testable behavior.
+name: symspec
+description: Use when authoring, refining, or validating EARS requirement specs through the symspec MCP server. Triggers when the user asks to "spec out", "write requirements for", "structure", or "review the spec for" a feature with non-trivial behavior; when CL-RIGOR routes to the EARS substep; when extending an existing requirements graph stored in `.erpaval/specs/*/requirements.automerge`; or when preparing a Gate 1 review artifact that includes consistency findings (contradictions, dangling references, ambiguities). Do NOT trigger for one-line bug fixes (CL-COMPLEXITY=1-file-fix), pure code edits, free-form prose specs where structure would hurt, or tasks with no testable behavior.
 ---
 
-# ears-validated
+# symspec
 
 A typed-graph requirements layer with CRDT-backed storage and a three-tier solver pipeline (deterministic heuristics → two-model LLM ensemble on Bedrock → Claude Opus 4.7 arbiter at `xhigh` effort). You author EARS requirements by populating structured slots, not by writing sentences; the renderer produces the canonical sentence and the solver pipeline produces the Gate 1 findings.
 

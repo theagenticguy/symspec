@@ -1,9 +1,18 @@
 {
-  "name": "ears-validated-poc",
+  "name": "symspec",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "POC: SysML-v2-shaped requirements graph stored in Automerge, exposed via CLI + MCP",
+  "description": "Neurosymbolic spec validator: EARS requirements graph in Automerge, three-tier solver (deterministic + Bedrock ensemble + Opus 4.7 arbiter), CLI + MCP",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theagenticguy/symspec.git"
+  },
+  "homepage": "https://github.com/theagenticguy/symspec#readme",
+  "bugs": {
+    "url": "https://github.com/theagenticguy/symspec/issues"
+  },
   "packageManager": "pnpm@11.1.1",
   "bin": {
     "req": "./bin/req.mjs",

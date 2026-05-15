@@ -34,3 +34,6 @@ _tmp_*
 
 # ERPAVal session state — orchestrator-coupled, ephemeral
 .erpaval/sessions/
+
+# Repomix flattened codebase — regenerable, large
+docs/.repomix/
