@@ -49,21 +49,21 @@
   },
   "dependencies": {
     "@automerge/automerge": "^3.2.6",
-    "@aws-sdk/client-bedrock-runtime": "^3.1045.0"
+    "@aws-sdk/client-bedrock-runtime": "^3.1046.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.6",
-    "@modelcontextprotocol/sdk": "^1.10.0",
-    "@types/node": "^22.10.0",
-    "@vitest/coverage-v8": "^4.0.0",
-    "commander": "^12.1.0",
-    "knip": "^5.85.0",
-    "lefthook": "^2.1.2",
+    "@biomejs/biome": "^2.4.15",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@types/node": "^25.7.0",
+    "@vitest/coverage-v8": "^4.1.6",
+    "commander": "^14.0.3",
+    "knip": "^6.13.1",
+    "lefthook": "^2.1.6",
     "tsdown": "^0.22.0",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2",
-    "vitest": "^4.0.0",
-    "zod": "^3.23.8"
+    "tsx": "^4.21.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6",
+    "zod": "^4.4.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
