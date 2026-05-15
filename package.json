@@ -48,7 +48,7 @@
     "pnpm": ">=11"
   },
   "dependencies": {
-    "@automerge/automerge": "^2.2.8",
+    "@automerge/automerge": "^3.2.6",
     "@aws-sdk/client-bedrock-runtime": "^3.1045.0"
   },
   "devDependencies": {
