@@ -16,11 +16,11 @@ The single source of truth for the document shape, the EARS schema, the CRDT wra
 
 ## src/cli
 
-One file: `index.ts`. 205 LOC. It defines 11 subcommands. The names are `init`, `add`, `update`, `derive`, `satisfy`, `remove-edge`, `delete`, `list`, `show`, `analyze`, `export`, `merge`. Source: `src/cli/index.ts:40-203`. Each command loads the doc, applies one Change, and saves. The `--pattern` enum reuses `EARS_PATTERNS` from `src/core/schema.ts:31`. The entry executable is `bin/req.mjs:1-2`.
+One file: `index.ts`. 205 LOC. It defines 11 subcommands. The names are `init`, `add`, `update`, `derive`, `satisfy`, `remove-edge`, `delete`, `list`, `show`, `analyze`, `export`, `merge`. Source: `src/cli/index.ts:40-203`. Each command loads the doc, applies one Change, and saves. The `--pattern` enum reuses `EARS_PATTERNS` from `src/core/schema.ts:31`. The entry executable is `bin/symspec.mjs:1-2`.
 
 ## src/mcp
 
-One file: `server.ts`. 276 LOC. It registers 8 tools through `McpServer.tool()`. The tool names are `requirement_create`, `requirement_update`, `relationship_add`, `relationship_remove`, `requirement_delete`, `requirements_list`, `analysis_run`, `sysml_export`. Source: `src/mcp/server.ts:59-273`. Each mutating tool's input shape is imported verbatim from `src/core/schema.ts`. The JSON Schema the LLM sees in `tools/list` therefore carries the same `.describe()` text the rest of the codebase uses. The default doc path resolves from `process.env.REQ_DOC` with fallback `./requirements.automerge`. Default doc path: `src/mcp/server.ts:43`. The entry executable is `bin/req-mcp.mjs:1-2`.
+One file: `server.ts`. 276 LOC. It registers 8 tools through `McpServer.tool()`. The tool names are `requirement_create`, `requirement_update`, `relationship_add`, `relationship_remove`, `requirement_delete`, `requirements_list`, `analysis_run`, `sysml_export`. Source: `src/mcp/server.ts:59-273`. Each mutating tool's input shape is imported verbatim from `src/core/schema.ts`. The JSON Schema the LLM sees in `tools/list` therefore carries the same `.describe()` text the rest of the codebase uses. The default doc path resolves from `process.env.SYMSPEC_DOC` with fallback `./requirements.automerge`. Default doc path: `src/mcp/server.ts:43`. The entry executable is `bin/symspec-mcp.mjs:1-2`.
 
 ## src/solvers — orchestrator
 
@@ -66,7 +66,7 @@ Three files totaling 930 LOC.
 
 ## bin
 
-Two entry shims totaling 4 LOC. `req.mjs` does `import("../src/cli/index.js")` per `bin/req.mjs:1-2`. `req-mcp.mjs` does `import("../src/mcp/server.js")` per `bin/req-mcp.mjs:1-2`.
+Two entry shims totaling 4 LOC. `symspec.mjs` does `import("../dist/cli/index.js")` per `bin/symspec.mjs:1-2`. `symspec-mcp.mjs` does `import("../dist/mcp/server.js")` per `bin/symspec-mcp.mjs:1-2`. They point at the compiled `dist/` output so the shims work both inside a checkout (after `pnpm build`) and in a globally installed tarball.
 
 ## integration
 

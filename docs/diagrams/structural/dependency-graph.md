@@ -7,8 +7,8 @@ flowchart LR
   classDef internal fill:#1e3a5f,stroke:#4a8bc2,color:#fff
   classDef external fill:#705a1a,stroke:#d4a437,color:#fff
 
-  bin_req[bin/req.mjs]:::internal
-  bin_mcp[bin/req-mcp.mjs]:::internal
+  bin_req[bin/symspec.mjs]:::internal
+  bin_mcp[bin/symspec-mcp.mjs]:::internal
   cli[src/cli]:::internal
   mcp[src/mcp]:::internal
   core[src/core]:::internal
@@ -42,8 +42,8 @@ flowchart LR
 
 | Node | Resolves to | Source |
 |---|---|---|
-| `bin/req.mjs` | dynamic import of `src/cli/index.js` | `bin/req.mjs:1-2` |
-| `bin/req-mcp.mjs` | dynamic import of `src/mcp/server.js` | `bin/req-mcp.mjs:1-2` |
+| `bin/symspec.mjs` | dynamic import of `dist/cli/index.js` | `bin/symspec.mjs:1-2` |
+| `bin/symspec-mcp.mjs` | dynamic import of `dist/mcp/server.js` | `bin/symspec-mcp.mjs:1-2` |
 | `src/cli` | `src/cli/index.ts` | `src/cli/index.ts:19-32` |
 | `src/mcp` | `src/mcp/server.ts` | `src/mcp/server.ts:21-41` |
 | `src/core` | `schema.ts`, `doc.ts`, `analyze.ts`, `sysml-export.ts` | — |

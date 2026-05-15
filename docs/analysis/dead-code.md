@@ -1,6 +1,6 @@
 # symspec · Dead code
 
-`pnpm knip` exits clean. No findings against the `knip.json` config that scans `src/**/*.ts` and `scripts/**/*.ts`. The config sets `dependencies: error`, `devDependencies: warn`, `unlisted: error`, and `ignoreExportsUsedInFile: true`. Source: `knip.json:1-10`. The repo also runs `knip --no-progress` as a `pre-push` hook at `lefthook.yml:21-22`. At this size the audit is meaningful. The repo has 19 source files and 4 entry points. The entry points are `bin/req.mjs`, `bin/req-mcp.mjs`, and the smoke scripts.
+`pnpm knip` exits clean. No findings against the `knip.json` config that scans `src/**/*.ts` and `scripts/**/*.ts`. The config sets `dependencies: error`, `devDependencies: warn`, `unlisted: error`, and `ignoreExportsUsedInFile: true`. Source: `knip.json:1-10`. The repo also runs `knip --no-progress` as a `pre-push` hook at `lefthook.yml:21-22`. At this size the audit is meaningful. The repo has 19 source files and 4 entry points. The entry points are `bin/symspec.mjs`, `bin/symspec-mcp.mjs`, and the smoke scripts.
 
 ## Unreferenced exports
 
@@ -18,8 +18,8 @@ None. Every TS file under `src/` is reachable from at least one of the CLI entry
 
 | File | Reachability |
 |---|---|
-| `src/cli/index.ts` | `bin/req.mjs:2` |
-| `src/mcp/server.ts` | `bin/req-mcp.mjs:2` |
+| `src/cli/index.ts` | `bin/symspec.mjs:2` (via compiled `dist/cli/index.js`) |
+| `src/mcp/server.ts` | `bin/symspec-mcp.mjs:2` (via compiled `dist/mcp/server.js`) |
 | `src/core/doc.ts` | imported by cli, mcp, all smoke scripts, tests |
 | `src/core/schema.ts` | imported by every other src file |
 | `src/core/analyze.ts` | cli, mcp, smoke.ts, tests |

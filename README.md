@@ -13,7 +13,7 @@ pnpm test          # vitest unit tests
 pnpm check         # full quality gate: biome ci + tsc + vitest + knip
 ```
 
-CLI:
+CLI (from a checkout):
 
 ```bash
 pnpm cli init reqs.automerge
@@ -23,10 +23,22 @@ pnpm cli analyze reqs.automerge
 pnpm cli export  reqs.automerge
 ```
 
+Or globally — build a tarball and install it as a CLI:
+
+```bash
+pnpm build && pnpm pack
+npm install -g ./symspec-0.1.0.tgz
+symspec init reqs.automerge
+symspec add reqs.automerge --pattern event-driven --system "auth service" \
+  --response "issue a session token" --trigger "the user submits valid credentials"
+symspec analyze reqs.automerge
+```
+
 MCP server (stdio):
 
 ```bash
-REQ_DOC=./reqs.automerge pnpm mcp
+SYMSPEC_DOC=./reqs.automerge pnpm mcp        # from checkout
+SYMSPEC_DOC=./reqs.automerge symspec-mcp     # globally installed
 ```
 
 Live solver run against Bedrock (off by default; smoke uses a mock):
@@ -45,7 +57,7 @@ The system is one core (`src/core`) plus three thin layers that compose on top:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Surfaces:    req CLI (commander)        MCP server (@mcp/sdk)  │
+│  Surfaces:    symspec CLI (commander)    symspec-mcp (@mcp/sdk) │
 ├─────────────────────────────────────────────────────────────────┤
 │  Solver:      runSolvers()  ──▶  free tier ──▶ LLM ensemble    │
 │                                              ──▶ Opus 4.7 arbiter│
@@ -180,8 +192,8 @@ Configuration matrix (env vars):
 
 ### Surfaces — CLI + MCP, both over the same core
 
-- **`req` CLI** (`src/cli/index.ts`, `bin/req.mjs`) — commander-based; commands map 1:1 to Change records. Exists for human use and for shell-driven tests.
-- **MCP server** (`src/mcp/server.ts`, `bin/req-mcp.mjs`) — `@modelcontextprotocol/sdk` over stdio. Exposes 8 tools. Tool names follow `noun_verb` so `tools/list` groups by domain object. The per-tool input shapes are imported directly from `core/schema.ts` — there is **no second schema layer**. Tool descriptions follow a consistent shape: *what / when / returns + side effects / idempotency + error modes*. Mutating tools end with a hint about calling `analysis_run` next, so the agent learns the verification half of the loop without being told inline.
+- **`symspec` CLI** (`src/cli/index.ts`, `bin/symspec.mjs`) — commander-based; commands map 1:1 to Change records. Exists for human use and for shell-driven tests.
+- **MCP server** (`src/mcp/server.ts`, `bin/symspec-mcp.mjs`) — `@modelcontextprotocol/sdk` over stdio. Exposes 8 tools. Tool names follow `noun_verb` so `tools/list` groups by domain object. The per-tool input shapes are imported directly from `core/schema.ts` — there is **no second schema layer**. Tool descriptions follow a consistent shape: *what / when / returns + side effects / idempotency + error modes*. Mutating tools end with a hint about calling `analysis_run` next, so the agent learns the verification half of the loop without being told inline.
 
 | MCP tool | Action |
 |---|---|
@@ -228,8 +240,8 @@ scripts/
   smoke-incremental.ts # incremental-edits, idempotency, persistence, null-clear
   smoke-solvers.ts     # solver pipeline; live with BEDROCK_LIVE=1
 bin/
-  req.mjs              # CLI entry
-  req-mcp.mjs          # MCP server entry
+  symspec.mjs          # CLI entry
+  symspec-mcp.mjs      # MCP server entry
 integration/           # ERPAVal wiring: SKILL.md + mcp-config.json + CLAUDE.md.snippet
 .erpaval/              # see /erpaval below
 ```

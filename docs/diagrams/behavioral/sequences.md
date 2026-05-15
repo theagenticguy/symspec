@@ -15,7 +15,7 @@ sequenceDiagram
 
     Agent->>MCP: requirement_create(args)
     MCP->>MCP: ensureDoc()
-    MCP->>FS: loadDoc(REQ_DOC)
+    MCP->>FS: loadDoc(SYMSPEC_DOC)
     FS-->>MCP: Doc
     MCP->>Doc: applyChange({ kind: 'CreateRequirement', id: newId(), attrs })
     Doc->>Schema: ChangeSchema.parse(raw)
@@ -24,7 +24,7 @@ sequenceDiagram
     Auto->>Doc: renderSentence(slots)
     Auto-->>Doc: new Doc
     Doc-->>MCP: new Doc
-    MCP->>FS: saveDoc(next, REQ_DOC)
+    MCP->>FS: saveDoc(next, SYMSPEC_DOC)
     MCP-->>Agent: { content: [{ text: "Created <id>\n<sentence>" }] }
 ```
 

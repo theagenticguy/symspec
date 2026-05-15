@@ -11,7 +11,7 @@ Copy `SKILL.md` into `skills/symspec/` of your plugin or project. This is the pr
 `mcp-config.json` is a snippet. Merge it into your existing `.mcp.json` under `mcpServers`. Adjust:
 
 - `ERPAVAL_ROOT` — path to your local checkout of this POC (or vendor `poc/` into your plugin and reference it directly).
-- `REQ_DOC` — per-session graph file. `${SPEC_SLUG}` is illustrative; substitute however your launcher resolves the current spec slug.
+- `SYMSPEC_DOC` — per-session graph file. `${SPEC_SLUG}` is illustrative; substitute however your launcher resolves the current spec slug.
 - Bedrock env vars — override model ids if your account uses different inference profile names. `BEDROCK_ARBITER_EFFORT` accepts `low | medium | high | xhigh | max`.
 
 ## 3. The CLAUDE.md addendum

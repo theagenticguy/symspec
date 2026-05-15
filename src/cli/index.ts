@@ -1,19 +1,19 @@
 /**
- * `req` CLI — thin wrapper around the core Change-record API.
+ * `symspec` CLI — thin wrapper around the core Change-record API.
  *
  * Commands:
- *   req init <file>
- *   req add <file> --pattern <p> --system <s> --response <r> [...]
- *   req update <file> <id> <attr> <value>
- *   req derive <file> <fromId> <toId>
- *   req satisfy <file> <fromId> <toId>
- *   req remove-edge <file> <fromId> <relation> <toId>
- *   req delete <file> <id>
- *   req list <file>
- *   req show <file> <id>
- *   req analyze <file>
- *   req export <file>
- *   req merge <a.automerge> <b.automerge> <out.automerge>
+ *   symspec init <file>
+ *   symspec add <file> --pattern <p> --system <s> --response <r> [...]
+ *   symspec update <file> <id> <attr> <value>
+ *   symspec derive <file> <fromId> <toId>
+ *   symspec satisfy <file> <fromId> <toId>
+ *   symspec remove-edge <file> <fromId> <relation> <toId>
+ *   symspec delete <file> <id>
+ *   symspec list <file>
+ *   symspec show <file> <id>
+ *   symspec analyze <file>
+ *   symspec export <file>
+ *   symspec merge <a.automerge> <b.automerge> <out.automerge>
  */
 
 import { Command } from 'commander'
@@ -33,7 +33,7 @@ import { exportSysml } from '../core/sysml-export.js'
 
 const program = new Command()
 program
-  .name('req')
+  .name('symspec')
   .description('EARS-validated requirements graph CLI (Automerge + SysML v2)')
   .version('0.1.0')
 

@@ -2,7 +2,7 @@
 
 The MCP server registers 8 tools through `@modelcontextprotocol/sdk`'s `McpServer.tool()` API over a `StdioServerTransport` (`src/mcp/server.ts:50-53`, `src/mcp/server.ts:275-276`). All tool input shapes are imported verbatim from `src/core/schema.ts` so the JSON Schema the LLM sees in `tools/list` carries the same `.describe()` text every other layer uses (`src/mcp/server.ts:1-19`).
 
-Document path: resolved at server start from `process.env.REQ_DOC` with fallback `./requirements.automerge` (`src/mcp/server.ts:43`). The doc is created on first access if missing (`src/mcp/server.ts:46-48`).
+Document path: resolved at server start from `process.env.SYMSPEC_DOC` with fallback `./requirements.automerge` (`src/mcp/server.ts:43`). The doc is created on first access if missing (`src/mcp/server.ts:46-48`).
 
 ## Mutation tools
 
@@ -114,7 +114,7 @@ The `.mcp.json` snippet at `integration/mcp-config.json:1-19` shows the canonica
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `REQ_DOC` | `./requirements.automerge` | per-session doc path (`src/mcp/server.ts:43`) |
+| `SYMSPEC_DOC` | `./requirements.automerge` | per-session doc path (`src/mcp/server.ts:43`) |
 | `AWS_REGION` | `us-east-1` | Bedrock region (`src/solvers/llm/bedrock-client.ts:53`, `src/solvers/llm/arbiter.ts:76`) |
 | `BEDROCK_MODEL_PRIMARY` | `amazon.nova-2-lite-v1:0` | primary judge (`src/solvers/llm/bedrock-client.ts:114`) |
 | `BEDROCK_MODEL_SECONDARY` | `zai.glm-5-v1:0` | secondary judge (`src/solvers/llm/bedrock-client.ts:115`) |

@@ -59,9 +59,9 @@ When debugging an unknown breakage, walk this top to bottom:
 
 ## Recovery from broken state
 
-- **Corrupted `.automerge` file.** Delete it; `req init` creates a fresh empty doc (`src/cli/index.ts:43-45`).
-- **MCP server stuck on a bad doc.** Set `REQ_DOC=/tmp/scratch.automerge` and restart (`src/mcp/server.ts:43`).
-- **Concurrent-edit confusion.** `req merge a b out` to flatten, then `req analyze out` to see what the CRDT couldn't resolve (`src/cli/index.ts:194-203`).
+- **Corrupted `.automerge` file.** Delete it; `symspec init` creates a fresh empty doc (`src/cli/index.ts:43-45`).
+- **MCP server stuck on a bad doc.** Set `SYMSPEC_DOC=/tmp/scratch.automerge` and restart (`src/mcp/server.ts:43`).
+- **Concurrent-edit confusion.** `symspec merge a b out` to flatten, then `symspec analyze out` to see what the CRDT couldn't resolve (`src/cli/index.ts:194-203`).
 
 ## See also
 

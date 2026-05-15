@@ -40,7 +40,7 @@ import {
 } from '../core/schema.js'
 import { exportSysml } from '../core/sysml-export.js'
 
-const DOC_PATH = process.env.REQ_DOC ?? './requirements.automerge'
+const DOC_PATH = process.env.SYMSPEC_DOC ?? './requirements.automerge'
 const lines = (...xs: string[]) => xs.join('\n')
 
 async function ensureDoc() {

@@ -1,27 +1,29 @@
 # symspec · CLI reference
 
-The `req` CLI is a commander-based wrapper around the core Change-record API. Entry: `bin/req.mjs:1-2` → `src/cli/index.ts:205`. Every command loads the doc, applies one Change, saves; commands map 1:1 to Change records or to read operations on the loaded doc.
+The `symspec` CLI is a commander-based wrapper around the core Change-record API. Entry: `bin/symspec.mjs:1-2` → `src/cli/index.ts:205`. Every command loads the doc, applies one Change, saves; commands map 1:1 to Change records or to read operations on the loaded doc.
 
 Run via:
 
 ```bash
 pnpm cli <subcommand> [args...]
 # or
-./bin/req.mjs <subcommand> [args...]
+./bin/symspec.mjs <subcommand> [args...]
+# or, if installed globally
+symspec <subcommand> [args...]
 ```
 
-## `req init <file>`
+## `symspec init <file>`
 
 ```
-req init reqs.automerge
+symspec init reqs.automerge
 ```
 
 Create an empty doc (`schemaVersion: 1, requirements: {}`) and save it to `<file>` (`src/cli/index.ts:40-46`).
 
-## `req add <file>`
+## `symspec add <file>`
 
 ```
-req add reqs.automerge \
+symspec add reqs.automerge \
   --pattern <p> --system <s> --response <r> \
   [--trigger <t>] [--pre <p>] [--priority <p>]
 ```
@@ -39,83 +41,83 @@ Create a new requirement; UUID is generated server-side and printed (`src/cli/in
 
 Pattern-required slots are not enforced at create time; the analysis pass surfaces missing slots as findings instead (`src/core/analyze.ts:46-64`).
 
-## `req update <file> <id> <attr> <value>`
+## `symspec update <file> <id> <attr> <value>`
 
 ```
-req update reqs.automerge <uuid> trigger "the user submits valid credentials"
-req update reqs.automerge <uuid> verificationMethod null
+symspec update reqs.automerge <uuid> trigger "the user submits valid credentials"
+symspec update reqs.automerge <uuid> verificationMethod null
 ```
 
 Patch one typed attribute. The string `"null"` (literal) is converted to a JS `null` to clear an optional attribute; nulling a required attribute throws (`src/cli/index.ts:78-91`, `src/core/doc.ts:110-113`). EARS slot edits re-render the sentence; metadata edits don't (`src/core/doc.ts:118-127`).
 
-## `req derive <file> <fromId> <toId>`
+## `symspec derive <file> <fromId> <toId>`
 
 ```
-req derive reqs.automerge <parent> <child>
+symspec derive reqs.automerge <parent> <child>
 ```
 
 Add a `derives` edge (`src/cli/index.ts:93-106`). The `derives` DAG must be acyclic — cycles surface as `CycleDetected` findings (`src/core/analyze.ts:67-76`).
 
-## `req satisfy <file> <fromId> <toId>`
+## `symspec satisfy <file> <fromId> <toId>`
 
 ```
-req satisfy reqs.automerge <impl> <goal>
+symspec satisfy reqs.automerge <impl> <goal>
 ```
 
 Add a `satisfies` edge (`src/cli/index.ts:108-121`).
 
-## `req remove-edge <file> <fromId> <relation> <toId>`
+## `symspec remove-edge <file> <fromId> <relation> <toId>`
 
 ```
-req remove-edge reqs.automerge <fromId> derives <toId>
+symspec remove-edge reqs.automerge <fromId> derives <toId>
 ```
 
 Remove a typed edge. `<relation>` must be one of `derives | satisfies | verifies | refines` (`src/cli/index.ts:123-141`). No-op if the edge isn't present.
 
-## `req delete <file> <id>`
+## `symspec delete <file> <id>`
 
 ```
-req delete reqs.automerge <uuid>
+symspec delete reqs.automerge <uuid>
 ```
 
 Tombstone a requirement. Inbound edges from surviving requirements become dangling references and are surfaced by `analyze` (`src/cli/index.ts:143-151`, `src/core/doc.ts:151-157`).
 
-## `req list <file>`
+## `symspec list <file>`
 
 ```
-req list reqs.automerge
+symspec list reqs.automerge
 ```
 
 Print one block per requirement: `<id>  [<pattern>, <priority>, <status>]` followed by the rendered sentence (`src/cli/index.ts:153-162`).
 
-## `req show <file> <id>`
+## `symspec show <file> <id>`
 
 ```
-req show reqs.automerge <uuid>
+symspec show reqs.automerge <uuid>
 ```
 
 Print the full JSON of one requirement; exits 1 if not found (`src/cli/index.ts:164-175`).
 
-## `req analyze <file>`
+## `symspec analyze <file>`
 
 ```
-req analyze reqs.automerge
+symspec analyze reqs.automerge
 ```
 
 Run `analyze()` and print the human-readable summary (`src/cli/index.ts:177-184`). A clean doc prints `No findings — graph is consistent.` (`src/core/analyze.ts:143`).
 
-## `req export <file>`
+## `symspec export <file>`
 
 ```
-req export reqs.automerge > spec.sysml.json
+symspec export reqs.automerge > spec.sysml.json
 ```
 
 Print the SysML-v2-flavored JSON projection to stdout (`src/cli/index.ts:186-192`). The shape is `{ '@context': 'https://www.omg.org/spec/SysML/v2', schemaVersion, elements: RequirementUsage[], relationships: (DeriveRequirement|Satisfy|Verify|Refine)[] }` (`src/core/sysml-export.ts:35-40`, `src/core/sysml-export.ts:84-89`).
 
-## `req merge <a> <b> <out>`
+## `symspec merge <a> <b> <out>`
 
 ```
-req merge alice.automerge bob.automerge merged.automerge
+symspec merge alice.automerge bob.automerge merged.automerge
 ```
 
 Load two replicas, call `Automerge.merge`, save (`src/cli/index.ts:194-203`). Exposed for demonstration; in normal use Automerge merges implicitly when both replicas operate on the same doc.

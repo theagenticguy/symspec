@@ -14,12 +14,19 @@
     "url": "https://github.com/theagenticguy/symspec/issues"
   },
   "packageManager": "pnpm@11.1.1",
+  "files": [
+    "dist",
+    "bin",
+    "LICENSE",
+    "README.md"
+  ],
   "bin": {
-    "req": "./bin/req.mjs",
-    "req-mcp": "./bin/req-mcp.mjs"
+    "symspec": "./bin/symspec.mjs",
+    "symspec-mcp": "./bin/symspec-mcp.mjs"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "cli": "tsx src/cli/index.ts",
     "mcp": "tsx src/mcp/server.ts",

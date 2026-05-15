@@ -118,7 +118,7 @@ The MCP server exposes 8 tools. Each carries detailed descriptions and per-param
 This skill is the canonical home for the EARS substep that `CL-RIGOR` routes to. When triggered from CL-RIGOR:
 
 1. Read the HMW brainstorm (if present) at `.erpaval/brainstorms/NNN-<slug>-requirements.md`.
-2. Run the **author_new_spec** workflow above against `.erpaval/specs/NNN-<slug>/requirements.automerge` (set `REQ_DOC` via env or the launcher).
+2. Run the **author_new_spec** workflow above against `.erpaval/specs/NNN-<slug>/requirements.automerge` (set `SYMSPEC_DOC` via env or the launcher).
 3. Export to `.erpaval/specs/NNN-<slug>/spec.md` via `sysml_export` for the Plan phase to consume.
 4. Attach the findings JSON to the Gate 1 review artifact so the human reviewer sees consistency results alongside the draft task graph.
 
