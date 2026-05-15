@@ -113,9 +113,8 @@ These aren't debt — they're the canonical-stack edge cases the project hit and
 - pnpm 11 `verify-deps-before-run` + lefthook `prepare` + non-git directory (`pnpm11-prepare-script-and-git-init-order.md`)
 - `exactOptionalPropertyTypes: true` and the omit-the-key idiom (`exact-optional-property-types-omit-key-idiom.md`)
 - Biome `style/noNonNullAssertion` collides with `noUncheckedIndexedAccess` (`biome-noNonNullAssertion-off-when-noUncheckedIndexedAccess.md`)
-- Lefthook vs. Amazon git-defender's global `core.hooksPath` (`lefthook-vs-amazon-git-defender-hookspath.md`)
 
-The README's `/erpaval` section explains the convention and the four lessons (`README.md:236-303`).
+The README's `/erpaval` section explains the convention and the three lessons (`README.md:236-303`).
 
 ## See also
 

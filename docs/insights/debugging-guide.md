@@ -17,7 +17,6 @@ When something breaks, where to look. Failure modes mapped to error surfaces and
 | `Arbiter <id> did not call report_arbitration` | Same, but for Opus 4.7 over InvokeModel | `src/solvers/llm/arbiter.ts:308-317` |
 | HTTP 400 from Bedrock arbiter | Likely the `thinking` shape — Opus 4.7 rejects `{ enabled, budget_tokens }`, requires `{ type: 'adaptive', display: 'summarized' }` | `src/solvers/llm/arbiter.ts:277-284` |
 | `pnpm install` repeatedly fails or `pnpm exec` errors after a fresh clone | pnpm 11 `verify-deps-before-run` fired the `prepare` hook in a non-git dir | `.erpaval/solutions/conventions/pnpm11-prepare-script-and-git-init-order.md` |
-| lefthook hooks silently never fire | Amazon corp laptop's git-defender set `core.hooksPath` globally | `.erpaval/solutions/conventions/lefthook-vs-amazon-git-defender-hookspath.md` |
 | TS error: `Type X is not assignable to type Y { foo?: T }` with `exactOptionalPropertyTypes` | Caller passed `{ foo: undefined }` instead of omitting `foo` | `.erpaval/solutions/conventions/exact-optional-property-types-omit-key-idiom.md`, `tsconfig.json:9` |
 | Biome warns on `arr[i]!` in tight loops | `style/noNonNullAssertion` was double-warning the `noUncheckedIndexedAccess` idiom | `biome.json:21` (rule turned off), `.erpaval/solutions/conventions/biome-noNonNullAssertion-off-when-noUncheckedIndexedAccess.md` |
 

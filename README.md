@@ -284,12 +284,11 @@ example_files:
 # What NOT to do
 ```
 
-The four current lessons (all `conventions`) document the canonical-TypeScript-stack edge cases this repo hit:
+The three current lessons (all `conventions`) document the canonical-TypeScript-stack edge cases this repo hit:
 
 | Lesson | What it captures |
 |---|---|
 | `pnpm11-prepare-script-and-git-init-order.md` | pnpm 11's `verify-deps-before-run` re-fires `prepare` on every `pnpm exec`; if `prepare` runs `lefthook install` in a non-git directory, every subsequent `pnpm exec` fails opaquely. **Fix**: move hook install to `hooks:install`, set `verify-deps-before-run=false` in `.npmrc`, and add `pnpm.onlyBuiltDependencies` for native builders. |
-| `lefthook-vs-amazon-git-defender-hookspath.md` | Amazon corp laptops set `core.hooksPath` globally to git-defender's read-only dir. `lefthook install` either errors or silently never fires. **Fix**: `git config --local core.hooksPath .git/hooks` per-repo, then `lefthook install --force`. |
 | `exact-optional-property-types-omit-key-idiom.md` | With `exactOptionalPropertyTypes: true`, `{ foo?: T }` ≠ `{ foo?: T \| undefined }`. The clean fix is to **omit the key** (build the object, then conditionally assign) or use a conditional spread — never widen the type just to silence the compiler. |
 | `biome-noNonNullAssertion-off-when-noUncheckedIndexedAccess.md` | With `noUncheckedIndexedAccess: true`, guarded `arr[i]!` in tight loops is the canonical idiom. Biome's `style/noNonNullAssertion` double-warns the same case stylistically. **Fix**: turn the lint rule **off** — the type-system control is the load-bearing one. |
 

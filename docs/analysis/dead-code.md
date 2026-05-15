@@ -43,7 +43,7 @@ The full quality gate is `pnpm check`. The gate runs `biome ci && tsc --noEmit &
 
 ## Confidence
 
-Knip's `unlisted: error` mode catches dependency drift. The `pre-push` hook means dead code that lands on `main` would have to bypass git hooks. Amazon git-defender wouldn't, per `.erpaval/solutions/conventions/lefthook-vs-amazon-git-defender-hookspath.md`. The two `reconcile*` functions are the only legitimate "dead until tested" surface. Documenting them is enough.
+Knip's `unlisted: error` mode catches dependency drift. The `pre-push` hook means dead code that lands on `main` would have to bypass git hooks. The two `reconcile*` functions are the only legitimate "dead until tested" surface. Documenting them is enough.
 
 ## See also
 
