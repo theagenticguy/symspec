@@ -66,7 +66,7 @@ Three files totaling 930 LOC.
 
 ## bin
 
-Two entry shims totaling 4 LOC. `symspec.mjs` does `import("../dist/cli/index.js")` per `bin/symspec.mjs:1-2`. `symspec-mcp.mjs` does `import("../dist/mcp/server.js")` per `bin/symspec-mcp.mjs:1-2`. They point at the compiled `dist/` output so the shims work both inside a checkout (after `pnpm build`) and in a globally installed tarball.
+Two entry shims totaling 4 LOC. `symspec.mjs` does `import("../dist/cli.mjs")` per `bin/symspec.mjs:1-2`. `symspec-mcp.mjs` does `import("../dist/mcp.mjs")` per `bin/symspec-mcp.mjs:1-2`. The targets are tsdown-bundled ESM that inline commander, zod, and `@modelcontextprotocol/sdk` (with its sub-deps); `@automerge/automerge` and `@aws-sdk/*` stay external and are listed in `package.json` `dependencies` so npm resolves them at install time. The shims work both inside a checkout (after `pnpm build`) and in a globally installed tarball.
 
 ## integration
 

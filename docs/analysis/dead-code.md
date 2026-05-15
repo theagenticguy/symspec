@@ -18,8 +18,8 @@ None. Every TS file under `src/` is reachable from at least one of the CLI entry
 
 | File | Reachability |
 |---|---|
-| `src/cli/index.ts` | `bin/symspec.mjs:2` (via compiled `dist/cli/index.js`) |
-| `src/mcp/server.ts` | `bin/symspec-mcp.mjs:2` (via compiled `dist/mcp/server.js`) |
+| `src/cli/index.ts` | `bin/symspec.mjs:2` (via bundled `dist/cli.mjs`) |
+| `src/mcp/server.ts` | `bin/symspec-mcp.mjs:2` (via bundled `dist/mcp.mjs`) |
 | `src/core/doc.ts` | imported by cli, mcp, all smoke scripts, tests |
 | `src/core/schema.ts` | imported by every other src file |
 | `src/core/analyze.ts` | cli, mcp, smoke.ts, tests |

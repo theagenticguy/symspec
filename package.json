@@ -25,8 +25,8 @@
     "symspec-mcp": "./bin/symspec-mcp.mjs"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "prepack": "tsc -p tsconfig.build.json",
+    "build": "tsdown",
+    "prepack": "tsdown",
     "typecheck": "tsc --noEmit",
     "cli": "tsx src/cli/index.ts",
     "mcp": "tsx src/mcp/server.ts",
@@ -49,20 +49,21 @@
   },
   "dependencies": {
     "@automerge/automerge": "^2.2.8",
-    "@aws-sdk/client-bedrock-runtime": "^3.1045.0",
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "commander": "^12.1.0",
-    "zod": "^3.23.8"
+    "@aws-sdk/client-bedrock-runtime": "^3.1045.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.6",
+    "@modelcontextprotocol/sdk": "^1.10.0",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^4.0.0",
+    "commander": "^12.1.0",
     "knip": "^5.85.0",
     "lefthook": "^2.1.2",
+    "tsdown": "^0.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^4.0.0"
+    "vitest": "^4.0.0",
+    "zod": "^3.23.8"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
