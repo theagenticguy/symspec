@@ -1,28 +1,31 @@
 /**
- * Analysis pass over a converged document.
+ * Tier-0 structural analysis pass — runs over a plain-object document
+ * snapshot with no solver and no storage-layer coupling.
  *
- * Findings are intentionally separate from the data layer — the CRDT keeps
- * the graph eventually consistent, and the analysis runs over the converged
- * snapshot to surface things the CRDT couldn't (and shouldn't) prevent:
+ * Findings surface things the storage layer couldn't (and shouldn't) prevent:
  *
  *   - DanglingReference: an edge points at a UUID that no longer exists
- *     (e.g., one replica deleted a node while another added an edge to it).
+ *     (e.g., a node was deleted while another requirement still edges to it).
  *   - MissingTrigger / MissingPreCondition: EARS slot rules per pattern type.
  *   - CycleDetected: cycles in the derives DAG (decomposition must be acyclic).
  *   - OrphanRequirement: a node with no inbound or outbound edges — likely
  *     forgotten or incomplete.
  *
- * The expected workflow: agent/user makes a Commit, replicas merge, analyze()
- * runs, findings surface as clarifying questions in the review UI (matches
- * Kiro's analyze-then-clarify pattern).
+ * The expected workflow: a Change is applied, `analyze()` runs over the
+ * resulting document snapshot, findings surface as clarifying questions in
+ * the review UI (matches Kiro's analyze-then-clarify pattern).
  */
 
-import { type Doc, listRequirements, snapshot } from './doc.js'
-import { type Finding, RELATIONS, type Relation, type Requirement } from './schema.js'
+import {
+  type Finding,
+  RELATIONS,
+  type Relation,
+  type Requirement,
+  type RequirementsDoc,
+} from './schema.js'
 
-export function analyze(doc: Doc): Finding[] {
-  const snap = snapshot(doc)
-  const reqs = Object.values(snap.requirements)
+export function analyze(doc: RequirementsDoc): Finding[] {
+  const reqs = Object.values(doc.requirements)
   const ids = new Set(reqs.map((r) => r.id))
   const findings: Finding[] = []
 
@@ -124,12 +127,14 @@ function findCycles(reqs: Requirement[], relation: Relation): string[][] {
   }
 
   for (const r of reqs) dfs(r.id, [], new Set())
-  // Dedupe by canonical rotation
+  // Dedupe by canonical rotation: rotate each cycle so it starts at the
+  // lexicographically-smallest node id, then dedupe on the rotated key — so the
+  // same cycle discovered from two different entry nodes is reported once.
   const seenCycles = new Set<string>()
   const uniq: string[][] = []
   for (const c of cycles) {
-    const min = Math.min(...c.map((_, i) => i))
-    const rotated = [...c.slice(min), ...c.slice(0, min)]
+    const minIdx = minIndexOf(c)
+    const rotated = [...c.slice(minIdx), ...c.slice(0, minIdx)]
     const key = rotated.join(',')
     if (!seenCycles.has(key)) {
       seenCycles.add(key)
@@ -137,6 +142,19 @@ function findCycles(reqs: Requirement[], relation: Relation): string[][] {
     }
   }
   return uniq
+}
+
+/** Index of the lexicographically-smallest node id in a cycle. */
+function minIndexOf(cycle: string[]): number {
+  let minIdx = 0
+  for (let i = 1; i < cycle.length; i++) {
+    const candidate = cycle[i]
+    const current = cycle[minIdx]
+    if (candidate !== undefined && current !== undefined && candidate < current) {
+      minIdx = i
+    }
+  }
+  return minIdx
 }
 
 export function summarizeFindings(findings: Finding[]): string {
@@ -148,5 +166,3 @@ export function summarizeFindings(findings: Finding[]): string {
 
 // Re-export for type-only consumers
 export type { Finding } from './schema.js'
-// Avoid unused-import warning when only types are imported elsewhere
-export const _listRequirements = listRequirements

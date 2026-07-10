@@ -63,6 +63,7 @@ export function exportSysml(doc: Doc): SysmlExport {
         trigger: r.trigger,
         systemName: r.systemName,
         systemResponse: r.systemResponse,
+        negated: String(r.negated),
         priority: r.priority,
         status: r.status,
         verificationMethod: r.verificationMethod,

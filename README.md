@@ -2,249 +2,381 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**A neurosymbolic spec validator.** Type a requirement's slots; get back a CRDT-merged graph, a rendered EARS sentence, and a three-tier solver verdict. The symbolic tier (deterministic Zod validation, EARS pattern rules, exact-duplicate hashing, lexical weasel scan, structural pairwise filter, DFS cycle detection) handles the cheap cases. On disagreement it escalates to the neural tier (two-model Bedrock ensemble, then Claude Opus 4.7 arbiter at `xhigh` effort). One core, two surfaces (CLI + MCP), one canonical SysML-v2-shaped JSON export.
+**A deterministic neurosymbolic spec validator, built agent-first.** Hand it EARS-shaped requirement prose or structured slots; get back provable conflict findings with the exact requirement IDs responsible. symspec parses requirements into EARS slots (regex-first, no model calls), lints them against the INCOSE Guide to Writing Requirements, and formally checks the set for contradictions, subsumption, redundancy, and vacuity using an in-process Z3 SMT solver — every conflict backed by a minimal unsat core you can audit. It is a CLI and an importable TypeScript library whose primary consumer is a coding agent: every command emits a typed JSON envelope with stable error and finding codes, a self-describing `manifest`, and a POSIX exit-code contract. The neural tier *is* the calling agent — symspec itself makes no LLM calls, so its verdicts are reproducible byte-for-byte.
 
 ## Quick start
 
 ```bash
-pnpm install
-pnpm smoke:all     # concurrent-merge demo + incremental-edits demo + solver demo (mocked LLM)
-pnpm test          # vitest unit tests
+pnpm install       # install dependencies
+pnpm build         # compile src/ to dist/ (tsdown)
+pnpm test          # vitest unit tests (the AC verification suite)
 pnpm check         # full quality gate: biome ci + tsc + vitest + knip
 ```
 
-CLI (from a checkout):
+Install it globally as a CLI:
 
 ```bash
-pnpm cli init reqs.automerge
-pnpm cli add reqs.automerge --pattern event-driven --system "auth service" \
-  --response "issue a session token" --trigger "the user submits valid credentials"
-pnpm cli analyze reqs.automerge
-pnpm cli export  reqs.automerge
+pnpm build && pnpm pack           # produces symspec-<version>.tgz
+npm install -g ./symspec-*.tgz    # exposes the `symspec` bin
 ```
 
-Or globally — build a tarball and install it as a CLI:
+Then `init` a document, `add` requirements, and `check` the set. Every command
+prints a typed JSON envelope to stdout by default — no flag needed.
 
-```bash
-pnpm build && pnpm pack
-npm install -g ./symspec-0.1.0.tgz
-symspec init reqs.automerge
-symspec add reqs.automerge --pattern event-driven --system "auth service" \
-  --response "issue a session token" --trigger "the user submits valid credentials"
-symspec analyze reqs.automerge
-```
+```console
+$ symspec init reqs.symspec.json
+{
+  "apiVersion": 1,
+  "type": "init",
+  "data": {
+    "path": "/work/reqs.symspec.json",
+    "created": true
+  }
+}
 
-MCP server (stdio):
-
-```bash
-SYMSPEC_DOC=./reqs.automerge pnpm mcp        # from checkout
-SYMSPEC_DOC=./reqs.automerge symspec-mcp     # globally installed
-```
-
-Live solver run against Bedrock (off by default; smoke uses a mock):
-
-```bash
-BEDROCK_LIVE=1 AWS_REGION=us-east-1 pnpm smoke:solvers
-```
-
-That's the whole user-facing surface. Everything below is how it works.
-
----
-
-## Deep dive: how it works
-
-The system is one core (`src/core`) plus three thin layers that compose on top:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Surfaces:    symspec CLI (commander)    symspec-mcp (@mcp/sdk) │
-├─────────────────────────────────────────────────────────────────┤
-│  Solver:      runSolvers()  ──▶  free tier ──▶ LLM ensemble    │
-│                                              ──▶ Opus 4.7 arbiter│
-├─────────────────────────────────────────────────────────────────┤
-│  Analysis:    analyze()  → DanglingRef / MissingSlot /          │
-│                            CycleDetected / OrphanRequirement     │
-├─────────────────────────────────────────────────────────────────┤
-│  Public API:  applyChange(doc, Change)  +  merge(a, b)          │
-│               Change = CreateRequirement | UpdateAttribute |    │
-│                        AddRelationship | RemoveRelationship |   │
-│                        DeleteRequirement                         │
-├─────────────────────────────────────────────────────────────────┤
-│  Domain:      Requirement = EARS slots + typed metadata +       │
-│               typed edge arrays (derives/satisfies/verifies/    │
-│               refines)                                          │
-├─────────────────────────────────────────────────────────────────┤
-│  Storage:     Automerge CRDT (flat-map of UUID → Requirement)   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Storage layer — Automerge CRDT (`src/core/doc.ts`)
-
-The document is a flat map keyed by UUID:
-
-```ts
-type RequirementsDoc = {
-  schemaVersion: number
-  requirements: Record<string, Requirement>
+$ symspec add reqs.symspec.json --pattern event-driven --system "auth service" \
+    --response "grant access" --trigger "the user submits valid credentials"
+{
+  "apiVersion": 1,
+  "type": "add",
+  "data": {
+    "id": "586d8933-44ed-4100-af27-f365b5804e7d",
+    "requirement": {
+      "id": "586d8933-44ed-4100-af27-f365b5804e7d",
+      "patternType": "event-driven",
+      "systemName": "auth service",
+      "systemResponse": "grant access",
+      "sentence": "When the user submits valid credentials, the auth service shall grant access.",
+      "priority": "medium",
+      "status": "draft",
+      "derives": [],
+      "satisfies": [],
+      "verifies": [],
+      "refines": [],
+      "trigger": "the user submits valid credentials"
+    }
+  }
 }
 ```
 
-Flat-map (rather than array) is deliberate — there are no array indices for replicas to fight over, so concurrent inserts/deletes converge cleanly.
+Add a second, conflicting requirement and `check` finds the contradiction —
+`grant access` vs `revoke access` unify to the same atom with opposite polarity
+via the seed antonym table, and the finding names exactly the two culprits with
+the atom table and unsat core as evidence:
 
-Mutations happen inside `Automerge.change(doc, draft => { ... })`. The wrapper hides that ceremony behind one function — `applyChange(doc, change)` — so the rest of the codebase stays in plain TypeScript.
+```console
+$ symspec add reqs.symspec.json --pattern event-driven --system "auth service" \
+    --response "revoke access" --trigger "the user submits valid credentials"
+# → { "type": "add", "data": { "id": "d50c8fff-…", … } }
 
-`merge(a, b)` is exposed even though Automerge does it for you, just so the smoke scripts can demonstrate the property explicitly. Ordering doesn't matter: `merge(merge(base, alice), bob)` and `merge(merge(base, bob), alice)` produce equivalent state — the smoke script asserts this.
+$ symspec check reqs.symspec.json
+{
+  "apiVersion": 1,
+  "type": "check",
+  "data": {
+    "findings": [
+      {
+        "code": "FND_CONTRADICTION",
+        "severity": "error",
+        "tier": "formal",
+        "requirementIds": [
+          "586d8933-44ed-4100-af27-f365b5804e7d",
+          "d50c8fff-0917-4119-a7e8-5374c99a977c"
+        ],
+        "message": "Requirements 586d8933…, d50c8fff… cannot all hold: their responses resolve to the same atom with opposite polarity under a reachable context.",
+        "evidence": {
+          "atomTable": [
+            { "atom": "sys__auth_service__trig__user_submits_valid_credentials", "kind": "trig", "slotText": "the user submits valid credentials", "negated": false },
+            { "atom": "sys__auth_service__resp__grant_access", "kind": "resp", "slotText": "grant access", "negated": false },
+            { "atom": "sys__auth_service__resp__grant_access", "kind": "resp", "slotText": "revoke access", "negated": true }
+          ],
+          "core": [
+            "586d8933-44ed-4100-af27-f365b5804e7d",
+            "d50c8fff-0917-4119-a7e8-5374c99a977c"
+          ]
+        }
+      }
+    ],
+    "excluded": [],
+    "pairsChecked": 1,
+    "counts": { "error": 1, "warn": 0, "info": 0 }
+  }
+}
+# exit code 1 — an error-severity finding is present
+```
 
-### Public API — Change records (`src/core/schema.ts`)
+`check` exits `0` when clean (or only `warn`/`info` findings), `1` when an
+`error`-severity finding is present (the envelope is still on stdout — the
+findings are the data), and `2` on an operational error (`ERR_*`). That is the
+whole pass/fail gate an editing or CI loop needs.
 
-Five Change types, all referencing elements by stable UUID, never by JSON path:
+You do not have to hand-author slots. Feed prose — one line, a `--file`, or
+`--stdin` — and symspec returns structured slots, a `skipped` marker for
+no-obligation prose, or a Tier-3 error with a stable `ERR_PARSE_*` code and a
+mechanical rewrite suggestion:
 
-| Change | Idempotency |
-|---|---|
-| `CreateRequirement` | throws on duplicate id (collisions should be surfaced, not silently merged) |
-| `UpdateAttribute` | re-applying the same value is a no-op; `null` clears optional attrs (`preCondition`, `trigger`, `verificationMethod`); `null` on a required attr throws |
-| `AddRelationship` | adding the same edge twice = one edge |
-| `RemoveRelationship` | removing a missing edge is a no-op |
-| `DeleteRequirement` | tombstone semantics; missing id is a no-op; inbound edges become dangling refs (caught by `analyze()`, not prevented here) |
+```console
+$ printf 'The auth service shall reject expired tokens.\nFast response times are important.\nThe API shall log requests and the API shall reject bad input.\n' \
+    | symspec parse --stdin
+{
+  "apiVersion": 1,
+  "type": "parse",
+  "data": {
+    "results": [
+      { "outcome": "ok", "pattern": "ubiquitous", "slots": { "patternType": "ubiquitous", "systemName": "auth service", "systemResponse": "reject expired tokens" }, "negated": false, "confidence": "high", "tier": 1, "notes": [] },
+      { "outcome": "skipped", "reason": "no-modal", "text": "Fast response times are important." },
+      { "outcome": "error", "code": "ERR_PARSE_COMPOUND", "error": "Compound requirement with top-level \"and\"/\"or\" conjunction: …", "partial": { "patternType": "ubiquitous", "systemName": "API", "systemResponse": "log requests and the API shall reject bad input" }, "suggestions": [ "Split into separate requirements at each \"and\" or \"or\" conjunction.", "Each requirement must contain exactly one \"shall\" clause (one system, one response).", … ] }
+    ],
+    "summary": { "ok": 1, "skipped": 1, "error": 1 }
+  }
+}
+```
 
-A `Commit` is just a batch of Changes applied atomically.
-
-The discriminated-union `ChangeSchema`, the per-tool MCP input shapes, and the on-disk `RequirementSchema` all compose from the **same atomic field schemas** in `core/schema.ts`. Adding an attribute means editing exactly one place. Each atomic field carries a rich `.describe()` covering what / why / one example, and those descriptions propagate into the JSON Schema the MCP SDK exposes to the LLM in `tools/list` — so there is no second schema layer to drift.
-
-### Domain — Requirement node
-
-Every node has three groups of fields:
-
-- **EARS slots** (the structural primitives): `patternType`, `preCondition`, `trigger`, `systemName`, `systemResponse`. The canonical sentence is **rendered** from these by `renderSentence()` — never authored by hand. Sentence renders re-fire on every EARS-slot edit; metadata edits leave the sentence untouched.
-- **Typed metadata** (Gate-1-revision-time tuning knobs): `priority`, `status`, `verificationMethod`.
-- **Typed edges** (the DAG): `derives`, `satisfies`, `verifies`, `refines`. Each is its own array; relationship semantics live in the type, not in a string label.
-
-Pattern → required slot:
-
-| Pattern | Renders | Required |
-|---|---|---|
-| `ubiquitous` | `The X shall Y.` | — |
-| `event-driven` | `When TRIGGER, the X shall Y.` | `trigger` |
-| `state-driven` | `While PRE, the X shall Y.` | `preCondition` |
-| `optional-feature` | `Where PRE, the X shall Y.` | `preCondition` |
-| `unwanted-behavior` | `If TRIGGER, then the X shall Y.` | `trigger` |
-
-Both pre + trigger? Use `event-driven`; the renderer produces `While PRE, when TRIGGER, the X shall Y.`
-
-### Analysis layer — `analyze()` (`src/core/analyze.ts`)
-
-Runs over a converged snapshot and surfaces what the CRDT couldn't (and shouldn't) prevent:
-
-- `DanglingReference` — an edge points at a UUID that no longer exists (the canonical concurrent-edit case: Alice adds an edge to a node Bob deletes).
-- `MissingTrigger` / `MissingPreCondition` — pattern's required slot is empty.
-- `CycleDetected` — cycle in `derives` (decomposition must be acyclic). DFS-based; cycles are deduped by canonical rotation.
-- `OrphanRequirement` — node with no inbound or outbound edges (likely incomplete).
-
-Findings are read-only diagnostics. The expected loop: agent makes a Commit → replicas merge → `analyze()` runs → findings render as clarifying questions in the review UI (the Kiro "analyze-then-clarify" pattern).
-
-### Solver layer — three tiers (`src/solvers/`)
-
-`analyze()` catches structural breakage. The solver layer catches **semantic** problems: contradictions, subsumption, near-duplicates, ambiguity.
-
-**Tier 1 — free, deterministic, in-process** (`src/solvers/free/`):
-
-- `detectExactDuplicates` — full-tuple hash over `(patternType, preCondition, trigger, systemName, systemResponse)`. Anything caught here is high-confidence and skips the LLM tier.
-- `detectAmbiguity` — lexical scan for INCOSE/IEEE-830 weasel words (`fast`, `robust`, `as needed`, `etc.`, `appropriate`). Curated short list; high precision; false positives would train authors to ignore the linter.
-- `emitCandidatePairs` — emits the small set of pairs worth running through the LLM judge, using three structural rules: **same system + same trigger + different response** (contradiction candidate), **same system + overlapping precondition** (subsumption candidate), **high lexical similarity on the rendered sentence** (near-duplicate candidate). Avoids the n²/2 LLM-call explosion.
-
-**Tier 2 — two-model Bedrock ensemble** (`src/solvers/llm/`):
-
-Two models run in parallel via the **Bedrock Converse API + forced tool use**. Forced tool use means the model is required to call our `report_judgment` tool, whose `inputSchema` is a JSON Schema we author. Bedrock validates on its side, so the response is guaranteed-shaped — no "model returned prose when I asked for JSON" failure mode.
-
-- `judgePair` classifies a candidate pair as `contradiction | subsumption | redundant | compatible`, plus `whichOf` for subsumption direction and a rationale.
-- `judgeAmbiguity` flags context-dependent vagueness the lexical scan misses (e.g., "handle high load" — no weasel words, still vague).
-
-The ensemble (`ensemble.ts`) reconciles the two judgments:
-
-- both agree on contradiction / both agree on subsumption (same direction) / both agree on redundant → **high-confidence finding**.
-- both agree on compatible → drop.
-- disagreement → escalate to Tier 3 if an arbiter is configured, otherwise emit `NeedsReview` for the human.
-
-`CallModel` is injected — tests pass a deterministic mock keyed by `(modelId, requirement pair)`, production wires up `bedrockCallModel`. `scripts/smoke-solvers.ts` runs both modes; `BEDROCK_LIVE=1` flips to the real client.
-
-**Tier 3 — Claude Opus 4.7 arbiter** (`src/solvers/llm/arbiter.ts`):
-
-When the two judges disagree, we escalate to Opus 4.7 over Bedrock's `InvokeModel` (not Converse) — InvokeModel is the native Anthropic Messages surface and is what gives first-class control over `thinking` and `output_config.effort`.
-
-- **Adaptive thinking**: Opus 4.7 only supports `thinking: { type: "adaptive" }`. The older manual `enabled` + `budget_tokens` shape is rejected with 400. Depth is controlled by `output_config.effort` ∈ `{ low, medium, high, xhigh, max }`. Default `xhigh` — Anthropic's recommended starting point for agentic / long-horizon work, including arbitration.
-- **Forced tool use**: `tool_choice: { type: "tool", name: "report_arbitration" }` guarantees structured JSON.
-- **XML-tagged user message**: per Anthropic's prompting conventions, each input chunk lives inside a semantic XML tag (`<requirement_a>`, `<prior_judgment model="...">`, `<free_tier_reason>`, `<task>`, `<instructions>`). Critical instructions appear at both the **top of the system prompt** and the **bottom of the user message** — the two locations Anthropic guidance flags as reliably attended.
-- **`thinking.display: "summarized"`** — Opus 4.7 defaults to `omitted` (signature only); we opt back into summarized so the audit trail can include the reasoning summary.
-- **Output ceiling**: `max_tokens=64000` so the model has room to think *and* emit the tool call at xhigh/max effort.
-
-Verdict shape: `{ finalJudgment, whichOf, confidence, agreedWith: 'primary'|'secondary'|'neither', rationale, caveat?, thinkingSignature? }`. The signature is opaque and round-trips for audit.
-
-Configuration matrix (env vars):
-
-| Variable | Default | Notes |
-|---|---|---|
-| `AWS_REGION` | — | required; cross-region inference profile region |
-| `BEDROCK_MODEL_PRIMARY` | from `MODELS.primary` | primary judge |
-| `BEDROCK_MODEL_SECONDARY` | from `MODELS.secondary` | secondary judge |
-| `BEDROCK_ARBITER_MODEL` | global Opus 4.7 inference profile | overridable per account |
-| `BEDROCK_ARBITER_EFFORT` | `xhigh` | one of `low | medium | high | xhigh | max` |
-| `BEDROCK_ARBITER_MAX_TOKENS` | `64000` | output ceiling |
-
-### Surfaces — CLI + MCP, both over the same core
-
-- **`symspec` CLI** (`src/cli/index.ts`, `bin/symspec.mjs`) — commander-based; commands map 1:1 to Change records. Exists for human use and for shell-driven tests.
-- **MCP server** (`src/mcp/server.ts`, `bin/symspec-mcp.mjs`) — `@modelcontextprotocol/sdk` over stdio. Exposes 8 tools. Tool names follow `noun_verb` so `tools/list` groups by domain object. The per-tool input shapes are imported directly from `core/schema.ts` — there is **no second schema layer**. Tool descriptions follow a consistent shape: *what / when / returns + side effects / idempotency + error modes*. Mutating tools end with a hint about calling `analysis_run` next, so the agent learns the verification half of the loop without being told inline.
-
-| MCP tool | Action |
-|---|---|
-| `requirement_create` | create node, returns assigned UUID |
-| `requirement_update` | patch one attribute |
-| `relationship_add` / `relationship_remove` | typed edges |
-| `requirement_delete` | tombstone |
-| `requirements_list` | read |
-| `analysis_run` | three-tier solver report |
-| `sysml_export` | SysML-v2-flavored JSON |
-
-### Export — `exportSysml()` (`src/core/sysml-export.ts`)
-
-Each requirement becomes a `RequirementUsage`-shaped element; each outbound edge becomes a `DeriveRequirement | Satisfy | Verify | Refine` relationship element; EARS slots become typed attributes; the rendered sentence is `documentation`. **Flavored**, not spec-compliant — swapping the export for the OMG Systems Modeling API (Part 3) OpenAPI payloads is a ~200-line change.
-
-### What this POC deliberately doesn't do
-
-- **Real SysML v2 wire format** — see export note above.
-- **Grammar-constrained generation from natural prose** — Change records arrive structured. EARS-from-prose extraction would sit *in front* of this layer (e.g., Claude tool-use over the same MCP server).
-- **Property-based test generation** — next step. Each EARS slot tuple has enough structure to derive `forAll` properties (the Kiro "Correctness" pillar).
-- **Referential integrity at the CRDT layer** — dangling refs are caught by `analyze()`, not prevented at write time. Rich-CRDT approaches (ElectricSQL, Synql 2024) would push this earlier; for a POC it's overkill.
+That is the whole user-facing surface. Everything below is how it works.
 
 ---
 
-## File layout
+## The four-stage pipeline
+
+symspec runs a **forced pipeline** — `parse → lint → check → certify` — and the
+order is load-bearing. A statement that fails an earlier surface stage is
+*excluded* from the formal stage, because feeding unparsed or dangling-reference
+text into an SMT encoding is unsound. The exclusion is reported in the `check`
+envelope's `excluded[]` so nothing disappears silently.
+
+### 1. Parse — prose → EARS slots (regex-first ladder)
+
+`src/parse/`. A three-stage ladder that escalates only as far as it must:
+
+- **Tier 1** (`tier1.ts`) — a zero-dependency regex cascade classifies input by
+  leading EARS keyword in the ordered rungs `complex → unwanted (if…then) →
+  event (when) → state (while) → optional (where) → ubiquitous`. Each rung
+  matches only if the mandatory main clause `(?:the )?<system> shall <response>`
+  parses; otherwise it falls through. Preprocessing strips REQ-ID prefixes
+  (`REQ-042:`), normalizes unicode quotes, and collapses whitespace
+  (`preprocess.ts`); event synonyms (`upon`, `once`, `as soon as`) and
+  non-`shall` modals (`must`, `will`, `should`) normalize to canonical form with
+  a downgraded-confidence provenance note (`normalize.ts`); explicit negators
+  (`shall not store …`) set `negated: true` and retain the *positive* response
+  atom (`negation.ts`), so the formal stage receives `¬R`, not a string
+  containing "not".
+- **Tier 2** (`tier2.ts`) — on escalation only (no rung matched, comma/second
+  keyword in the system group, passive main clause, >60 tokens, top-level
+  `and`/`or`), symspec lazily imports the `wink-nlp` POS parser and attempts
+  clause repair. Clean sentences never load the model.
+- **Tier 3** (`tier3.ts`) — if neither tier yields a full-slot parse, symspec
+  returns a structured error envelope with a stable `ERR_PARSE_*` code, the
+  partial slots it recovered, and mechanical rewrite suggestions — never a
+  low-confidence guess. Every parse produces a `ParseResult` discriminated on
+  `outcome`: `ok` | `skipped` (no-modal prose) | `error`.
+
+### 2. Lint — GtWR rules + free-tier heuristics
+
+`src/lint/` and `src/solvers/free/`. Two deterministic surface passes:
+
+- **Structural (Tier 0)** — `src/core/analyze.ts` runs over a plain-object
+  snapshot: `FND_DANGLING_REFERENCE`, `FND_MISSING_TRIGGER`,
+  `FND_MISSING_PRECONDITION`, `FND_CYCLE` (cycles deduped by canonical
+  rotation), `FND_ORPHAN`.
+- **GtWR lint** — `src/lint/gtwr.ts` implements the ~24 regex/lexicon-checkable
+  INCOSE *Guide to Writing Requirements* v4 rules. Each finding carries a stable
+  `GTWR_R<n>_<slug>` code, a severity (`error` | `warn` | `info`), the offending
+  character span, and a rewrite suggestion where one is defined. Rules with
+  legitimate exceptions (absolutes, universal quantifiers, negation inside a
+  defined logical expression) emit at `warn` — excluded from the pass/fail gate.
+  Exact-duplicate detection (slot-tuple hash) and the weasel-word lexicon scan
+  run alongside (`src/solvers/free/`).
+
+The gate (`src/pipeline/gate.ts`) partitions requirements: any statement with an
+`error`-severity surface finding is marked excluded and never reaches the SMT
+stage.
+
+### 3. Check — SMT formal conflict detection with unsat cores
+
+`src/formal/`. The heart of the tool. Runs in-process on the `z3-solver` WASM
+package — **no external binary is required for a working `symspec check`**.
+
+- **Atomization** (`atomize.ts`, `antonyms.ts`) — the load-bearing contract.
+  A single pure `atomize` function derives Boolean atoms with a conservative,
+  near-exact normalization: lowercase → strip leading articles → strip
+  punctuation → collapse whitespace → underscore-join. It does **not** stem,
+  lemmatize, or strip stopwords beyond leading articles. Every atom is scoped
+  per `systemName`, so identical response text under two systems yields two
+  distinct atoms and never manufactures a cross-system conflict. Negation lands
+  on the *same* atom with opposite polarity, and a 15-pair seed antonym table
+  (`accept↔reject`, `grant↔revoke`, `enable↔disable`, …) unifies polar opposites.
+- **Encoding** (`encode.ts`) — each requirement becomes a guarded implication
+  with an assumption literal, `REQ-i ⇒ (context ⇒ response)`. The encoder is a
+  pure, unit-tested function separate from the solver call.
+- **Findings** — contradiction (`contradiction.ts`) runs per-context-group
+  reachability over the *whole* spec and, on `unsat`, extracts the **minimal**
+  unsat core, filters context assertions, and emits `FND_CONTRADICTION` with
+  exactly the responsible `REQ-*` ids. Subsumption/redundancy
+  (`subsumption.ts`) decide directional implication over pairwise candidates;
+  vacuity (`vacuity.ts`) is relational across the whole spec; a completeness
+  heuristic (`incomplete.ts`) emits `FND_INCOMPLETE` (info); a Jaccard pass
+  (`similar.ts`) emits `FND_SIMILAR_UNUNIFIED` (info) to flag near-synonyms the
+  antonym table missed. Every formal finding carries an `evidence` field
+  (`finding.ts`) with the atom table and the core/witness, so the agent can
+  audit exactly what the solver compared.
+
+**Honest scope.** The formal tier is **sound modulo atomization**: every
+reported conflict is a genuine logical conflict of the requirements *as
+atomized*. The dual is the honest limit — because paraphrases become distinct
+atoms, a real conflict can hide behind unmatched atoms, so **silence is not a
+consistency certificate**. The one false-positive risk is over-unification,
+held back by the conservative normalization and the `FND_SIMILAR_UNUNIFIED`
+reporter. **Contextual ambiguity is not checked** — that judgment is punted to
+the calling agent. There is no temporal/ordering logic and no numeric/arithmetic
+reasoning; the SMT stage evaluates one propositional snapshot. This same scope
+text is surfaced in the `manifest` command's `scope` field. A per-group solver
+`unknown`/timeout emits `FND_NEEDS_REVIEW` and the run continues — an
+inconclusive result is never read as "no conflict".
+
+Portability: `--emit-smt2` writes a standard-conformant SMT-LIB2 artifact (with
+`(set-logic ALL)`, no solver-specific prelude) you can hand to any compliant
+reader; `--solver-path`/`SYMSPEC_Z3`/a PATH `z3`/`cvc5` runs that binary as an
+optional cross-check.
+
+### 4. Certify — optional Lean 4 tier
+
+`src/certify/`. Strictly opt-in and never on the `check` path. `symspec certify`
+generates one batched core-Lean file (no Mathlib, no lake), runs it through
+`lean --json`, and maps the result to `FND_CERTIFIED` (with `#print axioms`
+provenance and a retained, re-checkable `.lean` + pinned `lean-toolchain`
+artifact) or `FND_CERTIFY_FAILED`. If no Lean toolchain is discoverable it
+returns `ERR_LEAN_TOOLCHAIN_MISSING` with an `elan default stable` suggestion
+and never affects any prior SMT result. The default `check` never invokes Lean
+and never requires a toolchain.
+
+---
+
+## Agent-friendly surface
+
+symspec is designed to be driven by a coding agent, not scraped from human
+prose.
+
+- **`manifest`** — the self-describing command. `symspec manifest` emits, as
+  JSON, the full command inventory, per-command argument schemas (derived from
+  the same Zod fields the runtime validates against), the stable code catalogs,
+  the closed envelope `type` set, the honest-scope disclosure, and a live
+  `backends` availability report (z3-wasm, external `z3`/`cvc5`, Lean) with
+  resolved paths and versions — so an agent can query-then-decide before
+  invoking `certify` or `--solver` rather than fail-then-learn. Fetch it once
+  before driving symspec.
+- **Typed envelopes** — every success is `{ apiVersion, type, data }`; every
+  failure is `{ apiVersion, type: "error", error, code, suggestions, partial? }`.
+  Both carry `apiVersion` and a discriminant `type`, so an agent version-
+  negotiates and switches on `type` uniformly. `apiVersion` is a distinct
+  envelope-contract integer, independent of the package version and the document
+  `schemaVersion`.
+- **Stable codes** — `ERR_*`, `FND_*`, and `GTWR_*` are three exported Zod
+  enums, each with a per-code `.describe()`. They are append-only (a snapshot
+  test guards against renumbering or removal) and every error pairs with an
+  actionable `suggestions` array. Examples: `ERR_DOC_NOT_FOUND`,
+  `ERR_DUPLICATE_ID`, `ERR_PARSE_COMPOUND`, `ERR_SOLVER_MISSING`,
+  `ERR_LEAN_TOOLCHAIN_MISSING`. The manifest derives its code tables from these
+  same enums, so emitter and docs cannot drift.
+- **`--dense`** — token-economical output: minified JSON, keys equal to their
+  schema default or `null` omitted, heavy `evidence`/atom-table fields elided
+  (pass `--evidence` to keep them). Field names and the typed schema are
+  identical to non-dense output, so it validates against the same Zod schema and
+  round-trips.
+- **Exit codes** — `0` clean (or warn/info only), `1` an `error`-severity
+  finding is present (success envelope still on stdout), `2` an `ERR_*`
+  operational failure (error envelope on stdout). Output flags never change the
+  exit code.
+- **Output modes** — the JSON envelope is the zero-flag default. `--json` is a
+  no-op compatibility alias; `--pretty` (alias `--human`) opts into prose. An
+  agent never needs a flag to get parseable output.
+- **Importable library** — the CLI is a thin formatter over `src/index.ts`.
+  Anything the CLI does is reachable programmatically:
+  `import { applyChange, analyze, runCheck, checkGtWRules, atomize } from 'symspec'`.
+  The `exports` map and generated `.d.ts` types ship with the package.
+- **`AGENTS.md`** — the agent-integration guide is generated from the same
+  `.describe()` corpus that drives the `manifest`, so it stays in lockstep with
+  the real command surface. Point your agent at `AGENTS.md` (and `symspec
+  manifest`) as the source of truth for the command contract.
+
+---
+
+## Architecture — file map
 
 ```
 src/
+  index.ts             # public library entry (AC-6-5): CLI is a thin formatter over these
   core/
-    schema.ts          # zod schemas (single source of truth) + sentence renderer
-    doc.ts             # Automerge wrapper: load/save/applyChange/merge
-    analyze.ts         # dangling refs, missing slots, cycles, orphans
+    schema.ts          # Zod schemas (single source of truth) + EARS domain model
+    render.ts          # pure renderSentence — sentence is rendered, never authored
+    storage.ts         # pretty-printed, sorted-key JSON; atomic temp-file+rename
+    load.ts            # load-time Zod validation → ERR_DOC_PARSE / ERR_SCHEMA_VERSION
+    doc.ts             # plain-object document model + list/empty helpers
+    changes.ts         # Change discriminated union + applyChange (the only mutation path)
+    codes.ts           # ERR_* enum + per-code .describe() corpus
+    analyze.ts         # Tier-0 structural checks (dangling/missing/cycle/orphan)
     sysml-export.ts    # SysML-v2-flavored JSON projection
-  cli/index.ts         # commander CLI
-  mcp/server.ts        # MCP stdio server
+  parse/               # NL parse ladder — tier1 regex, tier2 wink-nlp, tier3 error,
+                       #   preprocess, normalize, negation, result, batch
+  lint/
+    gtwr.ts            # ~24 INCOSE GtWR v4 rules (code, severity, span, suggestion)
+    codes.ts           # GTWR_* enum + describe corpus
+  formal/              # SMT tier — atomize, antonyms, encode, backend (z3 WASM),
+                       #   contradiction, subsumption, vacuity, incomplete, similar,
+                       #   needs-review, finding (evidence), emit-smt2, binary-backend, codes
   solvers/
-    free/              # exact duplicates, ambiguity (lexical), pairwise filter
-    llm/               # Bedrock Converse pair-judge + ambiguity-judge + ensemble
-    llm/arbiter.ts     # Opus 4.7 InvokeModel + adaptive thinking + xhigh effort
-    index.ts           # runSolvers() orchestrator
-    types.ts           # SolverFinding, CandidatePair, ReqView
-scripts/
-  smoke.ts             # concurrent-edits demo + analysis assertions
-  smoke-incremental.ts # incremental-edits, idempotency, persistence, null-clear
-  smoke-solvers.ts     # solver pipeline; live with BEDROCK_LIVE=1
+    free/              # exact duplicates, ambiguity (lexical), pairwise candidate filter
+    index.ts, types.ts # free+formal orchestrator + shared ReqView/finding types
+  pipeline/
+    gate.ts            # AC-3-7 exclusion gate (error-severity → excluded from symbolize)
+    check.ts           # wires ALL tiers into one `check` envelope; never touches Lean
+  certify/             # Lean 4: discover toolchain, emit batched file, run `lean --json`
+  cli/
+    index.ts           # commander CLI — one spine: resolve → load → run → wrap → render → exit
+    manifest.ts        # self-describing manifest from Zod + .describe()
+    envelope.ts        # typed success/error envelopes + apiVersion
+    descriptions.ts    # single-source command help/summary prose
+    output.ts, dense.ts, exit.ts, resolve-doc.ts, errors.ts, version.ts, backends.ts,
+    scope-text.ts, types-enum.ts, add.ts, update.ts
 bin/
-  symspec.mjs          # CLI entry
-  symspec-mcp.mjs      # MCP server entry
-integration/           # ERPAVal wiring: SKILL.md + mcp-config.json + CLAUDE.md.snippet
+  symspec.mjs          # CLI entry (imports dist/cli.mjs)
 .erpaval/              # see /erpaval below
 ```
+
+---
+
+## Development
+
+```bash
+pnpm install           # from lockfile
+pnpm build             # tsdown → dist/ (library entry + CLI entry, with .d.ts)
+pnpm cli <command>     # run the CLI from source without building (tsx)
+pnpm test              # vitest run — the AC verification suite
+pnpm test:watch        # vitest in watch mode
+pnpm typecheck         # tsc --noEmit
+pnpm lint / lint:fix   # biome check (.) [--write]
+pnpm knip              # unused files / deps / exports
+pnpm check             # full gate: biome ci + tsc --noEmit + vitest run + knip
+```
+
+**Quality gate.** `pnpm check` is the merge gate: `biome ci` clean, `tsc
+--noEmit` clean, `vitest run` green, `knip` clean. A non-zero exit on any of the
+four is a blocker. Every acceptance criterion's stated verification is
+implemented as a test.
+
+**Solvers.** The default `check` needs nothing but the bundled `z3-solver` WASM
+package. The optional external binaries are pinned in `mise.toml` (commented out
+by default) and installed via mise's `github:` backend — `z3`/`cvc5` for the
+`--solver` cross-check, `elan` for the `certify` tier:
+
+```toml
+# mise.toml (uncomment to pin locally)
+# "z3"   = "github:Z3Prover/z3@z3-4.16.0"
+# "cvc5" = "github:cvc5/cvc5@cvc5-1.2.0"
+# "elan" = "github:leanprover/elan"
+```
+
+`mise run check` mirrors `pnpm check`; `mise run build`/`test`/`lint` map to the
+matching pnpm scripts.
 
 ---
 

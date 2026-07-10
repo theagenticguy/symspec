@@ -1,14 +1,24 @@
 /**
  * Solver orchestrator.
  *
- * Stages:
- *   1. free tier — exact duplicates, ambiguity (weasel words), pairwise filter
- *   2. llm tier  — ensemble pair-judge over candidate pairs, ensemble
- *                  ambiguity-judge over every requirement (skip if free tier
- *                  already flagged the same phrase)
+ * Runs two tiers over a document:
  *
- * The CallModel function is injected so tests can run the orchestrator
- * without hitting AWS.
+ *   1. free tier — exact duplicates, ambiguity (weasel words), and the
+ *      pairwise candidate filter. Always runs; deterministic and in-process.
+ *   2. formal tier — in-process Z3 (WASM) SMT checks. Opt-in: only runs when
+ *      the caller injects a {@link FormalTier} runner (`opts.formal`). The
+ *      free tier's candidate pairs are routed to it for the pairwise
+ *      subsumption/redundancy checks; whole-spec checks (contradiction,
+ *      vacuity) run inside the injected runner over the same requirement
+ *      views. `pairsChecked` reports how many candidate pairs the formal tier
+ *      actually evaluated (the formal-pair counter).
+ *
+ * The formal tier is INJECTED rather than imported so this module stays
+ * decoupled from `../formal/*` (which already imports `./types.js`, so a
+ * static dependency here would create a cycle) and so the tier can be stubbed
+ * in tests. The default `check` pipeline (AC-6-8, `../pipeline/check.ts`)
+ * supplies the real Z3-backed runner; when no runner is given the orchestrator
+ * runs the free tier alone.
  */
 
 import type { Doc } from '../core/doc.js'
@@ -16,39 +26,47 @@ import { listRequirements } from '../core/doc.js'
 import { detectAmbiguity } from './free/ambiguity.js'
 import { detectExactDuplicates } from './free/duplicates.js'
 import { emitCandidatePairs } from './free/pairwise-filter.js'
-import type { CallArbiter } from './llm/arbiter.js'
-import { type CallModel, MODELS } from './llm/bedrock-client.js'
-import { ensembleAmbiguity, ensemblePair } from './llm/ensemble.js'
-import { asView, type CandidatePair, type SolverFinding } from './types.js'
+import { asView, type CandidatePair, type ReqView, type SolverFinding } from './types.js'
+
+/** The input a {@link FormalTier} receives: the requirement views plus the free-tier candidate pairs. */
+export type FormalTierInput = {
+  /** Every requirement, projected to the solver view. Whole-spec checks (contradiction/vacuity) run over this. */
+  reqs: readonly ReqView[]
+  /** The free-tier candidate pairs to route to the pairwise (subsumption/redundancy) checks. */
+  pairs: readonly CandidatePair[]
+}
+
+/** What a {@link FormalTier} returns: solver findings plus the count of candidate pairs it evaluated. */
+export type FormalTierResult = {
+  /** Formal findings, already projected into the shared {@link SolverFinding} union (source `formal.smt`). */
+  findings: SolverFinding[]
+  /** How many candidate pairs the formal tier evaluated (the formal-pair counter). */
+  pairsChecked: number
+}
+
+/**
+ * An injected formal-tier runner. The default `check` pipeline supplies a
+ * Z3-backed implementation; tests may stub it. Kept as a plain async function
+ * so this module never statically imports `../formal/*`.
+ */
+export type FormalTier = (input: FormalTierInput) => Promise<FormalTierResult>
 
 export type RunSolversOptions = {
-  /** If provided, LLM tier runs. If omitted, only the free tier runs. */
-  llm?: {
-    call: CallModel
-    primaryModelId?: string
-    secondaryModelId?: string
-    /**
-     * Optional Claude Opus 4.7 arbiter. When configured, the ensemble routes
-     * pairwise disagreements through extended-thinking arbitration instead of
-     * emitting a NeedsReview finding.
-     */
-    arbiter?: CallArbiter
-  }
   /** Override the lexical-similarity threshold used by the pairwise filter. */
   similarityThreshold?: number
-  /** Cap on number of pairs sent to the LLM tier — guards cost. Default 50. */
-  maxLlmPairs?: number
+  /** Injected formal tier. When present, the orchestrator routes candidate pairs to it. */
+  formal?: FormalTier
 }
 
 export type SolverReport = {
   findings: SolverFinding[]
   candidatePairs: CandidatePair[]
-  llmPairsRun: number
+  /** How many candidate pairs the formal tier evaluated. 0 when no formal tier was injected. */
+  pairsChecked: number
 }
 
 export async function runSolvers(doc: Doc, opts: RunSolversOptions = {}): Promise<SolverReport> {
   const reqs = listRequirements(doc).map(asView)
-  const byId = new Map(reqs.map((r) => [r.id, r]))
 
   const findings: SolverFinding[] = []
 
@@ -60,62 +78,20 @@ export async function runSolvers(doc: Doc, opts: RunSolversOptions = {}): Promis
     opts.similarityThreshold !== undefined ? { similarityThreshold: opts.similarityThreshold } : {},
   )
 
-  // Drop pairs where both endpoints were already flagged as exact duplicates —
-  // no point asking the LLM to confirm a deterministic finding.
-  const dupedSet = new Set<string>()
-  for (const f of findings) {
-    if (f.kind === 'ExactDuplicate') {
-      dupedSet.add(pairKey(f.ids[0], f.ids[1]))
-    }
-  }
-  const llmCandidates = candidatePairs.filter((p) => !dupedSet.has(pairKey(p.a, p.b)))
-
-  // ---- LLM tier ---------------------------------------------------------
-  let llmPairsRun = 0
-  if (opts.llm) {
-    const cfg: import('./llm/ensemble.js').EnsembleConfig = {
-      call: opts.llm.call,
-      primaryModelId: opts.llm.primaryModelId ?? MODELS.primary,
-      secondaryModelId: opts.llm.secondaryModelId ?? MODELS.secondary,
-    }
-    if (opts.llm.arbiter) cfg.arbiter = opts.llm.arbiter
-
-    const cap = opts.maxLlmPairs ?? 50
-    const pairsToRun = llmCandidates.slice(0, cap)
-
-    const pairResults = await Promise.all(
-      pairsToRun.map(async (p) => {
-        const a = byId.get(p.a)!
-        const b = byId.get(p.b)!
-        return ensemblePair(cfg, a, b, p)
-      }),
-    )
-    for (const r of pairResults) findings.push(...r)
-    llmPairsRun = pairsToRun.length
-
-    // Ambiguity: skip requirements the free tier already flagged.
-    const freeAmbiguityIds = new Set(
-      findings
-        .filter((f) => f.kind === 'Ambiguity' && f.source === 'free.weasel-words')
-        .map((f) => (f.kind === 'Ambiguity' ? f.id : '')),
-    )
-    const ambiguityTargets = reqs.filter((r) => !freeAmbiguityIds.has(r.id))
-    const ambiguityResults = await Promise.all(
-      ambiguityTargets.map((r) => ensembleAmbiguity(cfg, r)),
-    )
-    for (const r of ambiguityResults) findings.push(...r)
+  // ---- Formal tier (opt-in) --------------------------------------------
+  let pairsChecked = 0
+  if (opts.formal !== undefined) {
+    const formal = await opts.formal({ reqs, pairs: candidatePairs })
+    findings.push(...formal.findings)
+    pairsChecked = formal.pairsChecked
   }
 
-  return { findings, candidatePairs, llmPairsRun }
-}
-
-function pairKey(a: string, b: string): string {
-  return a < b ? `${a}|${b}` : `${b}|${a}`
+  return { findings, candidatePairs, pairsChecked }
 }
 
 export function summarize(report: SolverReport): string {
   const lines = [
-    `${report.findings.length} finding(s); ${report.candidatePairs.length} candidate pair(s); ${report.llmPairsRun} LLM pair call(s).`,
+    `${report.findings.length} finding(s); ${report.candidatePairs.length} candidate pair(s); ${report.pairsChecked} formal pair check(s).`,
   ]
   for (const f of report.findings) {
     lines.push(`  [${f.kind} / ${f.source} / ${f.confidence}] ${f.message}`)

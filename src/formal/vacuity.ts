@@ -1,0 +1,118 @@
+/**
+ * Relational vacuity over the whole spec (AC-4-5).
+ *
+ * A requirement is *vacuous* when its guard (the context that makes it fire)
+ * can never hold given the rest of the spec — so the requirement is dead code.
+ *
+ * ## Why relational, not "unsatisfiable guard"
+ *
+ * A guard atom, or a conjunction of DISTINCT guard atoms, is ALWAYS satisfiable
+ * in isolation — there is always a model that sets them all true. So vacuity is
+ * emphatically NOT "the guard is unsat" (AC-4-5 forbids that formally-wrong
+ * clause). Instead it is relational: assert every OTHER requirement's body plus
+ * this requirement's context/guard literals, and check for `unsat`. `unsat`
+ * means no model of the rest of the spec lets this guard hold — the guard is
+ * unreachable, the requirement vacuous.
+ *
+ * ## Why it is narrow (and shipped at low confidence)
+ *
+ * With regex-only parsing and per-`systemName`-scoped atoms (AC-4-2a), this only
+ * bites when one requirement's RESPONSE atom is another's negated PRECONDITION
+ * atom — e.g. "shall disable maintenance mode" (response `¬maint`) vs "while
+ * maintenance mode is enabled, …" (precondition `maint`) — and both under the
+ * same system so the atoms actually coincide. Real but rare
+ * (research-smt.md §1.5). Findings are therefore emitted at `confidence: 'low'`
+ * (Appendix B `FND_VACUITY`, warn severity, labeled lower confidence).
+ *
+ * ## Purity boundary
+ *
+ * Atomizer-agnostic: consumes {@link EncodedRequirement}s (from the pure
+ * {@link encode}) and a {@link Z3Context}, touching the solver only via
+ * {@link materialize}. It never imports `atomize.ts` or `z3-solver` directly.
+ */
+
+import type { Z3Context } from './backend.js'
+import { and, atom, type EncodedRequirement, type Formula, materialize } from './encode.js'
+
+/** A relational vacuity finding (Appendix B `FND_VACUITY`, warn, low confidence). */
+export interface VacuityFinding {
+  code: 'FND_VACUITY'
+  severity: 'warn'
+  /** Labeled lower confidence — this heuristic is narrow under regex parsing (AC-4-5). */
+  confidence: 'low'
+  /** The requirement whose guard is unreachable given the rest of the spec. */
+  requirementId: string
+  message: string
+}
+
+/**
+ * The guard literals of an encoded requirement: the context atoms (precondition
+ * / trigger) that must hold for the requirement to fire. Ubiquitous requirements
+ * have no context slots and therefore no guard — they are never vacuity
+ * candidates (a bare `R` always "fires"). Returns `undefined` for those.
+ */
+function guardLiterals(e: EncodedRequirement): Formula | undefined {
+  const contextAtoms = e.atoms.filter((row) => row.kind !== 'resp')
+  if (contextAtoms.length === 0) return undefined
+  const lits = contextAtoms.map((row) => (row.negated ? notAtom(row.atom) : atom(row.atom)))
+  return and(lits)
+}
+
+/** Local negated-atom constructor (avoids importing `not` just for one call site). */
+function notAtom(name: string): Formula {
+  return { op: 'not', arg: atom(name) }
+}
+
+/**
+ * Check a single requirement for relational vacuity against the whole spec.
+ * Returns `undefined` when the requirement has no guard, when the guard is
+ * reachable (`sat`), or when the solver is inconclusive (`unknown` — never
+ * reported as vacuous).
+ */
+export async function checkVacuityOf(
+  ctx: Z3Context,
+  target: EncodedRequirement,
+  all: readonly EncodedRequirement[],
+): Promise<VacuityFinding | undefined> {
+  const guard = guardLiterals(target)
+  if (guard === undefined) return undefined
+
+  const solver = new ctx.Solver()
+  // Assert every OTHER requirement's body (its behavioural constraint, minus the
+  // per-req assumption guard which is irrelevant here).
+  for (const other of all) {
+    if (other.id === target.id) continue
+    solver.add(materialize(ctx, other.body))
+  }
+  // Assert this requirement's guard holds. unsat ⇒ unreachable ⇒ vacuous.
+  solver.add(materialize(ctx, guard))
+
+  const res = await solver.check()
+  if (res !== 'unsat') return undefined
+
+  return {
+    code: 'FND_VACUITY',
+    severity: 'warn',
+    confidence: 'low',
+    requirementId: target.id,
+    message: `${target.id}'s guard is unreachable given the rest of the spec; the requirement can never fire (low confidence — regex-level heuristic).`,
+  }
+}
+
+/**
+ * Run relational vacuity over the whole spec, one guarded requirement at a time.
+ * Whole-spec (not pairwise): every other requirement participates in each check,
+ * because a guard's unreachability can be forced by any combination of other
+ * requirements' responses (AC-4-5, research-smt.md §1.5).
+ */
+export async function checkVacuity(
+  ctx: Z3Context,
+  all: readonly EncodedRequirement[],
+): Promise<VacuityFinding[]> {
+  const findings: VacuityFinding[] = []
+  for (const target of all) {
+    const finding = await checkVacuityOf(ctx, target, all)
+    if (finding !== undefined) findings.push(finding)
+  }
+  return findings
+}

@@ -1,81 +1,147 @@
 import { describe, expect, it } from 'vitest'
 import { analyze } from '../analyze.js'
-import { applyChange, emptyDoc, newId } from '../doc.js'
+import type { EarsPattern, Requirement, RequirementsDoc } from '../schema.js'
+import { SCHEMA_VERSION } from '../schema.js'
 
-const create = (
+const now = '2024-01-01T00:00:00.000Z'
+
+/** Build a plain-object Requirement. */
+const req = (
   id: string,
-  patternType:
-    | 'ubiquitous'
-    | 'event-driven'
-    | 'state-driven'
-    | 'optional-feature'
-    | 'unwanted-behavior',
+  patternType: EarsPattern,
   systemName: string,
   systemResponse: string,
-  extras: { trigger?: string; preCondition?: string } = {},
-) => ({
-  kind: 'CreateRequirement' as const,
+  extras: Partial<
+    Pick<Requirement, 'trigger' | 'preCondition' | 'derives' | 'satisfies' | 'verifies' | 'refines'>
+  > = {},
+): Requirement => ({
   id,
-  attrs: { patternType, systemName, systemResponse, ...extras },
+  patternType,
+  systemName,
+  systemResponse,
+  sentence: `The ${systemName} shall ${systemResponse}.`,
+  priority: 'medium',
+  status: 'draft',
+  derives: [],
+  satisfies: [],
+  verifies: [],
+  refines: [],
+  createdAt: now,
+  updatedAt: now,
+  ...extras,
+})
+
+/** Build a plain-object RequirementsDoc snapshot. */
+const docOf = (...reqs: Requirement[]): RequirementsDoc => ({
+  schemaVersion: SCHEMA_VERSION,
+  requirements: Object.fromEntries(reqs.map((r) => [r.id, r])),
 })
 
 describe('analyze', () => {
   it('returns no findings for a single ubiquitous requirement', () => {
-    const id = newId()
-    const doc = applyChange(emptyDoc(), create(id, 'ubiquitous', 'svc', 'log everything'))
+    const doc = docOf(req('a', 'ubiquitous', 'svc', 'log everything'))
     expect(analyze(doc)).toEqual([])
   })
 
   it('flags MissingTrigger for an event-driven requirement with no trigger', () => {
-    const id = newId()
-    const doc = applyChange(emptyDoc(), create(id, 'event-driven', 'svc', 'do thing'))
+    const doc = docOf(req('a', 'event-driven', 'svc', 'do thing'))
     const findings = analyze(doc)
-    expect(findings.some((f) => f.kind === 'MissingTrigger' && f.id === id)).toBe(true)
+    expect(findings.some((f) => f.kind === 'MissingTrigger' && f.id === 'a')).toBe(true)
   })
 
   it('flags MissingPreCondition for state-driven and optional-feature without precondition', () => {
-    const stateId = newId()
-    const optId = newId()
-    let doc = applyChange(emptyDoc(), create(stateId, 'state-driven', 'svc', 'reject logins'))
-    doc = applyChange(doc, create(optId, 'optional-feature', 'svc', 'redirect to IdP'))
+    const doc = docOf(
+      req('state', 'state-driven', 'svc', 'reject logins'),
+      req('opt', 'optional-feature', 'svc', 'redirect to IdP'),
+    )
     const findings = analyze(doc)
     expect(findings.filter((f) => f.kind === 'MissingPreCondition')).toHaveLength(2)
   })
 
-  it('flags DanglingReference when an edge target is deleted', () => {
-    const a = newId()
-    const b = newId()
-    let doc = applyChange(emptyDoc(), create(a, 'ubiquitous', 'svc', 'do A'))
-    doc = applyChange(doc, create(b, 'ubiquitous', 'svc', 'do B'))
-    doc = applyChange(doc, { kind: 'AddRelationship', from: a, relation: 'derives', to: b })
-    doc = applyChange(doc, { kind: 'DeleteRequirement', id: b })
+  it('flags DanglingReference when an edge target no longer exists in the snapshot', () => {
+    const doc = docOf(req('a', 'ubiquitous', 'svc', 'do A', { derives: ['missing'] }))
     const findings = analyze(doc)
     const dangling = findings.find((f) => f.kind === 'DanglingReference')
     expect(dangling).toBeDefined()
     if (dangling && dangling.kind === 'DanglingReference') {
-      expect(dangling.from).toBe(a)
-      expect(dangling.to).toBe(b)
+      expect(dangling.from).toBe('a')
+      expect(dangling.to).toBe('missing')
       expect(dangling.relation).toBe('derives')
     }
   })
 
   it('flags CycleDetected on a derives cycle', () => {
-    const a = newId()
-    const b = newId()
-    let doc = applyChange(emptyDoc(), create(a, 'ubiquitous', 'svc', 'do A'))
-    doc = applyChange(doc, create(b, 'ubiquitous', 'svc', 'do B'))
-    doc = applyChange(doc, { kind: 'AddRelationship', from: a, relation: 'derives', to: b })
-    doc = applyChange(doc, { kind: 'AddRelationship', from: b, relation: 'derives', to: a })
+    const doc = docOf(
+      req('a', 'ubiquitous', 'svc', 'do A', { derives: ['b'] }),
+      req('b', 'ubiquitous', 'svc', 'do B', { derives: ['a'] }),
+    )
     const findings = analyze(doc)
     expect(findings.some((f) => f.kind === 'CycleDetected')).toBe(true)
   })
 
+  it('flags a self-loop (a derives a) exactly once', () => {
+    const doc = docOf(req('a', 'ubiquitous', 'svc', 'do A', { derives: ['a'] }))
+    const findings = analyze(doc).filter((f) => f.kind === 'CycleDetected')
+    expect(findings).toHaveLength(1)
+    if (findings[0] && findings[0].kind === 'CycleDetected') {
+      expect(findings[0].nodes).toEqual(['a'])
+    }
+  })
+
+  it('dedupes the same cycle found from two different entry nodes (canonical rotation)', () => {
+    // a -> b -> c -> a is one cycle; DFS starting from each node independently
+    // would (pre-fix) find and report it once per entry node it starts from
+    // within the same traversal. Add a 4th node that also derives into the
+    // cycle at a different point, so the DFS root loop visits the cycle from
+    // more than one starting id and the dedupe must collapse them.
+    const doc = docOf(
+      req('a', 'ubiquitous', 'svc', 'do A', { derives: ['b'] }),
+      req('b', 'ubiquitous', 'svc', 'do B', { derives: ['c'] }),
+      req('c', 'ubiquitous', 'svc', 'do C', { derives: ['a'] }),
+      req('d', 'ubiquitous', 'svc', 'do D', { derives: ['b'] }),
+    )
+    const findings = analyze(doc).filter((f) => f.kind === 'CycleDetected')
+    expect(findings).toHaveLength(1)
+    if (findings[0] && findings[0].kind === 'CycleDetected') {
+      // canonical rotation starts at the lexicographically-smallest node id
+      expect(findings[0].nodes).toEqual(['a', 'b', 'c'])
+    }
+  })
+
+  it('dedupes the same cycle regardless of requirement insertion order', () => {
+    const cycleAtA = docOf(
+      req('a', 'ubiquitous', 'svc', 'do A', { derives: ['b'] }),
+      req('b', 'ubiquitous', 'svc', 'do B', { derives: ['c'] }),
+      req('c', 'ubiquitous', 'svc', 'do C', { derives: ['a'] }),
+    )
+    const cycleAtC = docOf(
+      req('c', 'ubiquitous', 'svc', 'do C', { derives: ['a'] }),
+      req('a', 'ubiquitous', 'svc', 'do A', { derives: ['b'] }),
+      req('b', 'ubiquitous', 'svc', 'do B', { derives: ['c'] }),
+    )
+    const findingsA = analyze(cycleAtA).filter((f) => f.kind === 'CycleDetected')
+    const findingsC = analyze(cycleAtC).filter((f) => f.kind === 'CycleDetected')
+    expect(findingsA).toHaveLength(1)
+    expect(findingsC).toHaveLength(1)
+    if (
+      findingsA[0] &&
+      findingsA[0].kind === 'CycleDetected' &&
+      findingsC[0] &&
+      findingsC[0].kind === 'CycleDetected'
+    ) {
+      expect(findingsA[0].nodes).toEqual(findingsC[0].nodes)
+    }
+  })
+
   it('flags OrphanRequirement only when more than one node exists and the orphan has no edges', () => {
-    const a = newId()
-    const b = newId()
-    let doc = applyChange(emptyDoc(), create(a, 'ubiquitous', 'svc', 'do A'))
-    doc = applyChange(doc, create(b, 'ubiquitous', 'svc', 'do B'))
+    const doc = docOf(req('a', 'ubiquitous', 'svc', 'do A'), req('b', 'ubiquitous', 'svc', 'do B'))
     const findings = analyze(doc)
     expect(findings.filter((f) => f.kind === 'OrphanRequirement')).toHaveLength(2)
+  })
+
+  it('does not flag OrphanRequirement for a single-requirement snapshot', () => {
+    const doc = docOf(req('a', 'ubiquitous', 'svc', 'do A'))
+    const findings = analyze(doc)
+    expect(findings.filter((f) => f.kind === 'OrphanRequirement')).toHaveLength(0)
   })
 })

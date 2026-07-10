@@ -2,9 +2,12 @@
  * Free solver: exact structural duplicates.
  *
  * Two requirements are exact duplicates when their full (patternType,
- * preCondition, trigger, systemName, systemResponse) tuple matches. This is
- * cheap, deterministic, and high-confidence — anything caught here doesn't
- * need an LLM follow-up.
+ * preCondition, trigger, systemName, systemResponse, negated) tuple matches.
+ * `negated` is part of the key (C1): "shall X" and "shall not X" share every
+ * other slot but are OPPOSITES, so they must NOT collapse to an exact
+ * duplicate — that pair is a contradiction the formal tier reports, never a
+ * "delete one of these" duplicate. This is cheap, deterministic, and
+ * high-confidence — anything caught here doesn't need an LLM follow-up.
  */
 
 import type { ReqView, SolverFinding } from '../types.js'
@@ -18,6 +21,7 @@ export function detectExactDuplicates(reqs: ReqView[]): SolverFinding[] {
       r.trigger ?? '',
       r.systemName,
       r.systemResponse,
+      r.negated === true ? 'neg' : 'pos',
     ].join('␟') // unit separator — avoid collisions with content
     const existing = groups.get(key)
     if (existing) existing.push(r)

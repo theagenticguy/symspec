@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Neurosymbolic spec validator: EARS requirements graph in Automerge, three-tier solver (deterministic + Bedrock ensemble + Opus 4.7 arbiter), CLI + MCP",
+  "description": "Neurosymbolic spec validator for coding agents: EARS requirements via regex-first parsing, INCOSE GtWR lint, and Z3 SMT formal conflict detection with unsat-core evidence, plus optional Lean 4 certification and an agent-friendly CLI (manifest, typed JSON envelopes, stable error codes).",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -18,22 +18,25 @@
     "dist",
     "bin",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "AGENTS.md"
   ],
   "bin": {
-    "symspec": "./bin/symspec.mjs",
-    "symspec-mcp": "./bin/symspec-mcp.mjs"
+    "symspec": "./bin/symspec.mjs"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.mts",
   "scripts": {
     "build": "tsdown",
     "prepack": "tsdown",
     "typecheck": "tsc --noEmit",
     "cli": "tsx src/cli/index.ts",
-    "mcp": "tsx src/mcp/server.ts",
-    "smoke": "tsx scripts/smoke.ts",
-    "smoke:inc": "tsx scripts/smoke-incremental.ts",
-    "smoke:solvers": "tsx scripts/smoke-solvers.ts",
-    "smoke:all": "tsx scripts/smoke.ts && tsx scripts/smoke-incremental.ts && tsx scripts/smoke-solvers.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -41,19 +44,22 @@
     "lint:fix": "biome check . --write",
     "knip": "knip",
     "check": "biome ci . && tsc --noEmit && vitest run && knip",
-    "hooks:install": "lefthook install"
+    "hooks:install": "lefthook install",
+    "gen:agents": "tsx scripts/gen-agents.ts",
+    "check:agents": "tsx scripts/gen-agents.ts --stdout | diff -u AGENTS.md - >/dev/null || (echo \"AGENTS.md is stale — run pnpm gen:agents\" >&2; exit 1)"
   },
   "engines": {
     "node": ">=24",
     "pnpm": ">=11"
   },
   "dependencies": {
-    "@automerge/automerge": "^3.2.6",
-    "@aws-sdk/client-bedrock-runtime": "^3.1046.0"
+    "@huggingface/transformers": "^4.2.0",
+    "wink-eng-lite-web-model": "^1.8.1",
+    "wink-nlp": "^2.4.0",
+    "z3-solver": "^4.16.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^25.7.0",
     "@vitest/coverage-v8": "^4.1.6",
     "commander": "^14.0.3",
@@ -68,7 +74,8 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild",
-      "lefthook"
+      "lefthook",
+      "z3-solver"
     ]
   }
 }

@@ -20,3 +20,6 @@ pre-push:
 
     - name: knip
       run: ./node_modules/.bin/knip --no-progress
+
+    - name: agents-md-drift
+      run: pnpm run check:agents

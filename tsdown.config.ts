@@ -2,26 +2,26 @@ import { defineConfig } from 'tsdown'
 
 export default defineConfig({
   entry: {
+    // `index` is the importable library entry (AC-6-5, AC-7-2): the CLI is a
+    // thin formatter over the exact functions re-exported from `src/index.ts`.
+    // `dts: true` below emits `dist/index.d.ts` alongside it so consumers get
+    // full type information, not just the runtime JS.
+    index: 'src/index.ts',
     cli: 'src/cli/index.ts',
-    mcp: 'src/mcp/server.ts',
   },
   format: 'esm',
   platform: 'node',
   target: 'node24',
   outDir: 'dist',
   sourcemap: true,
-  dts: false,
+  dts: true,
   clean: true,
   treeshake: true,
   shims: false,
   // tsdown externalizes everything in `dependencies` by default. Override:
-  // pull commander/zod/MCP SDK into the bundle (they're pure JS and tree-shake
-  // cleanly), but keep Automerge (ships a WASM blob the loader resolves
-  // relative to its own package) and AWS SDK (huge, uses import.meta.url for
-  // credential providers) external so the user installs them via the
-  // package's own `dependencies`.
+  // pull commander/zod into the bundle (they're pure JS and tree-shake
+  // cleanly).
   deps: {
-    alwaysBundle: ['commander', 'zod', /^@modelcontextprotocol\/sdk(\/|$)/],
-    neverBundle: ['@automerge/automerge', /^@aws-sdk\//, /^@smithy\//],
+    alwaysBundle: ['commander', 'zod'],
   },
 })

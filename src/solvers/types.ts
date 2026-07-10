@@ -4,28 +4,24 @@
  * Solvers fall into two tiers:
  *   - free/    : deterministic, in-process, ~microseconds per pair. Run over
  *                the whole graph. Emit two things: findings, and a list of
- *                candidate pairs worth escalating to the LLM tier.
- *   - llm/     : Bedrock-backed judges using two models in parallel. Each
- *                call is seconds and costs a few tenths of a cent. We only
- *                run them on pairs the free tier already flagged.
+ *                candidate pairs worth escalating to the formal tier.
+ *   - formal/  : in-process Z3 (WASM) SMT checks. Contradiction and vacuity
+ *                run per context-group over the whole spec; subsumption and
+ *                redundancy run only over the candidate pairs the free tier
+ *                flagged. A solver verdict is a proof, not a probability.
  *
  * Every finding carries:
  *   - source: which solver produced it (debugging + dedup)
- *   - confidence: "high" if deterministic OR both LLMs agreed; "low" if only
- *                 one LLM said so or the structural heuristic is fuzzy.
- *   - rationale: optional human-readable reason (LLM-produced for the LLM tier).
+ *   - confidence: "high" if formally proved OR deterministic; "low" if the
+ *                 result depends on a lossy NL parse or a fuzzy heuristic.
+ *   - rationale: optional human-readable reason (for the formal tier this is
+ *                the solver artifact — unsat core / witness — surfaced as prose).
  */
 
 import type { Requirement } from '../core/schema.js'
 
 export type Confidence = 'high' | 'low'
-export type SolverSource =
-  | 'free.exact-duplicate'
-  | 'free.contradiction-candidate'
-  | 'free.subsumption-candidate'
-  | 'free.weasel-words'
-  | 'llm.pair-judge'
-  | 'llm.ambiguity-judge'
+export type SolverSource = 'free.exact-duplicate' | 'free.weasel-words' | 'formal.smt'
 
 export type SolverFinding =
   | {
@@ -71,18 +67,23 @@ export type SolverFinding =
       rationale?: string
     }
 
-/** A candidate pair the free tier has flagged for LLM follow-up. */
+/** A candidate pair the free tier has flagged for a formal (SMT) follow-up. */
 export type CandidatePair = {
   a: string
   b: string
-  /** Why the free tier thinks this pair is interesting. Drives the LLM prompt. */
+  /** Why the free tier thinks this pair is interesting. Drives which formal query runs. */
   reason:
     | 'same-system-same-trigger-different-response'
     | 'same-system-overlapping-precondition'
     | 'near-duplicate-sentence'
 }
 
-/** Minimal projection of a Requirement used by solvers. */
+/**
+ * Minimal projection of a Requirement used by solvers. Carries `negated` (the
+ * persisted AC-2-4 response-polarity flag, C1) so the exact-duplicate hash and
+ * the encoder path see the same polarity the stored requirement declares — a
+ * negated/positive pair must NOT collapse to an exact duplicate.
+ */
 export type ReqView = Pick<
   Requirement,
   | 'id'
@@ -91,6 +92,7 @@ export type ReqView = Pick<
   | 'trigger'
   | 'systemName'
   | 'systemResponse'
+  | 'negated'
   | 'sentence'
   | 'priority'
   | 'status'
@@ -104,6 +106,7 @@ export function asView(r: Requirement): ReqView {
     trigger: r.trigger,
     systemName: r.systemName,
     systemResponse: r.systemResponse,
+    negated: r.negated,
     sentence: r.sentence,
     priority: r.priority,
     status: r.status,

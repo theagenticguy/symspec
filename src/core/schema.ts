@@ -4,9 +4,10 @@
  * Design rules:
  *   1. Every atomic field is declared once with a rich `.describe()` covering
  *      what the field is, why it exists, and at least one concrete example.
- *      These descriptions propagate into the JSON Schema that the MCP SDK
- *      emits for tool inputs — they are the primary surface the LLM reads
- *      to decide how to populate each argument.
+ *      These descriptions propagate into the JSON-Schema argument shapes that
+ *      `symspec manifest` emits and into the generated agent docs — they are
+ *      the primary surface a coding agent reads to decide how to populate
+ *      each argument.
  *   2. The full RequirementSchema, the discriminated-union ChangeSchema, and
  *      the per-tool input shapes are all composed from the same atomic fields.
  *      Adding a new attribute means editing exactly one place.
@@ -115,11 +116,23 @@ const systemNameDescription = lines(
 const systemResponseDescription = lines(
   "What the system shall do — the verb phrase following 'shall'.",
   "Phrase as an imperative-style verb phrase; do not include the word 'shall' itself.",
+  "Do NOT bake negation into this text with a leading 'not'/'never' — express a prohibition by",
+  'leaving the response POSITIVE and setting the `negated` flag instead (see `negated`).',
   'Should be testable: an outside observer should be able to confirm whether the behavior occurred.',
   'Examples:',
   "  - 'issue a session token'",
   "  - 'lock the account for 15 minutes'",
   "  - 'reject all incoming login attempts'",
+)
+
+const negatedDescription = lines(
+  'Response-polarity flag (AC-2-4). `true` means the requirement PROHIBITS the response —',
+  "it renders 'shall not <systemResponse>' and encodes as ¬R for the formal tier.",
+  "Keep `systemResponse` POSITIVE and set this flag; never bake a leading 'not' into the response",
+  "text. This is what lets 'shall X' and 'shall not X' share one atom at opposite polarity, so the",
+  'contradiction checker sees them as opposites (FND_CONTRADICTION) rather than as duplicate text.',
+  "Defaults to false (a plain 'shall <response>' obligation).",
+  'Examples: false for "issue a session token"; true for "issue a session token" (renders "shall not issue a session token").',
 )
 
 const priorityDescription = lines(
@@ -150,7 +163,7 @@ const verificationMethodDescription = lines(
 const idDescription = lines(
   'Stable UUID identifying the requirement node.',
   'Assigned once at creation and never reused. All edges reference nodes by this UUID,',
-  'so renames, reorders, or merges across replicas never break references.',
+  'so renaming a requirement or reordering the document never breaks a reference.',
   "Example: '550e8400-e29b-41d4-a716-446655440000'",
 )
 
@@ -166,8 +179,8 @@ const edgeArrayDescription = (relation: Relation, semantics: string, example: st
     `Outbound ${relation} edges from this requirement. Each entry is the UUID of a target requirement node.`,
     semantics,
     `Example target list: ${example}`,
-    'Dangling targets (UUIDs that no longer resolve) are surfaced by the analysis pass, not enforced at write time —',
-    'this keeps the CRDT layer simple and lets concurrent edits converge before integrity is checked.',
+    'Dangling targets (UUIDs that no longer resolve) are surfaced as findings by `symspec check`, not enforced at write time —',
+    'writes stay permissive so you can build the graph in any order; integrity is a lint concern, not a write barrier.',
   )
 
 const relationDescription = lines(
@@ -203,6 +216,7 @@ export const f = {
   trigger: z.string().min(1).describe(triggerDescription),
   systemName: z.string().min(1).describe(systemNameDescription),
   systemResponse: z.string().min(1).describe(systemResponseDescription),
+  negated: z.boolean().describe(negatedDescription),
   sentence: z.string().describe(sentenceDescription),
   priority: z.enum(PRIORITIES).describe(priorityDescription),
   status: z.enum(STATUSES).describe(statusDescription),
@@ -212,7 +226,7 @@ export const f = {
     .describe(
       edgeArrayDescription(
         'derives',
-        'The derives DAG must be acyclic — cycles are surfaced as findings by the analysis pass.',
+        'The derives DAG must be acyclic — cycles are surfaced as findings by `symspec check`.',
         "['7a1b...', 'c4f3...']",
       ),
     ),
@@ -268,6 +282,7 @@ export const RequirementSchema = z
     trigger: f.trigger.optional(),
     systemName: f.systemName,
     systemResponse: f.systemResponse,
+    negated: f.negated.default(false),
     sentence: f.sentence,
     priority: f.priority.default('medium'),
     status: f.status.default('draft'),
@@ -285,10 +300,62 @@ export const RequirementSchema = z
       'Combines the five EARS structural slots (patternType + preCondition + trigger + systemName + systemResponse)',
       'with typed business metadata (priority, status, verificationMethod) and four arrays of typed outbound edges.',
       'The `sentence` field is a denormalized rendering of the EARS slots, maintained automatically.',
-      'Every node has a stable UUID so edges survive renames, reorders, and concurrent edits across replicas.',
+      'Every node has a stable UUID so edges survive renames and reorders of the document.',
     ),
   )
 export type Requirement = z.infer<typeof RequirementSchema>
+
+/**
+ * Load-time schema for the whole on-disk document (AC-1-4). Keys the flat
+ * `requirements` map by UUID — `z.record(f.id, RequirementSchema)` rejects
+ * any non-UUID key up front, matching AC-1-2's "keyed by stable UUID" shape.
+ * `schemaVersion` is validated as an integer only; whether it equals the
+ * CURRENT `SCHEMA_VERSION` is a separate, disjoint check (AC-1-9,
+ * `ERR_SCHEMA_VERSION`) performed in `load.ts` after this schema already
+ * accepted the document as well-formed v2-shaped JSON.
+ */
+/**
+ * One glossary entry (AC-9-1): a canonical response phrasing plus the alias
+ * phrasings that mean the same thing. Agent-confirmed synonyms live here, in
+ * the committed document, so the formal tier can treat "issue a session token"
+ * and "issue a login credential" as one atom (INCOSE C11 term-consistency).
+ * The semantic-similarity tier only PROPOSES entries; this committed list is
+ * the deterministic bridge the SMT verdict path actually consults.
+ */
+export const GlossaryEntrySchema = z
+  .object({
+    canonical: z
+      .string()
+      .min(1)
+      .describe('The canonical response phrasing all aliases collapse to.'),
+    aliases: z
+      .array(z.string().min(1))
+      .describe('Synonymous phrasings that atomize to the canonical phrase.'),
+  })
+  .describe('A canonical phrase and its synonymous aliases (AC-9-1).')
+
+export const RequirementsDocSchema = z
+  .object({
+    schemaVersion: z.number().int(),
+    requirements: z.record(f.id, RequirementSchema),
+    glossary: z
+      .array(GlossaryEntrySchema)
+      .default([])
+      .describe(
+        lines(
+          'Agent-confirmed synonym groups (AC-9-1). Optional; defaults to []. The formal tier',
+          'canonicalizes response atoms through this list so paraphrased conflicts are provable.',
+        ),
+      ),
+  })
+  .describe(
+    lines(
+      'The whole requirements document as persisted to disk: a schema version tag, the',
+      'flat UUID-keyed map of requirement nodes, and an optional synonym glossary. Validated',
+      'at load time (AC-1-4) — a document that is not valid JSON, or is valid JSON that fails',
+      'this schema, is rejected with ERR_DOC_PARSE before any command runs.',
+    ),
+  )
 
 /** What a caller may legally supply when creating a requirement. */
 export const CreateRequirementAttrsSchema = z
@@ -296,6 +363,7 @@ export const CreateRequirementAttrsSchema = z
     patternType: f.patternType,
     systemName: f.systemName,
     systemResponse: f.systemResponse,
+    negated: f.negated.optional(),
     trigger: f.trigger.optional(),
     preCondition: f.preCondition.optional(),
     priority: f.priority.optional(),
@@ -306,20 +374,22 @@ export const CreateRequirementAttrsSchema = z
     lines(
       'Initial attributes for a new requirement. The runtime fills in id, sentence, createdAt, updatedAt,',
       "and default values for omitted optional fields (priority='medium', status='draft', edges=[]).",
-      'Pre-condition / trigger are not required at the schema level but the analysis pass will flag missing',
-      'ones for patterns that require them.',
+      'Pre-condition / trigger are not required at the schema level, but `symspec check` will flag a missing',
+      'one for any pattern that requires it (e.g. an event-driven requirement with no trigger).',
     ),
   )
 
 // ---------------------------------------------------------------------------
-// Per-tool input shapes (raw ZodRawShape objects for MCP `.tool()` reuse).
-// Each shape is the exact set of arguments the corresponding tool accepts.
+// Per-command input shapes (raw ZodRawShape objects reused by the CLI layer
+// and the manifest). Each shape is the exact set of arguments the
+// corresponding `symspec` command accepts.
 // ---------------------------------------------------------------------------
 
 export const RequirementCreateInputShape = {
   patternType: f.patternType,
   systemName: f.systemName,
   systemResponse: f.systemResponse,
+  negated: f.negated.optional(),
   trigger: f.trigger.optional(),
   preCondition: f.preCondition.optional(),
   priority: f.priority.optional(),
@@ -345,7 +415,7 @@ export const RelationshipAddInputShape = {
     lines(
       'Target requirement UUID — the destination of the edge.',
       'May refer to a node that is later deleted; the resulting dangling reference is then surfaced',
-      'by analysis_run rather than being prevented at write time.',
+      'as a finding by `symspec check` rather than being prevented at write time.',
     ),
   ),
 }
@@ -361,7 +431,7 @@ export const RequirementDeleteInputShape = {
     lines(
       'UUID of the requirement to delete.',
       'The node is removed from the document. Any inbound edges from other requirements become',
-      'dangling references and will be surfaced by the next analysis_run call.',
+      'dangling references and will be surfaced by the next `symspec check` run.',
     ),
   ),
 }
@@ -419,49 +489,28 @@ export const ChangeSchema = z
         id: f.id,
       })
       .describe(
-        'Tombstone a requirement. Inbound edges from surviving nodes become dangling references surfaced by analysis_run.',
+        'Tombstone a requirement. Inbound edges from surviving nodes become dangling references surfaced by `symspec check`.',
       ),
   ])
   .describe(
     lines(
       'One operation in the agent-facing transactional API.',
       'Each Change is self-contained, schema-validated, and references elements by stable UUID rather than by JSON path —',
-      'this is what makes the format robust against concurrent reordering at the storage (CRDT) layer.',
+      'so a batch composed against one snapshot of the document still applies cleanly after unrelated nodes are added, removed, or reordered.',
       "A 'Commit' in our model is a list of Change records applied as a single unit by the runtime.",
     ),
   )
 export type Change = z.infer<typeof ChangeSchema>
 
 // ---------------------------------------------------------------------------
-// EARS sentence renderer
+// EARS sentence renderer — implementation lives in render.ts (AC-1-3); kept
+// as a small marker section here so the domain-model doc comment above and
+// the renderer stay adjacent in the reading order this file has always had.
+// The pure `renderSentence` function is defined in `render.ts` and
+// re-exported below so existing importers of `schema.js` are unaffected.
 // ---------------------------------------------------------------------------
 
-/**
- * Render an EARS sentence from its structured slots. Follows Mavin's templates;
- * pre-condition + trigger combine via "While <pre>, when <trigger>, ...".
- */
-export function renderSentence(
-  r: Pick<
-    Requirement,
-    'patternType' | 'preCondition' | 'trigger' | 'systemName' | 'systemResponse'
-  >,
-): string {
-  const resp = `the ${r.systemName} shall ${r.systemResponse}`
-  switch (r.patternType) {
-    case 'ubiquitous':
-      return `The ${r.systemName} shall ${r.systemResponse}.`
-    case 'event-driven':
-      return r.preCondition
-        ? `While ${r.preCondition}, when ${r.trigger ?? ''}, ${resp}.`
-        : `When ${r.trigger ?? ''}, ${resp}.`
-    case 'state-driven':
-      return `While ${r.preCondition ?? ''}, ${resp}.`
-    case 'optional-feature':
-      return `Where ${r.preCondition ?? ''}, ${resp}.`
-    case 'unwanted-behavior':
-      return `If ${r.trigger ?? ''}, then ${resp}.`
-  }
-}
+export { renderSentence } from './render.js'
 
 // ---------------------------------------------------------------------------
 // Analysis findings
@@ -500,13 +549,24 @@ export type Finding =
 // ---------------------------------------------------------------------------
 
 /**
- * The root Automerge document — a flat map keyed by UUID. Flat-map shape is
- * the simplest structure that plays well with CRDT semantics: there are no
- * array indices for replicas to fight over.
+ * The root on-disk document (AC-1-2): a schema version tag plus a flat map
+ * keyed by UUID. The flat-map-by-UUID shape is the simplest structure for
+ * stable cross-reference identity, since edges never depend on positional
+ * indices.
+ * {@link RequirementsDocSchema} is the load-time Zod validator for this
+ * shape (AC-1-4); this hand-written type and that schema are kept
+ * structurally identical (see `load.test.ts` / `schema.test.ts`).
  */
+/** One committed synonym group (AC-9-1). See {@link GlossaryEntrySchema}. */
+export type GlossaryEntry = {
+  canonical: string
+  aliases: string[]
+}
+
 export type RequirementsDoc = {
   schemaVersion: number
   requirements: Record<string, Requirement>
+  glossary: GlossaryEntry[]
 }
 
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
