@@ -12,6 +12,7 @@ lessons before starting work.
 - [exactOptionalPropertyTypes — omit the key, don't assign undefined](solutions/conventions/exact-optional-property-types-omit-key-idiom.md)
 - [Biome noNonNullAssertion off when noUncheckedIndexedAccess is on](solutions/conventions/biome-noNonNullAssertion-off-when-noUncheckedIndexedAccess.md)
 - [knip can't trace variable-specifier dynamic imports — ignoreDependencies carve-out](solutions/conventions/knip-variable-specifier-dynamic-import.md)
+- [transformers.js can't force ONNX WASM in Node — drive onnxruntime-web directly](solutions/conventions/transformersjs-cannot-force-wasm-in-node.md)
 
 ### architecture
 
@@ -26,5 +27,6 @@ lessons before starting work.
 
 ## Recent additions
 
+- 2026-07-10 — Replaced transformers.js with pure onnxruntime-web WASM + @huggingface/tokenizers; model fetched-on-first-use (sha256-pinned), CLS pooling. Updated embeddings-propose lesson + new conventions lesson on the transformers.js WASM-in-Node trap.
 - 2026-07-10 — symspec v2 CLI-native rebuild + semantic paraphrase tier on `main` (6 lessons: 3 architecture, 2 orchestration, 1 conventions)
 - 2026-05-13 — TS stack migration on `ears-validated/poc` (3 lessons in `conventions/`)

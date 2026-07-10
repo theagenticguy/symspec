@@ -46,10 +46,13 @@ login credential", glossary unifies token≡credential → FND_CONTRADICTION wit
 both ids; WITHOUT glossary → no contradiction, an FND_SIMILAR_* instead).
 
 **AC-9-4 [P]** — Ubiquitous: symspec shall provide a local embedding backend
-using `@huggingface/transformers` feature-extraction with
-`onnx-community/bge-base-en-v1.5-ONNX`, `{ pooling: 'mean', normalize: true }`,
-lazy-imported (never on the default `check` path), model files resolved from a
-local cache. Offline: `env.allowRemoteModels` gated; when the model is absent
+running `onnxruntime-web` (WASM execution provider, single-threaded; no native
+`onnxruntime-node`) with a pure-JS tokenizer (`@huggingface/tokenizers`) over the
+pinned `Xenova/bge-base-en-v1.5` quantized `.onnx`, CLS-pooled + L2-normalized
+(BGE's trained pooling; NOT mean), lazy-loaded (never on the default `check`
+path). Assets are fetched on first use into an OS cache dir and sha256-verified
+against a pinned HF revision (not bundled — the model is ~110 MB). Offline:
+`allowRemote` gated by `SYMSPEC_EMBED_ALLOW_REMOTE=1`; when an asset is absent
 and remote loading is disallowed, an `ERR_EMBED_MODEL_MISSING` envelope carries
 a download suggestion — never blocking the SMT/lint tiers (mirrors the Lean
 toolchain discovery pattern). Verification: unit (backend loads a cached model;

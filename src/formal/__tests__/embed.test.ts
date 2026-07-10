@@ -19,8 +19,8 @@ describe('loadEmbedder (AC-9-4)', () => {
     const vecs = await embedder(['a', 'b'])
     expect(vecs).toHaveLength(2)
     expect(Array.from(vecs[0]!)).toEqual([0, 1])
-    // mean-pooled + normalized are requested (BGE convention for similarity).
-    expect(calls[0]!.opts).toEqual({ pooling: 'mean', normalize: true })
+    // CLS-pooled + normalized are requested (how BGE was trained; cosine == dot).
+    expect(calls[0]!.opts).toEqual({ pooling: 'cls', normalize: true })
   })
 
   it('returns [] for empty input without calling the model', async () => {
@@ -46,7 +46,7 @@ describe('loadEmbedder (AC-9-4)', () => {
   })
 
   it('pins the BGE-ONNX model id', () => {
-    expect(EMBED_MODEL).toBe('onnx-community/bge-base-en-v1.5-ONNX')
+    expect(EMBED_MODEL).toBe('Xenova/bge-base-en-v1.5')
   })
 })
 
