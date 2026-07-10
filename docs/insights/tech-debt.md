@@ -1,124 +1,44 @@
-# symspec · Tech debt register
+# symspec · Tech debt
 
-What's deferred, what's a known shortcut, and what would cost to fix. The repo is a POC and the README enumerates the explicit non-goals (`README.md:198-204`); this register is the operational view.
+Grounded scan for real rot signals: `TODO`/`HACK`/`FIXME`/`XXX`, `@ts-expect-error`, `as unknown as`, `eslint-disable`/`biome-ignore`, `@deprecated`, version pins, tool carve-outs, and disclosed scope limitations. Every row cites `path:LINE`. Where a category is genuinely clean, it is stated as clean rather than padded.
 
-Ranked by blast radius, highest first.
+## Clean categories (verified, not padded)
 
-## 1. `analysis_run` MCP tool runs only the structural pass, not the solver pipeline
+- **No `TODO`/`HACK`/`FIXME`/`XXX` markers** anywhere in `src/` — grep returns zero hits.
+- **No `@ts-expect-error` / `@ts-ignore`** in the codebase, and **no `eslint-disable` / `biome-ignore`** suppression comments (zero hits across `*.ts`/`*.json`).
+- **No `@deprecated` APIs** in `src/` — the only "deprecated" strings are test fixtures (`src/parse/__tests__/negation.test.ts:59`).
+- **Exactly one `as unknown as` cast** in the whole tree (`src/cli/dense.ts:121`) — narrow and documented, not a pattern.
 
-**What:** `src/mcp/server.ts:230-253` calls `analyze(doc)` from `src/core/analyze.ts`, which surfaces dangling refs / missing slots / cycles / orphans only. The semantic findings (`Contradiction`, `Subsumption`, `Ambiguity`, `NeedsReview`) produced by `runSolvers` (`src/solvers/index.ts:49-110`) are not wired into the MCP surface.
+The rot that exists is concentrated in **one honestly-disclosed semantic gap** (certify placeholder theorems) and a set of **calibration / config / heuristic** shortcuts. The suppression-comment and cast surface is close to pristine.
 
-**Why it matters:** `integration/SKILL.md:74-83` ("resolve_findings" workflow) references all of those finding kinds as if the MCP returned them. An agent following the SKILL today won't see Contradiction findings — they're only reachable via the smoke script. The whole "three-tier solver" headline assumes this wiring.
+## Register (most impactful first)
 
-**Cost to remove:** ~50 lines.
-1. Add `runSolvers(doc, { llm: { call: bedrockCallModel, arbiter: bedrockArbiter, … } })` to the tool handler.
-2. Decide on env-var configuration for the `CallModel` (already exists for the arbiter via `BEDROCK_*`).
-3. Merge `Finding[]` and `SolverFinding[]` into a single envelope or return them as two text blocks.
-4. Update tool description so the agent knows the new finding kinds.
+| # | Item | Location | Type | Cost-of-removal |
+|---|------|----------|------|-----------------|
+| 1 | `certify` maps every requirement to a placeholder `True := by decide` theorem — the Lean certificate attests only that the toolchain **ran and the file elaborates**, not that the spec is consistent | `src/cli/index.ts:775-787`; disclosure msg `src/cli/index.ts:452-456`; spec `.erpaval/specs/001-symspec-v2/followups.md:3-19` | known-limitation | **high** — needs a real EARS→Lean encoding (`guard → obligation` as a Lean `Prop`, reusing the atomize/encode model that feeds SMT). followups.md states no published EARS→Lean pipeline exists; this is genuine research effort, deliberately reserved for v3+. |
+| 2 | Semantic threshold `DEFAULT_THRESHOLD = 0.82` may over-filter: real BGE cosine for genuine paraphrases sits nearer ~0.75, so true paraphrase pairs can score **below** the cutoff and never surface as `FND_SIMILAR_SEMANTIC` suggestions (recall gap) | `src/formal/semantic.ts:51` (default), `:45-46` (doc), `:112` (`if (score < threshold) continue`) | shortcut (uncalibrated constant) | **low–med** — a constant to retune, but doing it right needs a labeled paraphrase set to pick the precision/recall trade-off. Overridable today via `--semantic-threshold`, so the debt is "no calibration study," not "unchangeable." Suggestion-only tier, so a miss is a lost hint, never a wrong verdict. |
+| 3 | `pnpm-workspace.yaml` ships literal placeholder strings `set this to true or false` for three native builds — unresolved config left in a committed file | `pnpm-workspace.yaml:4-6` (`onnxruntime-node`, `protobufjs`, `sharp`) | shortcut (unfinished config) | **low** — decide each build flag once. Note the real build gating lives in `package.json:75-83` (`onlyBuiltDependencies` allows esbuild/lefthook/z3-solver; `ignoredBuiltDependencies` pins `protobufjs`), so the workspace-file placeholders are stale/duplicative rather than load-bearing. |
+| 4 | GtWR lint rules R5/R6 and others are admittedly low-precision heuristics: R5 "flag all but provide low confidence," R6 "Simplified: look for bare numerics" | `src/lint/gtwr.ts:207`, `:227`, `:361`; ~10 `heuristic`/`for now`/`simplified` markers in the file | shortcut (heuristic) | **med** — replacing regex heuristics with real POS/dependency parsing is nontrivial; findings are `warn`/`info` (non-blocking per `src/pipeline/gate.ts` `blockingFindings`), so precision misses cost noise, not gate failures. |
+| 5 | Two finding producers don't emit their `FND_*` code as a string literal — they discriminate on other fields (`kind`, a `certified` boolean) and are bridged by mapping functions "for historical reasons" | `src/formal/codes.ts:19-33` (`structuralKindToFndCode`, `solverKindToFndCode`, `certifiedToFndCode`) | shortcut (indirection) | **low** — the AC-6-3 reachability test already guards it and the bridge maps are single-sourced; cost is only the conceptual overhead of the extra indirection layer. |
+| 6 | `GateInput.parseFailed` is optional because the parse-tier→gate wiring (`ParseResult`, AC-2-8) was never built; gate falls back to surface-check-only when the flag is omitted | `src/pipeline/gate.ts:63-66` | known-limitation (unbuilt path) | **med** — requires threading real parse outcomes from Tier 1/2/3 into the gate; until then parse-failure provenance never reaches the gate. |
+| 7 | `as unknown as` cast to read Zod's internal `.def` view off a schema — reaches into library internals that can shift across Zod majors | `src/cli/dense.ts:121` (`defOf`), interface `:110-117` | hack (library-internals reach) | **low** — isolated to one helper; breakage would be caught at the pinned Zod (`^4.4.3`, `package.json:73`) but a Zod major bump could silently change the internal shape. |
+| 8 | `tokenizer.encode(...) as Encoding` cast at the ONNX/tokenizer boundary — the `@huggingface/tokenizers` result is narrowed to a locally-declared `Encoding` interface rather than the library's own type | `src/formal/embed.ts:136`, interface `:88-89` | shortcut (boundary cast) | **low** — thin, deliberate projection of the fields consumed; no runtime risk, just an untyped seam at a lazy-loaded dependency. |
+| 9 | knip carve-outs: `wink-nlp` + `wink-eng-lite-web-model` force-ignored because knip can't trace `await import(VARIABLE)` variable-specifier lazy loads; `diff` binary force-listed | `knip.json:5` (`ignoreDependencies`), `:6` (`ignoreBinaries`); lesson `.erpaval/solutions/conventions/knip-variable-specifier-dynamic-import.md` | known-limitation (tooling) | **low** — the carve-out is the sanctioned fix (switching to a literal import would re-couple the 4 MB model to the hot path). Risk: a future cleanup deletes the ignore, then the "unused" deps. |
+| 10 | Documented sound-tool scope limits: no contextual-ambiguity check, no temporal/ordering logic, no numeric/arithmetic reasoning — SMT evaluates one propositional snapshot; "silence is not a consistency certificate" | `README.md:225-235`; surfaced in `manifest` scope field | known-limitation (by design) | **high** — each is a distinct solver capability (theory reasoning, temporal logic); these are honest boundaries of the propositional model, not accidental debt. Listed for completeness. |
 
-**Reference:** `insights/impact-analysis.md` § `runSolvers()` enumerates the wiring decisions.
+## The biggest one: certify's placeholder theorems
 
-## 2. CLI `update` command treats the literal string `"null"` as JS `null`
+The `certify` command runs the full Lean 4 toolchain — batched theorem emission, elaboration, `#print axioms` provenance capture, artifact retention — but `docToTheorems` maps **every requirement to a trivial `True := by decide` proposition keyed by its sanitized UUID** (`src/cli/index.ts:775-787`). The code comment states it plainly: this "exercises the full Lean toolchain path ... but does NOT encode requirement semantics."
 
-**What:** `src/cli/index.ts:87` converts `value === 'null'` to JS `null`. A user who legitimately wants the string `"null"` as a value can't write it.
+The consequence is that a green `FND_CERTIFIED` result attests only that Lean ran and the emitted file elaborates — it is a tautology, not a proof about the spec. The finding message discloses this to the caller in the same breath (`src/cli/index.ts:452-456`): "this certificate attests only that the Lean toolchain ran and the file elaborates — it does NOT yet encode requirement semantics ... the SMT `check` tier is the load-bearing conflict detector today." This is disclosed honestly rather than hidden, which is why it ranks as a known-limitation and not a trap.
 
-**Why it matters:** Probably never. `"null"` as a literal `systemResponse` would itself be a bug. Documenting the shortcut is worth it.
+The deferral is recorded in `.erpaval/specs/001-symspec-v2/followups.md:3-19`. The v3+ follow-up is to encode EARS requirements as real Lean `Prop`s — reusing the atomize/encode formal model that already feeds the SMT tier, translating the guarded implication `guard → obligation` into a Lean proposition — so the certificate becomes a kernel-checked proof **about the spec's consistency**. followups.md is explicit that "no published EARS→Lean pipeline exists — this is the genuine research contribution the Lean tier was chosen for," and reserves it for after the core tiers stabilize. Cost-of-removal is therefore **high**: it is research effort, not a refactor. The contracts the Lean tier does hold today (batched single file, `#print axioms` provenance, `ERR_LEAN_TOOLCHAIN_MISSING`) are real and hold regardless of the proposition body (`src/cli/index.ts:776-778`) — the toolchain scaffolding is done; only the semantic encoding is deferred.
 
-**Cost to remove:** trivial — add a `--clear` flag and treat absence of value as the null-clear signal. ~10 lines.
-
-## 3. No schema-version migrator
-
-**What:** `SCHEMA_VERSION = 1` (`src/core/schema.ts:512`) is written into every saved doc (`src/core/doc.ts:28`), but `loadDoc` doesn't check it (`src/core/doc.ts:33-36`). Bumping to v2 (e.g., adding a sixth EARS pattern, renaming an attribute) would require a migrator that runs at load time.
-
-**Why it matters:** Today, with `schemaVersion: 1` everywhere, this is fine. The first breaking schema change reveals the gap.
-
-**Cost to remove:** ~30 lines + a `migrations/` directory. The standard pattern: `loadDoc` reads `schemaVersion`, runs each migrator from `n` to `current`, then validates with `RequirementSchema`. Tests would cover load-then-save round-trips at every prior version.
-
-## 4. `reconcilePair` and `reconcileAmbiguity` are exposed but untested
-
-**What:** `src/solvers/llm/ensemble.ts:202-219` and `src/solvers/llm/ensemble.ts:231-263` are exposed "for unit testing the reconciliation logic without I/O" per their docstrings. No `ensemble.test.ts` exists.
-
-**Why it matters:** The ensemble logic is the most behaviorally complex pure function in the repo (six branches per call). Smoke-testing through the orchestrator is end-to-end coverage; a unit test would lock down the reconciliation rules independently.
-
-**Cost to remove:** ~80 LOC of tests. One test per reconciliation branch (both-contradiction / both-subsumption-same / both-subsumption-different / both-redundant / both-compatible / disagree).
-
-## 5. The arbiter handles pair disagreements only, not ambiguity disagreements
-
-**What:** `src/solvers/llm/ensemble.ts:253-262` emits `NeedsReview` when the two ambiguity judges disagree. The arbiter is wired only into the pair path (`src/solvers/llm/ensemble.ts:57-67`).
-
-**Why it matters:** The README says so explicitly (`README.md:148`: "Tier 3 — Claude Opus 4.7 arbiter" appears after the pair section). It's a documented limitation, not a bug, but agents reading the SKILL workflow may still expect arbiter coverage on ambiguity.
-
-**Cost to remove:** ~40 LOC. Add an `arbitrateAmbiguity` call site, reuse `bedrockArbiter`'s tool-use mechanics with a different schema, decide a tie-break rule for one-judge-says-yes-other-says-no.
-
-## 6. `MODELS.secondary` defaults to `zai.glm-5-v1:0`
-
-**What:** Default secondary judge model (`src/solvers/llm/bedrock-client.ts:115`). GLM availability and cost are account-specific.
-
-**Why it matters:** Surprises for new account owners. Should be documented in the README arbiter section (it's not — only the arbiter env vars are listed at `README.md:170-178`).
-
-**Cost to remove:** zero — it's a config decision, not a bug. Add a one-line doc note about region + entitlement.
-
-## 7. `_listRequirements` re-export trick
-
-**What:** `src/core/analyze.ts:152` re-exports `listRequirements` purely to suppress an unused-import warning when consumers only type-import `Finding`. The `_` prefix marks the convention but a reader has to scroll the comment (`src/core/analyze.ts:151`) to know.
-
-**Why it matters:** A future refactor that removes the import-side will look at the export site, see "unused", and delete it. The comment isn't load-bearing.
-
-**Cost to remove:** trivial — refactor the consumer to side-effect-import `doc.js` directly, then drop the re-export.
-
-## 8. Smoke tests are scripts, not vitest cases
-
-**What:** `scripts/smoke*.ts` use `console.log` + `process.exit(1)` (`scripts/smoke.ts:166-170`, `scripts/smoke-incremental.ts:31-36`) rather than vitest assertions. They run via `pnpm smoke:all`, separate from `pnpm test`.
-
-**Why it matters:** The smoke files contain the densest behavior catalog (12 scenarios in `smoke-incremental.ts`); folding them into vitest would unify reporting, parallelize them, and put their assertions under coverage. The reason they're scripts is that the concurrent-merge demo prints a narrative — that's a UX concern, not a testing one.
-
-**Cost to remove:** medium. Convert `expect(cond, msg)` to `expect(cond).toBeTruthy()`; the headers become `describe` blocks; the live-Bedrock branch in `smoke-solvers.ts:180` becomes a `describe.runIf(process.env.BEDROCK_LIVE === '1')`.
-
-## 9. SysML export is "flavored", not spec-compliant
-
-**What:** `src/core/sysml-export.ts:1-15` calls out the gap explicitly. The shape mirrors KerML/SysML v2 Requirement and Relationship elements but skips the full JSON-LD payload.
-
-**Why it matters:** Acknowledged in the README's "what this POC deliberately doesn't do" (`README.md:200`). Real downstream consumption would require swapping the projection for the OMG Systems Modeling API (Part 3) OpenAPI payloads.
-
-**Cost to remove:** ~200 LOC per the README. New file `sysml-v2-export.ts` or replace the projection in place; existing callers (CLI `req export`, MCP `sysml_export`) are unchanged.
-
-## 10. No grammar-constrained extraction from natural prose
-
-**What:** Change records arrive structured. There's no path that takes free-form prose ("when the user logs in we should issue a token") and emits a `CreateRequirement` Change.
-
-**Why it matters:** The README is explicit (`README.md:201`): "EARS-from-prose extraction would sit *in front* of this layer (e.g., Claude tool-use over the same MCP server)". Today an agent reads the SKILL and decomposes prose itself — fine but unstructured.
-
-**Cost to remove:** N/A — this is a deliberate scope cut for the POC.
-
-## 11. No property-based test generation
-
-**What:** README "what this POC deliberately doesn't do" (`README.md:202`): "Property-based test generation — next step. Each EARS slot tuple has enough structure to derive `forAll` properties (the Kiro 'Correctness' pillar)."
-
-**Why it matters:** Acknowledged future work, not debt. Adding `fast-check` for property tests over the renderer + applyChange would catch the kinds of edge cases the smoke scripts hand-author today.
-
-**Cost to remove:** medium. ~1 day to wire `fast-check`, build arbitraries for each Change kind, and write the half-dozen properties (commutativity of independent applyChange, idempotency, sentence determinism, etc.).
-
-## 12. No referential integrity at the CRDT layer
-
-**What:** `applyChange(AddRelationship)` doesn't verify the target exists (`src/core/doc.ts:132-139` — only the source is checked). Dangling refs are caught by `analyze` after the fact.
-
-**Why it matters:** README acknowledges (`README.md:203`): "Referential integrity at the CRDT layer — dangling refs are caught by `analyze()`, not prevented at write time. Rich-CRDT approaches (ElectricSQL, Synql 2024) would push this earlier; for a POC it's overkill."
-
-**Cost to remove:** out of scope for this codebase; would be a different storage substrate.
-
-## Lessons captured under `.erpaval/solutions/conventions/`
-
-These aren't debt — they're the canonical-stack edge cases the project hit and resolved. Documenting them prevents re-hitting:
-
-- pnpm 11 `verify-deps-before-run` + lefthook `prepare` + non-git directory (`pnpm11-prepare-script-and-git-init-order.md`)
-- `exactOptionalPropertyTypes: true` and the omit-the-key idiom (`exact-optional-property-types-omit-key-idiom.md`)
-- Biome `style/noNonNullAssertion` collides with `noUncheckedIndexedAccess` (`biome-noNonNullAssertion-off-when-noUncheckedIndexedAccess.md`)
-
-The README's `/erpaval` section explains the convention and the three lessons (`README.md:236-303`).
 
 ## See also
 
-- [Module map](../architecture/module-map.md)
-- [System overview](../architecture/system-overview.md)
-- [Contract map](contract-map.md)
-- [Processes](../behavior/processes.md)
+- [symspec · Module map](../architecture/module-map.md) — 7 shared source citations
+- [symspec · Component diagram](../diagrams/architecture/components.md) — 5 shared source citations
+- [symspec · Contract map](contract-map.md) — 4 shared source citations
+- [symspec · Data flow](../architecture/data-flow.md) — 4 shared source citations
+- [symspec · Dead code](../analysis/dead-code.md) — 4 shared source citations

@@ -1,157 +1,130 @@
 # symspec · Business logic
 
-The rules this codebase enforces — domain rules, validations, invariants, calculations. Each rule has a single source-of-truth location.
+The domain rules symspec enforces over EARS (Easy Approach to Requirements Syntax) requirements: what a valid requirement looks like, how it renders, how prose is classified into it, the surface-quality lint catalog, the formal conflict semantics proved by SMT, and the propose-vs-decide boundary that keeps the verdict path deterministic. Every rule below cites the source that defines it.
 
-## EARS pattern → required slot rule
+---
 
-The five patterns are defined at `src/core/schema.ts:26-32` and dictate which structural slot the requirement must carry:
+## EARS patterns
 
-| Pattern | Required slot | Rendered shape |
-|---|---|---|
-| `ubiquitous` | — | `The X shall Y.` |
-| `event-driven` | `trigger` | `When TRIGGER, the X shall Y.` (or `While PRE, when TRIGGER, ...` if both) |
-| `state-driven` | `preCondition` | `While PRE, the X shall Y.` |
-| `optional-feature` | `preCondition` | `Where PRE, the X shall Y.` |
-| `unwanted-behavior` | `trigger` | `If TRIGGER, then the X shall Y.` |
+Five pattern types (`EARS_PATTERNS`) are the closed vocabulary; each fixes which structural slots are mandatory and how the canonical sentence renders. The five slots are `patternType, preCondition, trigger, systemName, systemResponse`.
 
-Implemented in two places — the renderer at `src/core/schema.ts:443-464` (canonical sentence shape per pattern) and the analysis pass at `src/core/analyze.ts:46-64` (missing-slot detection per pattern). Adding a sixth pattern requires updating both.
+| Pattern | Required slot | Renders as | Rule source |
+|---|---|---|---|
+| `ubiquitous` | none (always-true invariant) | `The <system> shall <response>.` | `src/core/render.ts:42`; `src/core/schema.ts:77` |
+| `event-driven` | `trigger` | `When <trigger>, the <system> shall <response>.` | `src/core/render.ts:44`; `src/core/schema.ts:79` |
+| `state-driven` | `preCondition` | `While <preCondition>, the <system> shall <response>.` | `src/core/render.ts:48`; `src/core/schema.ts:81` |
+| `optional-feature` | `preCondition` | `Where <preCondition>, the <system> shall <response>.` | `src/core/render.ts:50`; `src/core/schema.ts:83` |
+| `unwanted-behavior` | `trigger` | `If <trigger>, then the <system> shall <response>.` | `src/core/render.ts:52`; `src/core/schema.ts:85` |
 
-The `event-driven` + `preCondition` combination is a deliberate non-obvious case: the renderer produces `While PRE, when TRIGGER, the X shall Y.` (`src/core/schema.ts:454-456`), and the SKILL.md guidance is "if you want both, use event-driven and put the precondition there" (`integration/SKILL.md:46`).
+- The pattern enum is the single source of truth — `EARS_PATTERNS` at `src/core/schema.ts:27`.
+- Combined precondition+trigger case: an event-driven requirement that also carries a `preCondition` renders `While <pre>, when <trigger>, the <system> shall <response>.` — `src/core/render.ts:46`.
+- `sentence` is a derived, denormalized field — never authored directly; the renderer re-runs whenever an EARS slot changes — `src/core/schema.ts:170`, `src/core/render.ts:33`.
+- `systemName` always renders with a leading `the`, so the stored value must omit any leading article — `src/core/schema.ts:109`, `src/core/render.ts:40`.
+- `systemResponse` must stay POSITIVE and drop the word `shall`; a prohibition is expressed by the `negated` flag, not by baking `not` into the text — `src/core/schema.ts:116`.
+- Response polarity (AC-2-4): `negated=true` renders `shall not <response>` and encodes as `¬R`, letting `shall X` and `shall not X` share one atom at opposite polarity — `src/core/schema.ts:128`, `src/core/render.ts:39`.
+- Slot-presence is enforced at check time, not write time: an event-driven / unwanted-behavior requirement with no `trigger` yields a `MissingTrigger` finding; a state-driven / optional-feature requirement with no `preCondition` yields `MissingPreCondition` — `src/core/analyze.ts:49`, `src/core/analyze.ts:57`.
 
-## Sentence is rendered, never authored
+### Tier-1 parse (prose → slots)
 
-Invariant: the `sentence` field on every requirement is a denormalized projection of the EARS slots, maintained automatically. Sources of truth:
+`classifyTier1` maps requirement-shaped prose into EARS slots via an ordered regex cascade — `src/parse/tier1.ts:239`.
 
-- Description on the field schema: "Maintained automatically — the renderer re-runs whenever any EARS slot changes... Do not write directly; update the slot fields instead." (`src/core/schema.ts:157-162`).
-- Enforcement in `applyChange`: the create branch always renders before storing (`src/core/doc.ts:78-84`); the update branch re-renders on EARS-slot edits but skips on metadata edits (`src/core/doc.ts:118-127`).
+- Cascade order is load-bearing: `complex (While…, when…) → unwanted (if…then) → unwanted-no-then → event (when) → event-no-comma → state (while) → optional (where) → ubiquitous` — `src/parse/tier1.ts:156`. `complex` must precede `state` (else `While` greedily swallows the sentence); `if…then` must precede `when` — `src/parse/tier1.ts:6`.
+- The mandatory gate: a keyword rung counts as matched only if its main clause `<system> shall <response>` parses via `MAIN`; a keyword hit whose main clause fails to parse falls through to the next rung — `src/parse/tier1.ts:111`, `src/parse/tier1.ts:245`.
+- Keyword synonyms broaden each pattern (`when|whenever|upon|once|after|as soon as|on receipt of|in the event that`, etc.) — `src/parse/tier1.ts:70`.
+- Accepted modals: `shall|must|will|should`; any non-`shall` modal downgrades confidence and adds a `nonstandard-modal` note — `src/parse/tier1.ts:80`, `src/parse/tier1.ts:301`.
+- `MAIN` strips a leading article (`the|a|an`) to honor the article-free `systemName` convention, and captures an explicit negator (`not|never|not be able to`) as a polarity flag so the formal tier receives `¬R` rather than a string containing "not" — `src/parse/tier1.ts:102`.
+- Escalation predicates reject an untrustworthy parse (`system-clause-pollution` when the system group contains a comma, an embedded EARS keyword, or >6 tokens) or annotate a weak one (`weak-subject` for a bare person-word subject like "users") — `src/parse/tier1.ts:192`.
+- A line with a modal but no response ("The system shall") escalates as `modal-without-response` (a truncated requirement — an error, never silently dropped); a line with no modal at all is treated as prose — `src/parse/tier1.ts:274`.
 
-There is no schema-level rejection of a hand-written sentence, but the next slot edit will overwrite it. The SKILL.md anti-pattern catalog calls this out explicitly (`integration/SKILL.md:106`).
+---
 
-## Idempotency contracts on Change records
+## GtWR lint rules
 
-Documented at `src/core/doc.ts:50-57`. Drives the MCP "safe to call defensively" guarantees:
+Surface-quality checks derived from the INCOSE *Guide to Writing Requirements* (GtWR v4). symspec implements the **24 Tier-1 (regex / lexicon) checkable rules** of that catalog, each with a stable `GTWR_R<n>_<slug>` code, a severity, a character span, and (often) a mechanical suggestion — `src/lint/gtwr.ts:1`, `src/lint/gtwr.ts:74`. Severity legend: `error` feeds the pass/fail gate; `warn` has legitimate exceptions and is excluded from the gate; `info` is advisory — `src/lint/gtwr.ts:6`.
 
-| Change | On retry / collision |
-|---|---|
-| `CreateRequirement` | throws on duplicate id — collisions surface, not silently merged (`src/core/doc.ts:65-66`) |
-| `UpdateAttribute` | re-applying the same value is a no-op; null clears optional, throws on required (`src/core/doc.ts:108-117`) |
-| `AddRelationship` | adding the same edge twice produces one edge (`src/core/doc.ts:135-136`) |
-| `RemoveRelationship` | removing a missing edge is a no-op (`src/core/doc.ts:141-149`) |
-| `DeleteRequirement` | tombstone semantics; missing id is a no-op (`src/core/doc.ts:151-157`) |
+Categories (with representative rules; not exhaustive):
 
-Tested at `scripts/smoke-incremental.ts:188-237` (3× `AddRelationship` → 1 edge), `scripts/smoke-incremental.ts:226-237` (phantom `RemoveRelationship` no-ops).
+- **Pattern compliance** — R1: the statement must match the EARS master template `[Where…,][While…,][When|If…,[then]] the <system> shall <response>`; anything else is an `error`. The template is built from the parser's own `KW` vocabulary so lint and parse agree on what EARS is — `src/lint/gtwr.ts:53`, `src/lint/gtwr.ts:156`.
+- **Vagueness / immeasurability** — R7 weasel-word lexicon (`adequate, appropriate, fast, robust, seamless, user-friendly, …`, `error`) — `src/lint/gtwr.ts:247`; R34 immeasurable performance terms (`warn`) — `src/lint/gtwr.ts:665`; R33 quantity without a tolerance/range (`warn`) — `src/lint/gtwr.ts:645`.
+- **Units / numbers** — R6 bare number with no unit (`error`) — `src/lint/gtwr.ts:224`; R40 decimal-format consistency, the one **set-level** rule — literals of mixed fractional precision across the spec are flagged `info` against the dominant precision — `src/lint/gtwr.ts:833`.
+- **Definiteness / reference** — R5 indefinite article `a`/`an` where `the` is expected (`warn`) — `src/lint/gtwr.ts:200`; R24 personal/indefinite pronouns (`it, they, this, one, …`, `warn`) — `src/lint/gtwr.ts:542`; R37 undefined acronyms (skips a common allowlist, `warn`) — `src/lint/gtwr.ts:743`; R38 non-unit abbreviations (`warn`) — `src/lint/gtwr.ts:780`.
+- **Negation** — R16 flags `not/never/shall not/unable to/no longer` unless wrapped in a defined logical expression `[NOT X]`; `warn` because negation has legitimate uses — `src/lint/gtwr.ts:395`.
+- **Absolutes / quantifiers** — R26 absolutes (`all, every, always, never, 100%, …`) escalate to `error` unless a conditional clause is present, else `warn` (AC-3-3 exception handling) — `src/lint/gtwr.ts:580`; R32 universal quantifiers recommend `each` (`warn`) — `src/lint/gtwr.ts:625`.
+- **Structure / atomicity** — R18 multiple `shall` in one sentence — split into separate requirements (`error`) — `src/lint/gtwr.ts:440`; R19 combinators (`and, or, unless, otherwise, …`) inside the response clause (`warn`) — `src/lint/gtwr.ts:460`; R15 undefined lowercase `and`/`or` in condition clauses (`warn`) — `src/lint/gtwr.ts:371`; R21 parenthetical subordinate text (`warn`) — `src/lint/gtwr.ts:519`.
+- **Ambiguity / escape hatches** — R8 escape clauses (`where possible, if necessary, …`, `error`) — `src/lint/gtwr.ts:301`; R9 open-ended phrases (`including but not limited to, etc., …`, `error`) — `src/lint/gtwr.ts:325`; R10 superfluous infinitives (`shall be able to, …`, `warn`) — `src/lint/gtwr.ts:352`; R20 purpose phrases (`in order to, so that`, move rationale out, `warn`) — `src/lint/gtwr.ts:494`; R17 oblique `/` for "and/or" (`warn`) — `src/lint/gtwr.ts:421`; R35 indefinite temporal keywords, `info` when bound to a measured event/time, else `warn` — `src/lint/gtwr.ts:695`.
+- **Voice** — R2 passive voice `shall be <participle>` with an active-form suggestion (`warn`) — `src/lint/gtwr.ts:178`.
 
-## Nullable attributes whitelist
+---
 
-Only `preCondition`, `trigger`, `verificationMethod` may be null'd to clear (`src/core/schema.ts:60-64`). Attempting null on any other attr throws with message `Cannot null required attribute "<attr>" on <id>` (`src/core/doc.ts:111-113`). Test coverage at `scripts/smoke-incremental.ts:163-187`.
+## Formal conflict semantics
 
-## Default values at create time
+The formal tier discharges four whole-spec / pairwise properties on an SMT (z3) solver. All four are only as sound as `atomize` — the invariant "sound modulo atomization" (AC-4-11): a conflict is provable only when two responses resolve to the **same atom** at opposite polarity — `src/formal/atomize.ts:1`.
 
-Filled by the runtime if absent in `CreateRequirementAttrsSchema`:
+### Atomization contract (the load-bearing function)
 
-- `priority`: `'medium'` (`src/core/schema.ts:272`, `src/core/doc.ts:85`)
-- `status`: `'draft'` (`src/core/schema.ts:273`, `src/core/doc.ts:86`)
-- `derives`, `satisfies`, `verifies`, `refines`: `[]` (`src/core/schema.ts:275-278`, `src/core/doc.ts:87-90`)
-- `createdAt`, `updatedAt`: ISO-8601 timestamp set on every applyChange (`src/core/doc.ts:60`, `:91-92`, `:128`, `:137`, `:147`)
-- `id`, `sentence`: caller-provided id, runtime-rendered sentence (`src/core/doc.ts:74-84`)
+`atomize` is the single pure function turning slot text into a Boolean atom — `src/formal/atomize.ts:135`. Its four guaranteed invariants:
 
-## Cycle prohibition on `derives`
+- **Purity / determinism** — depends only on its args and a frozen antonym table; same input → byte-identical output — `src/formal/atomize.ts:14`.
+- **Conservative normalization** — lowercase → strip one leading article → strip punctuation → collapse whitespace → underscore-join. No stemming/lemmatization/stopword removal (`issues` ≠ `issue`), because aggressive normalization is the one false-positive class — `src/formal/atomize.ts:120`.
+- **Per-`systemName` scoping** — every atom is prefixed `sys__<system>__<kind>__`, so identical response text under two different systems yields two distinct atoms and can never fake a cross-system conflict (AC-4-2a) — `src/formal/atomize.ts:164`, `src/formal/atomize.ts:29`.
+- **Negation on the same atom** — the AC-2-4 `negated` flag becomes the atom's polarity, not part of the text; the curated antonym table extends this to lexical opposites (`grant access` / `revoke access` unify to one atom, opposite polarity, via XOR composition) — `src/formal/atomize.ts:153`.
 
-The decomposition relation must be acyclic. Cycles are surfaced as `CycleDetected` findings, not prevented at write time — `applyChange` doesn't reject `AddRelationship` calls that would create a cycle (`src/core/doc.ts:132-139`). Detection is DFS-based with canonical-rotation dedup (`src/core/analyze.ts:102-140`). The other three relations (`satisfies`, `verifies`, `refines`) are not cycle-checked.
+### Contradiction (`FND_CONTRADICTION`, error)
 
-## Orphan threshold
+- Detected only when two responses resolve to the same atom at opposite polarity under a **reachable** context — `src/formal/contradiction.ts:224`, `src/formal/contradiction.ts:95`.
+- Reachability discipline: group requirements by their context (trigger/precondition) atoms; for each group assert **only that group's** context atoms true while including **every** requirement's guarded implication (whole-spec), because `(X⇒Y)∧(X⇒¬Y)` is vacuously satisfiable if `X` is never asserted, and asserting all triggers at once manufactures spurious conflicts between mutually exclusive triggers — `src/formal/contradiction.ts:1`, `planContextGroups` at `src/formal/contradiction.ts:140`.
+- A baseline empty-context group catches unconditional (ubiquitous `R` vs ubiquitous `¬R`) conflicts and is always present — `src/formal/contradiction.ts:141`.
+- Unsat cores are minimized (z3 `smt.core.minimize` plus a deletion-based re-check, `minimizeCore`) so an innocent whole-spec requirement sharing no atom cannot ride along in the core — `src/formal/contradiction.ts:189`, `src/formal/contradiction.ts:265`. A finding requires ≥2 distinct requirement ids — `src/formal/contradiction.ts:310`.
+- Per-group enumeration finds every pairwise-disjoint conflict in a group, not just the first — `src/formal/contradiction.ts:282`.
 
-A node with zero inbound and zero outbound edges is an orphan *only when there is more than one node in the doc* (`src/core/analyze.ts:90`). The single-node case is intentionally not flagged — a one-requirement doc is not orphaned by definition.
+### Subsumption & redundancy (`FND_SUBSUMPTION` / `FND_REDUNDANCY`, warn)
 
-## Exact-duplicate definition
+- Pairwise, over candidate pairs only (contrast with whole-spec contradiction/vacuity) — `src/formal/subsumption.ts:150`.
+- One-directional valid implication → `FND_SUBSUMPTION`; both directions → `FND_REDUNDANCY` (logical duplicate); neither/inconclusive → no finding — `src/formal/subsumption.ts:95`.
+- Direction is decided by which SMT implication is valid and mapped back by id — `moreGeneral` is the implied-side requirement (fires in the superset of cases), never assigned positionally from the pair's `a`/`b` slot — `src/formal/subsumption.ts:12`, `src/formal/subsumption.ts:127`.
+- Compares `.body` (`context ⇒ response`), not the guarded `.formula`, because two distinct free guard literals make `formulaA ⇒ formulaB` never valid — `src/formal/subsumption.ts:31`, `src/formal/subsumption.ts:79`.
+- Inconclusive (`sat`/`unknown`) is conservatively never reported as a proven implication — `src/formal/subsumption.ts:84`.
 
-Two requirements are exact duplicates when their full `(patternType, preCondition || '', trigger || '', systemName, systemResponse)` tuple matches (`src/solvers/free/duplicates.ts:14-25`). Two requirements with the same slots but different priority / status / verificationMethod are still duplicates — the metadata fields do not participate in the hash.
+### Vacuity (`FND_VACUITY`, warn, low confidence)
 
-## Weasel-phrase ambiguity catalog
+- Relational, not "unsatisfiable guard": a distinct-atom guard is always satisfiable in isolation, so vacuity asserts every **other** requirement's body plus this requirement's guard literals and checks for `unsat` — `unsat` means the guard is unreachable given the rest of the spec — `src/formal/vacuity.ts:1`, `src/formal/vacuity.ts:72`.
+- Ubiquitous requirements have no guard and are never vacuity candidates — `src/formal/vacuity.ts:54`.
+- Shipped at `confidence: 'low'` — under regex parsing it only bites when one requirement's response atom is another's negated precondition atom under the same system — `src/formal/vacuity.ts:18`, `src/formal/vacuity.ts:37`.
+- `unknown` is never reported as vacuous — `src/formal/vacuity.ts:91`.
 
-Curated short list of 35 phrases at `src/solvers/free/ambiguity.ts:17-57`, grouped into:
+---
 
-- Speed/performance: `fast`, `quickly`, `rapid`, `slow`, `as quickly as possible`
-- Quality: `robust`, `user-friendly`, `easy to use`, `intuitive`, `appropriate`, `adequate`, `reasonable`, `acceptable`, `sufficient`
-- Open-ended scope: `etc.`, `and so on`, `and the like`, `where applicable`, `as needed`, `as appropriate`, `as necessary`
-- Vague quantifiers: `many`, `some`, `several`, `various`, `most`, `few`, `minimal`, `minimum`, `maximum`
-- Subjective absolutes: `always`, `never`, `all`, `every`
+## Propose/decide invariant
 
-Sourced from the INCOSE Guide for Writing Requirements and IEEE 830 / ISO 29148 ambiguity lists (`src/solvers/free/ambiguity.ts:9-12`). 11 entries carry suggested rewrites (`src/solvers/free/ambiguity.ts:59-73`). Word-boundary matching avoids false positives like `many` inside `Germany` (test at `src/solvers/free/__tests__/duplicates.test.ts:82-91`).
+The determinism boundary between embeddings and the SMT verdict.
 
-## Pairwise candidate-pair rules
+- **Embeddings only PROPOSE.** `findSimilarSemantic` embeds the response phrasings of same-system pairs that did NOT already unify, and when cosine ≥ threshold (default 0.82) emits an **info-tier** `FND_SIMILAR_SEMANTIC` finding suggesting a concrete `symspec glossary add` merge. It never emits a conflict verdict; its only durable effect is a suggestion the agent may confirm — `src/formal/semantic.ts:1`, `src/formal/semantic.ts:76`, `src/formal/semantic.ts:116`.
+- Same-system scoping applies to the proposal too — two systems with identical wording are genuinely distinct atoms, so bridging across systems would be unsound; pairs already unified by `atomize` are skipped — `src/formal/semantic.ts:15`, `src/formal/semantic.ts:97`.
+- **The committed glossary is the only thing the SMT path consults.** `atomize` canonicalizes a response through the glossary index **first** (before antonym unification), rewriting an agent-confirmed alias to its canonical phrasing so a paraphrased conflict becomes provable — `src/formal/atomize.ts:144`, `glossaryIndex` at `src/formal/atomize.ts:96`.
+- This split is what preserves determinism: the fuzzy embedding step only proposes entries; the deterministic glossary lookup is what actually merges them, and it is a no-op byte-for-byte when no glossary is supplied — `src/formal/atomize.ts:80`, `src/core/schema.ts:317`.
+- Glossary shape: a `canonical` phrase plus its synonymous `aliases`; lives in the committed document, defaults to `[]` — `src/core/schema.ts:325`, `src/core/schema.ts:341`.
 
-Three structural heuristics that escalate to the LLM tier (`src/solvers/free/pairwise-filter.ts:55-99`):
+---
 
-1. **Same `systemName` + same `trigger` (case-insensitive) + different `systemResponse`** → `same-system-same-trigger-different-response` (contradiction candidate).
-2. **Same `systemName` + overlapping `preCondition`** → `same-system-overlapping-precondition` (subsumption candidate). "Overlapping" = either string contains the other, case-insensitive (`src/solvers/free/pairwise-filter.ts:23-28`).
-3. **Same `systemName` + lexical similarity ≥ threshold (default 0.7)** → `near-duplicate-sentence`. Jaccard over word sets of the rendered sentence (`src/solvers/free/pairwise-filter.ts:30-38`).
+## Validation & defaults
 
-Pairs across different `systemName`s are skipped — different systems can't directly contradict at the system-behavior level (`src/solvers/free/pairwise-filter.ts:60-62`).
+Schema is the single source of truth (Zod), composed from atomic field definitions — `src/core/schema.ts:212`, `RequirementSchema` at `src/core/schema.ts:277`.
 
-## Pairwise judgment classification
+- **Defaults at create time**: `priority='medium'`, `status='draft'`, `negated=false`, all four edge arrays `[]` — `src/core/schema.ts:285`, `src/core/changes.ts:110`. Enum domains: priorities `low|medium|high|critical` (`src/core/schema.ts:36`), statuses `draft|approved|implemented|verified` (`src/core/schema.ts:39`).
+- **UUID minting**: every requirement gets a stable `randomUUID()` assigned once at creation and never reused — edges reference nodes by UUID so renames/reorders never break references — `src/core/doc.ts:54`, `src/core/schema.ts:163`.
+- **Timestamps**: `createdAt`/`updatedAt` are ISO-8601 UTC set by the runtime (never the caller); `updatedAt` is refreshed on every accepted change — `src/core/schema.ts:260`, `src/core/changes.ts:76`.
+- **The mutation path**: `applyChange` is the only sanctioned mutation; it validates against `ChangeSchema`, deep-clones the input (never mutates), and returns a new document — `src/core/changes.ts:74`.
+- **Re-render gate (AC-1-6)**: an update to any of the five EARS structural slots re-renders `sentence`; a pure metadata update (priority/status/verificationMethod) does not — `src/core/changes.ts:153`.
+- **Typed error conditions**: `CreateRequirement` on an existing id throws `ERR_DUPLICATE_ID`; nulling a non-nullable attr throws `ERR_NULL_REQUIRED` (only `preCondition`, `trigger`, `verificationMethod` are clearable) — `src/core/changes.ts:82`, `src/core/changes.ts:135`, `NULLABLE_ATTRS` at `src/core/schema.ts:61`.
+- **Idempotent / defensive edge ops (AC-1-7)**: `AddRelationship` is a no-op when the edge exists (but a missing source still throws); `RemoveRelationship` and `DeleteRequirement` no-op on a missing edge/requirement — `src/core/changes.ts:174`, `src/core/changes.ts:187`, `src/core/changes.ts:202`.
+- **Permissive writes, integrity as lint**: dangling edge targets are allowed at write time and surfaced later as `DanglingReference` findings by `symspec check`; the `derives` DAG must be acyclic (`CycleDetected`); nodes with no edges surface as `OrphanRequirement` — `src/core/schema.ts:182`, `src/core/analyze.ts:36`, `src/core/analyze.ts:71`, `src/core/analyze.ts:90`.
+- **Document validation (AC-1-4)**: the whole on-disk document is validated by `RequirementsDocSchema` at load — a UUID-keyed record with an integer `schemaVersion` and optional glossary; malformed JSON is rejected before any command runs (`SCHEMA_VERSION = 2`) — `src/core/schema.ts:337`, `src/core/schema.ts:572`.
 
-Four labels, mutually exclusive (`src/solvers/llm/judge-pair.ts:30-62`):
-
-- `contradiction`: A and B cannot both be satisfied.
-- `subsumption`: one is a strict special case of the other; `whichOf` ∈ `{a, b}` indicates the more general.
-- `redundant`: same thing in different words; `whichOf` is null.
-- `compatible`: no conflict; the free-tier flag was a false positive.
-
-The arbiter prompt at `src/solvers/llm/arbiter.ts:122-127` reproduces these definitions verbatim. Conservative defaults: `compatible` when evidence is weak (`src/solvers/llm/arbiter.ts:120`).
-
-## Ensemble reconciliation rules
-
-Pair (`src/solvers/llm/ensemble.ts:82-134`):
-
-- Both `contradiction` → high-confidence `Contradiction`.
-- Both `subsumption`, same `whichOf` → high-confidence `Subsumption`.
-- Both `subsumption`, different `whichOf` → low-confidence `Subsumption` with a "review needed" message.
-- Both `redundant` → high-confidence `Subsumption` with `whichOf=null`.
-- Both `compatible` → drop (no finding emitted).
-- Disagree → arbiter (if configured) or `NeedsReview`.
-
-Ambiguity (`src/solvers/llm/ensemble.ts:231-263`):
-
-- Both `ambiguous: true` → high-confidence `Ambiguity` with merged phrases and rewrites.
-- Both `ambiguous: false` → drop.
-- Disagree → `NeedsReview`. The arbiter currently does not handle ambiguity — pair-only.
-
-## Arbiter conservatism rules
-
-The arbiter system prompt instructs (`src/solvers/llm/arbiter.ts:117-121`):
-
-- Read both requirements slot by slot.
-- Determine whether trigger/preCondition overlap is total, partial, or coincidental.
-- Determine whether `systemResponse` fields are compatible, mutually exclusive, or one is a strict special case.
-- Be conservative: prefer `compatible` when evidence is weak; set `confidence: 'low'` when external information could change the answer.
-- Always emit the verdict via `report_arbitration`; never refuse; if uncertain, return `compatible` with `confidence: 'low'` and explain in `caveat`.
-
-## SysML projection rules
-
-Each requirement → one `RequirementUsage` element with `declaredName = "<patternType>_<id-first-8-chars>"` (`src/core/sysml-export.ts:55-70`). Each outbound edge → one relationship element with `@type` mapped per `RELATION_TO_SYSML`:
-
-- `derives` → `DeriveRequirement`
-- `satisfies` → `Satisfy`
-- `verifies` → `Verify`
-- `refines` → `Refine`
-
-Relationship `@id` is `"<from>-><relation>-><to>"` (`src/core/sysml-export.ts:74-79`).
-
-## ERPAVal integration rules
-
-When triggered from CL-RIGOR (`integration/SKILL.md:117-126`):
-
-1. Read the HMW brainstorm if present at `.erpaval/brainstorms/NNN-<slug>-requirements.md`.
-2. Run the `author_new_spec` workflow against `.erpaval/specs/NNN-<slug>/requirements.automerge`.
-3. Export to `.erpaval/specs/NNN-<slug>/spec.md` via `sysml_export`.
-4. Attach findings JSON to the Gate 1 review artifact.
-
-The SKILL.md also defines a finding-resolution priority order (`integration/SKILL.md:74-83`): DanglingReference → Contradiction → Missing slots → CycleDetected → Subsumption → Ambiguity → NeedsReview.
 
 ## See also
 
-- [Module map](../architecture/module-map.md)
-- [Processes](../behavior/processes.md)
-- [Tech debt register](tech-debt.md)
-- [System overview](../architecture/system-overview.md)
+- [symspec · Module map](../architecture/module-map.md) — 12 shared source citations
+- [symspec · Public API](../reference/public-api.md) — 10 shared source citations
+- [symspec · Data flow](../architecture/data-flow.md) — 4 shared source citations
+- [symspec · Component diagram](../diagrams/architecture/components.md) — 3 shared source citations
+- [symspec · Impact analysis](impact-analysis.md) — 3 shared source citations

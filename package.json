@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Neurosymbolic spec validator for coding agents: EARS requirements via regex-first parsing, INCOSE GtWR lint, and Z3 SMT formal conflict detection with unsat-core evidence, plus optional Lean 4 certification and an agent-friendly CLI (manifest, typed JSON envelopes, stable error codes).",
+  "description": "Neurosymbolic spec validator for coding agents: EARS requirements via regex-first parsing, INCOSE GtWR lint, and Z3 SMT formal conflict detection with unsat-core evidence, plus an optional local ONNX-WASM semantic paraphrase tier, optional Lean 4 certification, and an agent-friendly CLI (manifest, typed JSON envelopes, stable error codes).",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

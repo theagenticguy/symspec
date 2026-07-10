@@ -1,77 +1,104 @@
 # symspec · Processes
 
-Five end-to-end processes the system runs. Each is identified by the orchestrating function and stepped from input to side effect.
+What actually runs when the key operations execute. Each step cites the source line (`path:LINE`) that performs it. Branch points — opt-in flags, gate exclusions, and error paths — are called out inline.
 
-## 1. Apply a single Change record
+## `check` end-to-end
 
-Entry: `applyChange(doc, raw)` in `src/core/doc.ts:58-160`. Called by every CLI subcommand that mutates state (`src/cli/index.ts:60`, `:84`, `:98`, `:113`, `:133`, `:148`), every mutating MCP tool (`src/mcp/server.ts:74`, `:106`, `:132`, `:162`, `:195`), and every smoke-test mutation.
+The orchestrator is `runCheck` in `src/pipeline/check.ts:293`. It assembles structural, lint, and formal findings into one `CheckReport` and never touches the Lean tier (the import list at `src/pipeline/check.ts:56` carries no `../certify/*`, the AC-5-5 invariant).
 
-1. **Schema-validate.** `ChangeSchema.parse(raw)` rejects malformed input; the discriminated-union check on `kind` is what determines the branch (`src/core/doc.ts:59`).
-2. **Snapshot timestamp.** `now = new Date().toISOString()` is computed once per call so all writes within the same Change share a `updatedAt` (`src/core/doc.ts:60`).
-3. **Open Automerge transaction.** `Automerge.change(doc, draft => { ... })` (`src/core/doc.ts:62`). All mutations inside operate on a proxy.
-4. **Branch on `kind`.**
-   - `CreateRequirement`: collision check, then build the `Requirement` object with rendered sentence and conditional optional-slot assignment (`src/core/doc.ts:64-100`).
-   - `UpdateAttribute`: id check, null-vs-required check, write or `delete`, conditionally re-render sentence (`src/core/doc.ts:102-130`).
-   - `AddRelationship`: id check, push if absent (idempotent) (`src/core/doc.ts:132-139`).
-   - `RemoveRelationship`: id check no-throw, splice if present (`src/core/doc.ts:141-149`).
-   - `DeleteRequirement`: `delete d.requirements[id]` — tombstone, no inbound-edge cleanup (`src/core/doc.ts:151-157`).
-5. **Return new Doc.** Automerge returns a structurally-shared new `Doc` instance.
+1. **List requirements.** `listRequirements(doc)` snapshots the stored requirement set (`src/pipeline/check.ts:294`).
+2. **Tier 0 — structural.** `analyze(doc)` runs the dangling-ref / missing-slot / cycle / orphan checks; `normalizeStructural` maps each `Finding.kind` to its `FND_*` code via the single-source bridge `structuralKindToFndCode` and assigns severity from `STRUCTURAL_SEVERITY` (`src/pipeline/check.ts:297`, mapping table at `src/pipeline/check.ts:218`, `src/pipeline/check.ts:233`).
+3. **Lint — GtWR.** `normalizeLint` renders each requirement's sentence (stored `sentence` or `renderSentence`), runs the per-statement `checkGtWRules` and the set-level `checkGtWRulesSet` (~24 GtWR T1 rules), each finding carrying its span and optional rewrite suggestion (`src/pipeline/check.ts:300`, `src/pipeline/check.ts:246`).
+4. **AC-3-7 gate — partition before symbolization.** `gateRequirements(requirements)` splits the set; `excludedIds` builds the exclusion membership set (`src/pipeline/check.ts:303`). This runs BEFORE the formal tier so the SMT layer never receives unsound input (see the gate process below).
+5. **Free tier + formal tier via the solver orchestrator.** `runSolvers(doc, {…})` runs the free tier (exact-duplicate detection, candidate-pair generation) and then calls the injected `formal` callback with `{ reqs, pairs }` (`src/pipeline/check.ts:313`; orchestrator at `src/solvers/index.ts:68`, free tier first at `src/solvers/index.ts:74`, formal injection at `src/solvers/index.ts:83`). The formal callback captures its rich findings into the `formal` closure array and returns `{ findings: [], pairsChecked }` so nothing is double-counted (`src/pipeline/check.ts:311`, `src/pipeline/check.ts:396`).
+6. **Inside the formal callback — exclude, then encode once.**
+   - Filter the gate's excluded ids out of `reqs` to get `included`; project each to `EncodableRequirement` via `toEncodable` (resolves negation — see below) (`src/pipeline/check.ts:318`).
+   - Build the atomizer over the committed glossary (`makeAtomize(glossaryIndex(doc.glossary))`, AC-9-3 canonicalization; empty glossary ⇒ glossary-free behavior) (`src/pipeline/check.ts:326`).
+   - Boot the shared Z3 WASM context `getContext('symspec-check')` and encode every included requirement once into `EncodedRequirement`, indexed by id (`src/pipeline/check.ts:331`).
+   - Restrict the free tier's candidate `pairs` to pairs where both ids are included (`src/pipeline/check.ts:337`).
+7. **Formal SMT checks (run in this order).**
+   - `findContradictions(encodable, {atomize, timeoutMs})` — per-context-group reachability, default `timeoutMs` 2000 (`src/pipeline/check.ts:339`, `src/pipeline/check.ts:322`).
+   - `checkSubsumption(ctx, encodedById, includedPairs)` — pairwise (`src/pipeline/check.ts:340`).
+   - `checkVacuity(ctx, encoded)` — whole-spec (`src/pipeline/check.ts:341`).
+   - `checkCompleteness(ctx, encoded)` — whole-spec completeness heuristic (`src/pipeline/check.ts:342`).
+   - `findSimilarUnunified(encodable, …)` — lexical similar-but-ununified (`src/pipeline/check.ts:343`).
+   - `findNeedsReview(encodable, {atomize, timeoutMs, solverBudgetMs?})` — per-group `unknown`/timeout upgraded to `FND_NEEDS_REVIEW`; honors the whole-run `solverBudgetMs` boundary when supplied (`src/pipeline/check.ts:349`).
+8. **Opt-in semantic paraphrase pass (`--semantic`).** Only when `options.semantic` is provided: `findSimilarSemantic(included, embedder, {glossary, threshold?})` proposes `FND_SIMILAR_SEMANTIC` glossary merges over the SAME included set (default cosine 0.82). Off by default, so the base path never loads the embedding model (`src/pipeline/check.ts:359`).
+9. **Attach evidence.** `attachEvidenceToAll([...contradictions, ...subsumptions, ...vacuities], encodedById)` decorates the unsat-triggered findings with the AC-4-6 atom table + core (`src/pipeline/check.ts:370`). These are pushed with `evidence`; `incompletes`/`similar`/`review`/`semantic` are pushed without (`src/pipeline/check.ts:375`, `src/pipeline/check.ts:386`).
+10. **Free-tier projection.** Back in `runCheck`, exact-duplicate free-tier findings become `FND_EXACT_DUPLICATE` lint findings; the free-tier weasel `Ambiguity` projection is dropped because GtWR already covers those lexicons with stable codes (`src/pipeline/check.ts:402`, rationale at `src/pipeline/check.ts:32`).
+11. **Assemble the report.** Append the formal findings, sort with `compareFindings` (severity rank → code → first requirement id), tally `counts` by severity (the exit-code contract's input), and return `{ findings, excluded, pairsChecked, counts }` (`src/pipeline/check.ts:414`, comparator at `src/pipeline/check.ts:280`).
 
-## 2. Save and reload
+**Negation resolution (`toEncodable`).** The persisted `negated` flag is authoritative: when set, the stored `systemResponse` is already the positive atom and passes through with `negated: true` (`src/pipeline/check.ts:188`). Only when the flag is absent does a conservative leading-negator scan (`^(?:do(?:es)? not|not|never)\s+`) strip a baked-in negator and set `negated: true` (`src/pipeline/check.ts:175`, `src/pipeline/check.ts:189`).
 
-Entry: `saveDoc(doc, path)` and `loadDoc(path)` in `src/core/doc.ts:33-41`.
+## Pipeline gate — exclusion before symbolization (AC-3-7)
 
-1. `Automerge.save(doc)` → `Uint8Array` of binary CRDT format.
-2. `fs/promises.writeFile(path, bytes)`.
-3. On reload: `fs/promises.readFile(path)` → `Automerge.load<RequirementsDoc>(bytes)` (`src/core/doc.ts:33-36`).
+`gateRequirements` in `src/pipeline/gate.ts:125` wraps `gate` (`src/pipeline/gate.ts:97`) and partitions a requirement set into `included` (safe to hand the formal encoder) and `excluded`. Deterministic and I/O-free.
 
-The smoke script asserts roundtrip preservation at `scripts/smoke-incremental.ts:80-90`.
+1. **Per requirement, parse-failure short-circuit.** If the caller marks `parseFailed: true`, the requirement is excluded with reason `'parse-failure'` and no surface check runs — there is no trustworthy sentence to lint (`src/pipeline/gate.ts:102`). No current caller wires parse outcomes through here; `gateRequirements` omits the flag (`src/pipeline/gate.ts:126`).
+2. **Blocking surface check.** Otherwise `blockingFindings` renders the sentence and runs the GtWR lint, keeping ONLY `error`-severity findings — AC-3-3 exiles the legitimate-exception rules (R26/R32/R35/R16) to `warn`/`info`, which must never exclude a statement (`src/pipeline/gate.ts:77`, `src/pipeline/gate.ts:79`).
+3. **Exclude or include.** Any blocking finding excludes the requirement with reason `'blocking-surface-check'`, carrying those findings as evidence; zero blocking findings (including a requirement with only `warn`/`info`) is included (`src/pipeline/gate.ts:108`, `src/pipeline/gate.ts:113`).
 
-## 3. Concurrent merge with dangling-reference convergence
+The excluded set feeds `runCheck`'s formal filter (`src/pipeline/check.ts:318`); the excluded records surface in `CheckReport.excluded` (`src/pipeline/check.ts:420`). Their blocking findings already appear in the lint findings, so they are not double-counted.
 
-Entry: `merge(a, b)` in `src/core/doc.ts:172-174`. Demonstrated in `scripts/smoke.ts:79-198`.
+## Parse ladder escalation (Tier 1 → Tier 2 → Tier 3)
 
-1. **Fork.** Both replicas start from the same `base` doc via `Automerge.clone(base)` (`scripts/smoke.ts:83-85`).
-2. **Diverge.** Alice creates a node and adds two outbound edges, including one pointing at a node Bob will delete (`scripts/smoke.ts:93-117`). Bob deletes a node and updates an attribute (`scripts/smoke.ts:127-134`).
-3. **Merge.** `merge(alice, bob)` returns a converged doc (`scripts/smoke.ts:143`). Internally Automerge applies the two op streams in a deterministic order; concurrent same-attribute writes resolve via Automerge's last-writer-wins on Lamport-timestamped operations (`scripts/smoke-incremental.ts:300-324` exercises this).
-4. **Inspect.** `listRequirements(merged)` returns the union: Alice's new node survives, Bob's delete survives, Alice's edge to the deleted target survives as a dangling reference (`scripts/smoke.ts:145-154`).
-5. **Verify convergence.** `merge(bob, alice)` produces the same set of requirement IDs as `merge(alice, bob)` (`scripts/smoke.ts:184-198`).
+One line is driven by `parseLine` (`src/parse/result.ts:258`), which calls `runTier2` then `resolveParseResult`. Batch input fans out over the same driver, line by line, so the wink model loads at most once (`src/parse/batch.ts:157`, `src/parse/batch.ts:160`).
 
-## 4. Analyze a converged doc
+1. **Tier 1 — regex cascade (`classifyTier1`, `src/parse/tier1.ts:239`).** `preprocess` normalizes the line; an empty result escalates immediately (`src/parse/tier1.ts:240`). The ordered cascade `ORDER` is tried rung by rung: complex → unwanted (if…then / if-no-then) → event (when / no-comma) → state (while) → optional (where) (`src/parse/tier1.ts:156`, loop at `src/parse/tier1.ts:243`). Order is load-bearing: `complex` precedes `state`, `if…then` precedes `when`.
+2. **Main-clause gate.** A rung is matched only when its main clause parses via `MAIN` (`parseMain`, `src/parse/tier1.ts:221`). A keyword match whose `<system> shall <response>` does not parse is NOT a partial success — it falls through to the next rung (`src/parse/tier1.ts:247`). Falling off the cascade, a bare main clause becomes `ubiquitous` (`src/parse/tier1.ts:261`).
+3. **Tier-1 confidence + hard escalation.** `buildResult` (`src/parse/tier1.ts:282`) runs `systemEscalationNotes` over the recovered subject; a hard trigger (comma / embedded EARS keyword / >6 tokens) turns the parse into a MISS rather than a garbage slot set (`src/parse/tier1.ts:292`). Soft signals downgrade confidence: a non-`shall` modal downgrades to `medium` and notes `nonstandard-modal`; a person-word subject (`weak-subject`) downgrades to `low` (`src/parse/tier1.ts:301`, `src/parse/tier1.ts:305`). A modal-bearing line with no response becomes `modal-without-response`; a truly modal-free line becomes `no-main-clause` (`src/parse/tier1.ts:274`, `src/parse/tier1.ts:279`).
+4. **Escalation decision (`escalationTriggers`, `src/parse/tier2.ts:196`).** Whole-sentence checks fire independent of the Tier-1 verdict: >60 tokens (`MAX_TIER1_TOKENS`) → `long-sentence`; a top-level `and`/`or` → `compound-conjunction` (`src/parse/tier2.ts:205`). A Tier-1 miss adds `no-rung-matched` and returns (`src/parse/tier2.ts:208`). On a usable Tier-1 parse, soft signals ride along: `weak-subject`, `passive-main-clause` (leading `be`/`is`/`are`+word in the response), `nested-clause-keyword` (a second EARS keyword inside a `pre`/`trigger` slot) (`src/parse/tier2.ts:216`).
+5. **Tier-2 gating (`runTier2`, `src/parse/tier2.ts:513`).** When NO trigger fires the line is clean: it returns `{ escalated: false }` WITHOUT invoking the loader, so the ~4.5 MB wink-nlp model is never imported on the fast path (`src/parse/tier2.ts:517`). When a trigger fires it lazily loads the analyzer via `opts.load` (default `defaultTier2Loader`, which dynamic-`import()`s `wink-nlp` + `wink-eng-lite-web-model` through non-literal specifiers) (`src/parse/tier2.ts:521`, `src/parse/tier2.ts:272`). A loader failure yields a Tier-2 miss with `tier2-load-failed` — it never throws, so the ladder can still reach Tier 3 (`src/parse/tier2.ts:525`).
+6. **Tier-2 repair (`repairWithWink`, `src/parse/tier2.ts:423`).** Pivots on the first modal (by lemma/surface membership, not POS, so a passive `be` is never mistaken for a modal) to rebuild `systemName` from the contiguous UPOS noun-chunk to its left (leading determiners stripped) and `systemResponse` from everything to its right (leading negator extracted to a polarity flag) (`src/parse/tier2.ts:432`, `src/parse/tier2.ts:437`, `src/parse/tier2.ts:453`). A leading EARS keyword before the subject is recovered into `preCondition`/`trigger` via `classifyLeadingClause` (`src/parse/tier2.ts:463`). No modal → miss `no-modal-clause`; no subject → `no-subject-recovered`; no response → `no-response-recovered` (`src/parse/tier2.ts:433`, `src/parse/tier2.ts:444`, `src/parse/tier2.ts:449`). Tier 2 is a repair tier: confidence is never `high` — any repair note or soft trigger pins it to `low`, else `medium` (`src/parse/tier2.ts:481`).
+7. **Resolve the outcome (`resolveParseResult`, `src/parse/result.ts:231`).** A `compound-conjunction` trigger FORCES a Tier-3 `ERR_PARSE_COMPOUND` error even over a nominal Tier-1/Tier-2 ok — the recovered slots survive in `partial` (`src/parse/result.ts:232`). Otherwise it prefers a Tier-2 repair, then a usable Tier-1 parse (`src/parse/result.ts:234`); failing both, it falls to Tier 3.
+8. **Tier 3 — error envelope (`makeTier3Envelope`, `src/parse/tier3.ts:283`).** Aggregates notes/triggers from both tiers, assigns an `ERR_PARSE_*` code by priority COMPOUND > NO_MODAL > NOT_A_REQUIREMENT > AMBIGUOUS_CLAUSES (`assignCode`, `src/parse/tier3.ts:222`), and attaches mechanical rewrite suggestions plus best-effort `partial` slots. `fromTier3` then draws the skipped/error boundary: `ERR_PARSE_NO_MODAL` becomes `outcome: 'skipped'` (no-modal prose, not an error), every other code stays `outcome: 'error'` (`src/parse/result.ts:206`).
 
-Entry: `analyze(doc)` in `src/core/analyze.ts:23-100`. Called by CLI `req analyze` (`src/cli/index.ts:181`), MCP `analysis_run` (`src/mcp/server.ts:245`), and smoke tests.
+## Formal SMT contradiction check
 
-1. **Snapshot.** `snapshot(doc)` strips Automerge proxies; builds `Set<id>` of every requirement (`src/core/analyze.ts:24-26`).
-2. **Edge scan.** For every requirement and every relation, push `DanglingReference` for any target id not in the set (`src/core/analyze.ts:30-43`).
-3. **Slot rules.** Push `MissingTrigger` if `event-driven|unwanted-behavior` and no trigger; push `MissingPreCondition` if `state-driven|optional-feature` and no preCondition (`src/core/analyze.ts:46-64`).
-4. **Cycle detection.** `findCycles(reqs, 'derives')` — DFS with `onStack` set, dedup by canonical rotation (`src/core/analyze.ts:102-140`). Push one `CycleDetected` per unique cycle.
-5. **Orphan detection.** Build `inboundCount` map, count outbound edges per node; push `OrphanRequirement` for any node with both 0 inbound and 0 outbound when `reqs.length > 1` (the single-node case is not an orphan) (`src/core/analyze.ts:79-97`).
+`findContradictions` in `src/formal/contradiction.ts:229`. Async because the solver call is the only asynchronous boundary; everything up to `check` is deterministic.
 
-## 5. Run the three-tier solver
+1. **Guard clause.** Fewer than 2 requirements → `[]` (`src/formal/contradiction.ts:233`).
+2. **Encode once.** Each requirement is encoded into its guarded-implication formula `REQ-i ⇒ (context ⇒ response)` via `encode` (`src/formal/contradiction.ts:238`; encoder at `src/formal/encode.ts:183`). The body is derived from the slots actually present, so an event-driven requirement carrying a precondition correctly encodes as `(P ∧ T) ⇒ R` (`src/formal/encode.ts:212`).
+3. **Boot Z3 + materialize.** `getContext('symspec-contradiction')` then `materialize` lowers each formula to a Z3 `Bool`; Z3 interns Bool consts by name so ASTs are reusable across the fresh Solver built per group (`src/formal/contradiction.ts:239`, `src/formal/contradiction.ts:244`). Each requirement's guard is a Bool const named after the id, mapped back through `guardByString` — that lookup is the structural CTX-* filter (`src/formal/contradiction.ts:249`).
+4. **Plan context groups (`planContextGroups`, `src/formal/contradiction.ts:140`).** The distinct context-atom sets across the spec, plus one always-first baseline empty-context group so unconditional (ubiquitous-vs-ubiquitous) conflicts are checked even for an all-ubiquitous spec (`src/formal/contradiction.ts:143`). Mutually exclusive triggers land in DISTINCT groups so they are never asserted together and cannot fake a conflict.
+5. **Per-group reachability check.** For each group: a fresh Solver with `timeout` (default 2000 ms) and the z3-only `smt.core.minimize` option; assert EVERY requirement's whole-spec formula, then `add()` the group's context atoms as PLAIN assertions (never assumption literals, so they can never appear in the core) (`src/formal/contradiction.ts:258`, `src/formal/contradiction.ts:265`).
+6. **Enumerate disjoint conflicts.** With the guards as the ONLY assumption literals, loop `solver.check(...assumptions)` while ≥2 assumptions remain. `unknown`/timeout is never "no conflict" — it breaks the group's enumeration (AC-4-7 upgrades that elsewhere to `FND_NEEDS_REVIEW`) (`src/formal/contradiction.ts:282`, `src/formal/contradiction.ts:286`). On `unsat`, filter the raw core to guard literals; drop that core's guards from the assumption set and re-check to find the NEXT disjoint conflict (`src/formal/contradiction.ts:293`, `src/formal/contradiction.ts:304`).
+7. **Unsat-core minimization (`minimizeCore`, `src/formal/contradiction.ts:189`).** Deletion-based: for each candidate guard, re-check with it dropped; if still `unsat` the guard was inessential and is removed permanently; `sat`/`unknown` keeps it (`unknown` conservatively kept to avoid an under-reported culprit). Stops before dropping below a pair (`src/formal/contradiction.ts:201`, `src/formal/contradiction.ts:203`). Belt-and-suspenders with the z3-only option above.
+8. **Emit.** A minimized core of ≥2 unique ids becomes one `FND_CONTRADICTION` (severity `error`), deduplicated by sorted id-set key across groups (`src/formal/contradiction.ts:309`, `src/formal/contradiction.ts:313`). A degenerate single-id core cannot be a cross-requirement conflict and is skipped (`src/formal/contradiction.ts:310`). A contradiction is detectable only when two responses resolve to the same atom with opposite polarity — conflicts across unrelated atoms are a documented false negative (sound modulo atomization).
 
-Entry: `runSolvers(doc, opts?)` in `src/solvers/index.ts:49-110`.
+## Semantic model load + inference
 
-1. **Project.** Map every `Requirement` to a `ReqView` via `asView` (`src/solvers/index.ts:50`, `src/solvers/types.ts:99-111`).
-2. **Free tier — exact duplicates.** `detectExactDuplicates(reqs)` — full-tuple hash, one finding per pair within a duplicate group (`src/solvers/free/duplicates.ts:12-46`).
-3. **Free tier — ambiguity.** `detectAmbiguity(reqs)` — word-boundary scan against 35 weasel phrases over `preCondition + trigger + systemResponse` (`src/solvers/free/ambiguity.ts:100-122`).
-4. **Free tier — candidate pairs.** `emitCandidatePairs(reqs)` — three structural rules (`src/solvers/free/pairwise-filter.ts:55-99`):
-   - same `systemName` + same `trigger` + different `systemResponse` → `same-system-same-trigger-different-response`.
-   - same `systemName` + overlapping `preCondition` → `same-system-overlapping-precondition`.
-   - same `systemName` + lexical similarity ≥ threshold → `near-duplicate-sentence`.
-5. **Drop pairs already caught by exact-duplicate.** Filter via `dupedSet` (`src/solvers/index.ts:65-71`).
-6. **LLM tier (optional).** If `opts.llm` provided:
-   - **Pair judges parallel.** For each candidate (capped at `maxLlmPairs`), spawn `Promise.all([primary, secondary])` (`src/solvers/llm/ensemble.ts:45-49`).
-   - **Reconcile.** Both same → high-confidence finding (`src/solvers/llm/ensemble.ts:51-53`, `src/solvers/llm/ensemble.ts:82-134`). Disagree → arbiter or `NeedsReview` (`src/solvers/llm/ensemble.ts:55-79`).
-   - **Arbiter (optional).** If `opts.llm.arbiter` provided, call `bedrockArbiter` with the full pair, the free-tier reason, and both prior judgments verbatim (`src/solvers/llm/ensemble.ts:57-67`).
-   - **Apply verdict.** Translate `ArbitrationVerdict` into one `SolverFinding`, replacing what would have been `NeedsReview` (`src/solvers/llm/ensemble.ts:136-196`).
-   - **Ambiguity ensemble.** Skip requirements already flagged by free tier; spawn parallel judges over the rest (`src/solvers/index.ts:96-106`, `src/solvers/llm/ensemble.ts:223-262`).
-7. **Return.** `{ findings, candidatePairs, llmPairsRun }` (`src/solvers/index.ts:43-47`, `src/solvers/index.ts:108-110`).
+Lazy, offline-by-default, and reached only via `check --semantic` → `findSimilarSemantic` → an injected `Embedder`. The embedder is built by `loadEmbedder` (`src/formal/embed.ts:205`).
 
-The arbiter sub-process inside step 6 is itself a full request/response cycle: build XML-tagged user message, force-call `report_arbitration`, parse the tool input from the response (`src/solvers/llm/arbiter.ts:189-209`, `src/solvers/llm/arbiter.ts:276-328`).
+1. **Resolve the flag.** `allowRemote` = explicit option, else `SYMSPEC_EMBED_ALLOW_REMOTE=1`; model defaults to the pinned `Xenova/bge-base-en-v1.5` (`src/formal/embed.ts:206`, `src/formal/embed.ts:40`).
+2. **Build the pipeline (`defaultPipelineFactory`, `src/formal/embed.ts:102`).**
+   - `ensureModelAssets(allowRemote)` resolves the three pinned assets (`src/formal/embed.ts:105`; cache in `src/formal/model-cache.ts:177`). Each asset: read from the OS cache dir and verify sha256 — on a hit, load fully offline; on a miss with `allowRemote`, `fetch` from the frozen HF revision, sha256-verify, and atomically publish (temp write + rename); on a miss while offline, throw `ModelAssetsUnavailableError` (`src/formal/model-cache.ts:134`, digest verify at `src/formal/model-cache.ts:155`, atomic publish at `src/formal/model-cache.ts:166`).
+   - Lazily `import('onnxruntime-web')` and `import('@huggingface/tokenizers')` in parallel; pin the WASM EP to single-threaded (`src/formal/embed.ts:109`, `src/formal/embed.ts:116`).
+   - Read the tokenizer JSON, tokenizer config, and model bytes; build the `Tokenizer` and create the `InferenceSession` on the `wasm` execution provider with full graph optimization (`src/formal/embed.ts:118`, `src/formal/embed.ts:125`).
+3. **Error contract.** Any factory failure — cache miss offline, missing runtime, corrupt model — is normalized by `loadEmbedder` to `EmbedModelMissingError` / `ERR_EMBED_MODEL_MISSING`, carrying a download suggestion (`src/formal/embed.ts:214`, error class at `src/formal/embed.ts:46`). It never blocks the SMT/lint tiers.
+4. **Inference per call.** Tokenize (special tokens + token-type ids), right-pad to the batch's longest sequence, truncated to `MAX_SEQ_LEN` 512 (`src/formal/embed.ts:134`, `src/formal/embed.ts:43`). Run the session over `input_ids` / `attention_mask` / `token_type_ids` int64 tensors (`src/formal/embed.ts:157`).
+5. **Pool + normalize.** CLS pooling — take the `[CLS]` token at sequence index 0 of `last_hidden_state` — then L2-normalize, matching how BGE was trained so a dot product IS cosine (`src/formal/embed.ts:184`, `src/formal/embed.ts:188`). `loadEmbedder` calls the pipeline with `{pooling: 'cls', normalize: true}` and returns one `Float32Array` per input (`src/formal/embed.ts:221`).
+6. **Consume (`findSimilarSemantic`, `src/formal/semantic.ts:76`).** Embeds every response once, then for each same-system pair whose response atoms did NOT already unify (via atomize + antonym + glossary), computes `cosine` (a plain dot product) and, at ≥ threshold (default 0.82), emits an info-tier `FND_SIMILAR_SEMANTIC` suggesting a concrete `glossary add` merge — propose-only, never a verdict (`src/formal/semantic.ts:98`, `src/formal/semantic.ts:103`, `src/formal/semantic.ts:111`).
+
+## `certify`
+
+The optional Lean tier, entirely separate from `check`. `certify` in `src/certify/run.ts:305` is the full AC-5-3 pipeline; discovery is a caller-side precheck.
+
+1. **Discover the toolchain (`discoverLeanToolchain`, `src/certify/discover.ts:72`).** Synchronously `spawnSync('lean', ['--version'])`. A spawn error (e.g. ENOENT) or non-zero exit throws `LeanDiscoveryError` / `ERR_LEAN_TOOLCHAIN_MISSING` with the `elan default stable` install suggestion (`src/certify/discover.ts:79`, `src/certify/discover.ts:87`). Fires only on explicit `--certify`; never runs during `check`. (The non-throwing sibling `probeLeanToolchain` at `src/certify/discover.ts:114` backs `manifest --backends`.)
+2. **Emit theorems (`emitLeanFile`, `src/certify/emit.ts:85`).** Batches every theorem into ONE self-contained `.lean` file so Lean startup is paid once. Validates each name is a valid Lean identifier and unique (throws otherwise), dedupes imports (core Lean needs none; only `bv_decide` pulls `Std.Tactic.BVDecide`), and renders `theorem <name> <binders> : <statement> := by <tactic>` blocks (`src/certify/emit.ts:90`, `src/certify/emit.ts:102`, `src/certify/emit.ts:125`).
+3. **Append axiom prints.** `withAxiomPrints` appends one `#print axioms <name>` per theorem so the run also captures kernel-checked axiom provenance (`src/certify/run.ts:314`, `src/certify/run.ts:187`).
+4. **Run against a scratch file.** The source is written to a throwaway temp dir, so a failed/uncertified run never leaves a half-written artifact behind; the scratch dir is removed in a `finally` (`src/certify/run.ts:316`, `src/certify/run.ts:326`).
+5. **Invoke `lean --json` (`runLean`, `src/certify/run.ts:209`).** `spawn('lean', ['--json', filePath])`, collecting stdout. It never throws on a non-zero Lean exit (that is the expected "certification failed" path) — it only rejects if the process cannot be spawned, which the caller translates to `ERR_LEAN_TOOLCHAIN_MISSING` (`src/certify/run.ts:228`, `src/certify/run.ts:232`).
+6. **Parse NDJSON (`parseLeanNdjson`, `src/certify/run.ts:76`).** One JSON object per non-blank stdout line; lines that fail to parse or are not diagnostic-shaped go to `unparseable` rather than crashing (`src/certify/run.ts:90`, `src/certify/run.ts:104`).
+7. **Map the verdict (`mapLeanResult`, `src/certify/run.ts:117`).** `certified` iff exit code is 0 AND no `severity: "error"` diagnostic — both signals checked so a future Lean release that changes one still fails safe (`src/certify/run.ts:122`).
+8. **Extract axiom provenance (`extractAxiomProvenance`, `src/certify/run.ts:159`).** Reads only `information` diagnostics matching Lean's two `#print axioms` shapes (`does not depend on any axioms` → `[]`, or `depends on axioms: [...]`) (`src/certify/run.ts:164`, `src/certify/run.ts:170`).
+9. **Retain artifact only on success.** ONLY where `certified` is true, write the `.lean` file and a `lean-toolchain` pin (`leanprover/lean4:v<version>` from `lean --version`, falling back to a default pin) into `outDir` as a re-checkable, committable artifact (`src/certify/run.ts:333`, pin builder at `src/certify/run.ts:258`). An uncertified run returns the verdict + diagnostics + axioms with no `artifact`.
+
 
 ## See also
 
-- [Module map](../architecture/module-map.md)
-- [Data flow](../architecture/data-flow.md)
-- [Business logic](../insights/business-logic.md)
-- [Impact analysis](../insights/impact-analysis.md)
+- [symspec · Module map](../architecture/module-map.md) — 16 shared source citations
+- [symspec · Component diagram](../diagrams/architecture/components.md) — 8 shared source citations
+- [symspec · Public API](../reference/public-api.md) — 8 shared source citations
+- [symspec · Data flow](../architecture/data-flow.md) — 7 shared source citations
+- [symspec · Contract map](../insights/contract-map.md) — 6 shared source citations

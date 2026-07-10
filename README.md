@@ -2,7 +2,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**A deterministic neurosymbolic spec validator, built agent-first.** Hand it EARS-shaped requirement prose or structured slots; get back provable conflict findings with the exact requirement IDs responsible. symspec parses requirements into EARS slots (regex-first, no model calls), lints them against the INCOSE Guide to Writing Requirements, and formally checks the set for contradictions, subsumption, redundancy, and vacuity using an in-process Z3 SMT solver — every conflict backed by a minimal unsat core you can audit. It is a CLI and an importable TypeScript library whose primary consumer is a coding agent: every command emits a typed JSON envelope with stable error and finding codes, a self-describing `manifest`, and a POSIX exit-code contract. The neural tier *is* the calling agent — symspec itself makes no LLM calls, so its verdicts are reproducible byte-for-byte.
+**A deterministic neurosymbolic spec validator, built agent-first.** Hand it EARS-shaped requirement prose or structured slots; get back provable conflict findings with the exact requirement IDs responsible. symspec parses requirements into EARS slots (regex-first, no model calls), lints them against the INCOSE Guide to Writing Requirements, and formally checks the set for contradictions, subsumption, redundancy, and vacuity using an in-process Z3 SMT solver — every conflict backed by a minimal unsat core you can audit. An optional semantic tier bridges paraphrased conflicts a lexical check would miss, using a **local ONNX-WASM embedding model** (no network calls at verdict time, no external API) that only ever *proposes* glossary merges — the deterministic SMT stage decides. It is a CLI and an importable TypeScript library whose primary consumer is a coding agent: every command emits a typed JSON envelope with stable error and finding codes, a self-describing `manifest`, and a POSIX exit-code contract. Given a document, its committed glossary, and the pinned model, every verdict is reproducible byte-for-byte — the fuzzy step runs once, is reviewed, and is versioned in git.
 
 ## Quick start
 
@@ -136,13 +136,15 @@ That is the whole user-facing surface. Everything below is how it works.
 
 ---
 
-## The four-stage pipeline
+## The pipeline
 
 symspec runs a **forced pipeline** — `parse → lint → check → certify` — and the
 order is load-bearing. A statement that fails an earlier surface stage is
 *excluded* from the formal stage, because feeding unparsed or dangling-reference
 text into an SMT encoding is unsound. The exclusion is reported in the `check`
-envelope's `excluded[]` so nothing disappears silently.
+envelope's `excluded[]` so nothing disappears silently. An opt-in **semantic
+tier** (`--semantic`) runs alongside the formal stage to surface paraphrased
+conflicts, and an opt-in **Lean 4 certification** tier runs only on demand.
 
 ### 1. Parse — prose → EARS slots (regex-first ladder)
 
@@ -238,7 +240,38 @@ Portability: `--emit-smt2` writes a standard-conformant SMT-LIB2 artifact (with
 reader; `--solver-path`/`SYMSPEC_Z3`/a PATH `z3`/`cvc5` runs that binary as an
 optional cross-check.
 
-### 4. Certify — optional Lean 4 tier
+### 4. Semantic — optional paraphrase bridging (local ONNX embeddings)
+
+`src/formal/embed.ts`, `model-cache.ts`, `semantic.ts`. Opt-in with
+`check --semantic`; the default `check` never touches it and pays zero cost. The
+formal tier is *sound modulo atomization*, so a real conflict can hide when two
+responses are worded differently ("issue a session token" vs "issue a login
+credential" are distinct atoms). The semantic tier closes that gap **without
+breaking determinism**, by splitting PROPOSE from DECIDE:
+
+- **PROPOSE (fuzzy).** For each unmerged same-system response pair, symspec
+  embeds both phrasings and, when their cosine similarity clears a threshold
+  (default `0.82`, `--semantic-threshold`), emits an info-tier
+  `FND_SIMILAR_SEMANTIC` finding suggesting a concrete `symspec glossary add`.
+  Never a verdict. The embeddings run on the pinned `bge-base-en-v1.5` model via
+  **`onnxruntime-web` (WASM execution provider, single-threaded) with a pure-JS
+  tokenizer** — no native `onnxruntime-node` binary, no `@huggingface/transformers`.
+  Vectors are CLS-pooled and L2-normalized (how BGE was trained), so cosine is a
+  dot product.
+- **DECIDE (deterministic).** A committed `glossary` in the document maps aliases
+  → a canonical phrasing (`symspec glossary add/remove/list`). `atomize`
+  canonicalizes through it *before* the antonym step, so agent-confirmed
+  synonyms collide on one atom and the existing SMT contradiction check proves
+  the conflict. The verdict path reads the committed glossary, never the model.
+
+The model (~110 MB) is fetched on first use into an OS cache dir and verified
+against a pinned sha256, so runs are reproducible after the first fetch and
+fully offline thereafter. Pre-warm it with `symspec download-model` (for
+air-gapped or CI machines); when the model is absent and remote fetching is
+disabled, symspec returns `ERR_EMBED_MODEL_MISSING` and **never blocks the
+SMT/lint tiers**, which run independently.
+
+### 5. Certify — optional Lean 4 tier
 
 `src/certify/`. Strictly opt-in and never on the `check` path. `symspec certify`
 generates one batched core-Lean file (no Mathlib, no lake), runs it through
@@ -275,8 +308,8 @@ prose.
   test guards against renumbering or removal) and every error pairs with an
   actionable `suggestions` array. Examples: `ERR_DOC_NOT_FOUND`,
   `ERR_DUPLICATE_ID`, `ERR_PARSE_COMPOUND`, `ERR_SOLVER_MISSING`,
-  `ERR_LEAN_TOOLCHAIN_MISSING`. The manifest derives its code tables from these
-  same enums, so emitter and docs cannot drift.
+  `ERR_LEAN_TOOLCHAIN_MISSING`, `ERR_EMBED_MODEL_MISSING`. The manifest derives
+  its code tables from these same enums, so emitter and docs cannot drift.
 - **`--dense`** — token-economical output: minified JSON, keys equal to their
   schema default or `null` omitted, heavy `evidence`/atom-table fields elided
   (pass `--evidence` to keep them). Field names and the typed schema are
@@ -323,6 +356,8 @@ src/
   formal/              # SMT tier — atomize, antonyms, encode, backend (z3 WASM),
                        #   contradiction, subsumption, vacuity, incomplete, similar,
                        #   needs-review, finding (evidence), emit-smt2, binary-backend, codes
+                       # semantic tier — embed (onnxruntime-web WASM + tokenizer),
+                       #   model-cache (fetch + sha256-verify + cache), semantic (paraphrase finder)
   solvers/
     free/              # exact duplicates, ambiguity (lexical), pairwise candidate filter
     index.ts, types.ts # free+formal orchestrator + shared ReqView/finding types
@@ -336,11 +371,16 @@ src/
     envelope.ts        # typed success/error envelopes + apiVersion
     descriptions.ts    # single-source command help/summary prose
     output.ts, dense.ts, exit.ts, resolve-doc.ts, errors.ts, version.ts, backends.ts,
-    scope-text.ts, types-enum.ts, add.ts, update.ts
+    scope-text.ts, types-enum.ts, add.ts, update.ts, glossary.ts
 bin/
   symspec.mjs          # CLI entry (imports dist/cli.mjs)
+docs/                  # generated codebase docs (architecture, reference, insights) — see docs/README.md
 .erpaval/              # see /erpaval below
 ```
+
+For a deeper tour — module map, data-flow and sequence diagrams, the public API
+reference, contract map, and a debugging guide — see the generated documentation
+tree under [`docs/`](docs/README.md).
 
 ---
 
@@ -416,13 +456,18 @@ example_files:
 # What NOT to do
 ```
 
-The three current lessons (all `conventions`) document the canonical-TypeScript-stack edge cases this repo hit:
+The current lessons span three categories — `conventions` (tooling edge cases),
+`architecture` (design invariants), and `orchestration` (agent-workflow gotchas).
+`.erpaval/INDEX.md` is the authoritative, category-grouped list; a representative
+sample:
 
-| Lesson | What it captures |
-|---|---|
-| `pnpm11-prepare-script-and-git-init-order.md` | pnpm 11's `verify-deps-before-run` re-fires `prepare` on every `pnpm exec`; if `prepare` runs `lefthook install` in a non-git directory, every subsequent `pnpm exec` fails opaquely. **Fix**: move hook install to `hooks:install`, set `verify-deps-before-run=false` in `.npmrc`, and add `pnpm.onlyBuiltDependencies` for native builders. |
-| `exact-optional-property-types-omit-key-idiom.md` | With `exactOptionalPropertyTypes: true`, `{ foo?: T }` ≠ `{ foo?: T \| undefined }`. The clean fix is to **omit the key** (build the object, then conditionally assign) or use a conditional spread — never widen the type just to silence the compiler. |
-| `biome-noNonNullAssertion-off-when-noUncheckedIndexedAccess.md` | With `noUncheckedIndexedAccess: true`, guarded `arr[i]!` in tight loops is the canonical idiom. Biome's `style/noNonNullAssertion` double-warns the same case stylistically. **Fix**: turn the lint rule **off** — the type-system control is the load-bearing one. |
+| Lesson | Category | What it captures |
+|---|---|---|
+| `pnpm11-prepare-script-and-git-init-order.md` | conventions | pnpm 11's `verify-deps-before-run` re-fires `prepare` on every `pnpm exec`; if `prepare` runs `lefthook install` in a non-git directory, every subsequent `pnpm exec` fails opaquely. **Fix**: move hook install to `hooks:install`, set `verify-deps-before-run=false` in `.npmrc`, and add `pnpm.onlyBuiltDependencies` for native builders. |
+| `exact-optional-property-types-omit-key-idiom.md` | conventions | With `exactOptionalPropertyTypes: true`, `{ foo?: T }` ≠ `{ foo?: T \| undefined }`. The clean fix is to **omit the key** (build the object, then conditionally assign) or use a conditional spread — never widen the type just to silence the compiler. |
+| `transformersjs-cannot-force-wasm-in-node.md` | conventions | `@huggingface/transformers` hard-binds native `onnxruntime-node` at import in Node — `device: 'wasm'` throws. For a genuinely no-native-binary WASM path, drive `onnxruntime-web` directly with a pure-JS tokenizer (what the semantic tier does). |
+| `embeddings-propose-smt-decide.md` | architecture | Bridge paraphrased conflicts with embeddings that *propose* a glossary merge while the committed glossary + SMT *decide* — never let a fuzzy cosine touch the verdict, or determinism dies. |
+| `manifest-single-source-derivation.md` | architecture | The `manifest`, `AGENTS.md`, and code tables all derive from one Zod `.describe()` + enum corpus; adding a command touches four synced places, and drift is a test failure. |
 
 ### When to add a lesson
 

@@ -38,3 +38,6 @@ _tmp_*
 
 # Repomix flattened codebase — regenerable, large
 docs/.repomix/
+
+# Stray repomix default output (we write to docs/.repomix/)
+repomix-output.*

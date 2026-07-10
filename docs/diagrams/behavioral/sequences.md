@@ -1,97 +1,102 @@
-# symspec · Behavioral sequences
+# symspec · Sequence diagrams
 
-Three sequences capture the call order of the system's most important processes. The full step-by-step prose lives in `behavior/processes.md`. The diagrams below are the visual companion.
+## 1. `symspec check --semantic` end to end
 
-The first sequence covers the hot path through the MCP surface, from agent tool call to disk and back. An agent invokes the `requirement_create` tool. The MCP server ensures the doc exists, loads it from disk, applies the Change record through the core wrapper, and saves the result. The Change is schema-validated by Zod before Automerge opens its proxy callback. Inside the callback, the canonical sentence is rendered from the EARS slots. The agent receives a confirmation block carrying the new id and the rendered sentence. Source for this flow lives at `src/mcp/server.ts:70-89` and `src/core/doc.ts:58-100`.
+The `check` action resolves and loads the document, then — only because `--semantic` is set — lazily imports and builds the embedder before running the pipeline (`src/cli/index.ts:353-366`). `runCheck` runs the tiers in a forced order: structural, then GtWR lint, then the AC-3-7 gate partition, then the formal tier inside the solver orchestrator (`src/pipeline/check.ts:293-398`). Inside the formal callback it atomizes through the committed glossary, gets the shared Z3 context, and calls `findContradictions` plus the other SMT checks (`src/pipeline/check.ts:326-353`). The semantic pass is propose-only: it embeds responses via the loaded ONNX-WASM model and scores cosine similarity, never a verdict (`src/pipeline/check.ts:359-367`, `src/formal/embed.ts:218-236`). The result is wrapped in a `success('check', ...)` envelope and emitted with the AC-6-2b exit code (`src/cli/index.ts:397-404`, `src/cli/index.ts:91-98`).
 
 ```mermaid
 sequenceDiagram
-    participant Agent as Coding agent
-    participant MCP as McpServer
-    participant Doc as core/doc.ts
-    participant Schema as ChangeSchema
-    participant Auto as Automerge
-    participant FS as filesystem
-
-    Agent->>MCP: requirement_create(args)
-    MCP->>MCP: ensureDoc()
-    MCP->>FS: loadDoc(SYMSPEC_DOC)
-    FS-->>MCP: Doc
-    MCP->>Doc: applyChange({ kind: 'CreateRequirement', id: newId(), attrs })
-    Doc->>Schema: ChangeSchema.parse(raw)
-    Schema-->>Doc: typed Change
-    Doc->>Auto: Automerge.change(doc, draft => …)
-    Auto->>Doc: renderSentence(slots)
-    Auto-->>Doc: new Doc
-    Doc-->>MCP: new Doc
-    MCP->>FS: saveDoc(next, SYMSPEC_DOC)
-    MCP-->>Agent: { content: [{ text: "Created <id>\n<sentence>" }] }
+    participant CLI as check action (cli/index.ts)
+    participant Load as loadResolved
+    participant Embed as embed.ts
+    participant Pipe as runCheck (pipeline/check.ts)
+    participant Solv as runSolvers
+    participant Atom as atomize.ts
+    participant Z3 as findContradictions + Z3
+    participant Sem as findSimilarSemantic
+    CLI->>Load: loadResolved(file)
+    Load-->>CLI: { doc, path }
+    CLI->>Embed: loadEmbedder()
+    Embed->>Embed: ensureModelAssets + ONNX WASM session
+    Embed-->>CLI: embedder
+    CLI->>Pipe: runCheck(doc, checkOpts)
+    Pipe->>Pipe: normalizeStructural + normalizeLint
+    Pipe->>Pipe: gateRequirements (AC-3-7 partition)
+    Pipe->>Solv: runSolvers(doc, { formal })
+    Solv->>Atom: makeAtomize(glossaryIndex(doc.glossary))
+    Atom-->>Solv: atom table
+    Solv->>Z3: getContext + encode + findContradictions
+    Z3-->>Solv: FND_CONTRADICTION findings
+    Solv->>Sem: findSimilarSemantic(included, embedder)
+    Sem->>Embed: embedder(responses)
+    Embed-->>Sem: L2-normalized vectors
+    Sem-->>Solv: FND_SIMILAR_SEMANTIC proposals
+    Solv-->>Pipe: FormalTierResult
+    Pipe-->>CLI: CheckReport
+    CLI->>CLI: emit(success('check', report))
 ```
 
-The second sequence covers concurrent merge with dangling-reference convergence. Two replicas fork from a shared base. Alice creates a new requirement and adds two outbound edges. One of those edges points at a node Bob is about to delete. Bob deletes that node and updates an attribute on a third node. Both replicas then merge against each other. Automerge resolves the merge deterministically. The edge Alice added survives even though its target is gone. Calling `analyze` on the merged doc surfaces the dangling reference as a finding. Source: `scripts/smoke.ts:79-198` and `src/core/analyze.ts:30-43`.
+## 2. `symspec download-model`
+
+The `download-model` action calls `downloadModelAssets`, which force-fetches every pinned asset into the OS cache and reports which were already present (`src/cli/index.ts:664-672`). For each of the three pinned assets it first checks the cache for a digest-valid copy, then fetches from the frozen HF revision, verifies the sha256, and atomically publishes via a temp-file rename (`src/formal/model-cache.ts:218-237`, `src/formal/model-cache.ts:134-170`). A digest mismatch or network failure raises `ModelAssetsUnavailableError`, which the action maps to an `ERR_EMBED_MODEL_MISSING` envelope; success emits the `DownloadReport` (`src/formal/model-cache.ts:155-161`, `src/cli/index.ts:667-671`).
 
 ```mermaid
 sequenceDiagram
-    participant Alice as Alice replica
-    participant Bob as Bob replica
-    participant Auto as Automerge.merge
-    participant Analyze as analyze()
-
-    Note over Alice,Bob: Both fork from shared base
-    Alice->>Alice: applyChange(Create MFA)
-    Alice->>Alice: applyChange(AddRelationship login -derives-> mfa)
-    Alice->>Alice: applyChange(AddRelationship login -derives-> rateLimit)
-    Bob->>Bob: applyChange(DeleteRequirement rateLimit)
-    Bob->>Bob: applyChange(UpdateAttribute lockout.systemResponse)
-    Alice->>Auto: merge(alice, bob)
-    Bob->>Auto: merge(bob, alice)
-    Auto-->>Alice: merged Doc (edge to deleted target survives)
-    Auto-->>Bob: merged Doc (deterministically equivalent)
-    Alice->>Analyze: analyze(merged)
-    Analyze-->>Alice: [DanglingReference{from: login, to: rateLimit, relation: derives}]
-```
-
-The third sequence covers the three-tier solver pipeline with arbiter escalation. The free tier runs first. It catches exact duplicates and weasel-word ambiguity, both at high confidence. It also emits the candidate pairs worth running through the LLM tier. Pairs already flagged as exact duplicates are dropped. For each remaining candidate, the orchestrator runs the primary judge and the secondary judge in parallel. When both judges agree, a high-confidence finding is emitted. When they disagree, behavior depends on whether an arbiter is configured. With an arbiter, Opus 4.7 runs at `xhigh` effort and the resulting verdict drives the finding. Without an arbiter, the disagreement becomes a low-confidence `NeedsReview` finding that humans handle. The cap is `maxLlmPairs`, default 50. Source: `src/solvers/index.ts:55-110`, `src/solvers/llm/ensemble.ts:39-80`, and `src/solvers/llm/arbiter.ts:276-328`.
-
-```mermaid
-sequenceDiagram
-    participant Caller as runSolvers
-    participant Free as free tier
-    participant Pri as primary judge
-    participant Sec as secondary judge
-    participant Arb as Opus 4.7 arbiter
-    participant Out as findings
-
-    Caller->>Free: detectExactDuplicates
-    Free-->>Out: ExactDuplicate (high)
-    Caller->>Free: detectAmbiguity
-    Free-->>Out: Ambiguity (high, source=free.weasel-words)
-    Caller->>Free: emitCandidatePairs
-    Free-->>Caller: CandidatePair[]
-    Note over Caller: drop pairs already flagged as ExactDuplicate
-    loop per candidate pair (≤ maxLlmPairs=50)
-        par parallel
-            Caller->>Pri: judgePair(primary, a, b)
-        and
-            Caller->>Sec: judgePair(secondary, a, b)
+    participant CLI as download-model action (cli/index.ts)
+    participant Cache as downloadModelAssets (model-cache.ts)
+    participant Asset as ensureAsset (per asset)
+    participant HF as HuggingFace (frozen revision)
+    participant FS as OS cache dir
+    CLI->>Cache: downloadModelAssets()
+    loop each of 3 pinned assets
+        Cache->>Asset: readIfValid(dest, sha256)
+        Asset->>FS: readFile + sha256
+        FS-->>Asset: bytes or null
+        alt cache miss
+            Asset->>HF: fetch(assetUrl)
+            HF-->>Asset: arrayBuffer
+            Asset->>Asset: sha256 verify vs pinned
+            Asset->>FS: writeFile(tmp) then rename(dest)
         end
-        Pri-->>Caller: PairJudgment
-        Sec-->>Caller: PairJudgment
-        alt agree (both contradiction / subsumption-same-direction / redundant)
-            Caller-->>Out: high-confidence finding
-        else disagree, arbiter configured
-            Caller->>Arb: bedrockArbiter (InvokeModel, xhigh)
-            Arb-->>Caller: ArbitrationVerdict
-            Caller-->>Out: arbiter-confidence finding
-        else disagree, no arbiter
-            Caller-->>Out: NeedsReview (low)
-        end
+        Asset-->>Cache: { name, bytes, cached }
     end
+    Cache-->>CLI: DownloadReport { cacheDir, assets, alreadyComplete }
+    CLI->>CLI: emit(success('download-model', report))
 ```
+
+## 3. Atomize → SMT contradiction proof for a paraphrased conflict
+
+A paraphrased conflict is only provable because the glossary canonicalizes the two differently-worded responses to one atom before the solver sees them. `runCheck` builds the atomizer from `glossaryIndex(doc.glossary)` (`src/pipeline/check.ts:326`), and `atomize` applies glossary canonicalization FIRST — rewriting a matched alias body to its canonical phrasing — then antonym unification, so both responses resolve to the same scoped atom name (`src/formal/atomize.ts:135-165`). `findContradictions` encodes the requirements, groups by context atoms, asserts each group's context true over the whole-spec conjunction, and checks with the requirement guards as the only assumption literals (`src/formal/contradiction.ts:229-293`). On `unsat` it extracts and minimizes the core to exactly the conflicting ids and emits one `FND_CONTRADICTION` (`src/formal/contradiction.ts:293-322`, `src/formal/contradiction.ts:189-212`).
+
+```mermaid
+sequenceDiagram
+    participant Pipe as runCheck (pipeline/check.ts)
+    participant Atom as atomize (atomize.ts)
+    participant Find as findContradictions (contradiction.ts)
+    participant Enc as encode
+    participant Z3 as Z3 Solver
+    Pipe->>Atom: atomize(resp "issue a session token", glossary)
+    Atom->>Atom: glossary alias -> canonical (AC-9-2)
+    Atom-->>Find: atom sys__auth__resp__CANON (pos)
+    Pipe->>Atom: atomize(resp "issue a login credential", glossary)
+    Atom->>Atom: glossary alias -> same canonical
+    Atom-->>Find: atom sys__auth__resp__CANON (neg)
+    Pipe->>Find: findContradictions(encodable, { atomize })
+    Find->>Enc: encode(r, atomize) per requirement
+    Enc-->>Find: EncodedRequirement (guard + formula)
+    Find->>Z3: add whole-spec formulas + group context atoms
+    Find->>Z3: check(...guardAsts)
+    Z3-->>Find: unsat + unsatCore
+    Find->>Z3: minimizeCore (deletion re-checks)
+    Z3-->>Find: minimal core (2 guards)
+    Find-->>Pipe: FND_CONTRADICTION { requirementIds }
+```
+
 
 ## See also
 
-- [Data flow](../../architecture/data-flow.md)
-- [Module map](../../architecture/module-map.md)
-- [Processes](../../behavior/processes.md)
-- [Dead code](../../analysis/dead-code.md)
+- [symspec · Data flow](../../architecture/data-flow.md) — 6 shared source citations
+- [symspec · Module map](../../architecture/module-map.md) — 6 shared source citations
+- [symspec · Component diagram](../architecture/components.md) — 5 shared source citations
+- [symspec · Contract map](../../insights/contract-map.md) — 5 shared source citations
+- [symspec · Public API](../../reference/public-api.md) — 5 shared source citations

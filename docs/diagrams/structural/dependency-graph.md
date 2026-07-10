@@ -1,65 +1,84 @@
 # symspec · Dependency graph
 
-Internal modules are blue. External npm dependencies that participate in the runtime are gold. Test-runner deps such as vitest, lint deps such as Biome, and dead-code deps such as knip are omitted because they don't appear in the runtime call graph.
+Internal `src/` modules and their key external npm dependencies, with edges pointing from importer to imported. The public barrel `src/index.ts` re-exports every subsystem (`src/index.ts:51`). The CLI depends on `commander` (`src/cli/index.ts:32`) and `zod` (`src/cli/index.ts:33`), and dispatches into the `check` pipeline (`src/cli/index.ts:53`). The four heavy externals are all lazily imported so the default `check` never pays their cost: `z3-solver` via `await import('z3-solver')` (`src/formal/backend.ts:45`), `onnxruntime-web` + `@huggingface/tokenizers` inside the embedder factory (`src/formal/embed.ts:109`), and `wink-nlp` only on parse escalation (`src/parse/tier2.ts:2`). Runtime dependencies are exactly `@huggingface/tokenizers`, `onnxruntime-web`, `wink-eng-lite-web-model`, `wink-nlp`, and `z3-solver` (`package.json:55`); `commander` and `zod` are devDependencies bundled at build (`package.json:62`).
 
 ```mermaid
 flowchart LR
-  classDef internal fill:#1e3a5f,stroke:#4a8bc2,color:#fff
-  classDef external fill:#705a1a,stroke:#d4a437,color:#fff
+    subgraph ext[External deps]
+        commander[commander]
+        zod[zod]
+        z3[z3-solver]
+        onnx[onnxruntime-web]
+        hf[huggingface/tokenizers]
+        wink[wink-nlp]
+    end
 
-  bin_req[bin/symspec.mjs]:::internal
-  bin_mcp[bin/symspec-mcp.mjs]:::internal
-  cli[src/cli]:::internal
-  mcp[src/mcp]:::internal
-  core[src/core]:::internal
-  solvers[src/solvers]:::internal
-  scripts[scripts/]:::internal
+    cli[cli/index] --> commander
+    cli --> zod
+    cli --> check[pipeline/check]
+    cli --> certify[certify/run]
+    cli --> manifest[cli/manifest]
+    cli --> envelope[cli/envelope]
 
-  zod[(zod)]:::external
-  automerge[(@automerge/automerge)]:::external
-  commander[(commander)]:::external
-  mcp_sdk[(@modelcontextprotocol/sdk)]:::external
-  bedrock[(@aws-sdk/client-bedrock-runtime)]:::external
-  node[(node:crypto / node:fs)]:::external
+    check --> gate[pipeline/gate]
+    check --> core[core/*]
+    check --> gtwr[lint/gtwr]
+    check --> solvers[solvers/index]
+    check --> encode[formal/encode]
+    check --> formal[formal/checks]
+    check --> semantic[formal/semantic]
 
-  bin_req --> cli
-  bin_mcp --> mcp
-  cli --> core
-  cli --> commander
-  mcp --> core
-  mcp --> mcp_sdk
-  scripts --> core
-  scripts --> solvers
-  scripts --> automerge
-  solvers --> core
-  solvers --> bedrock
-  core --> automerge
-  core --> zod
-  core --> node
+    formal --> backend[formal/backend]
+    backend -.lazy.-> z3
+    encode --> atomize[formal/atomize]
+    gtwr --> parse[parse/ladder]
+    parse -.lazy.-> wink
+    semantic --> embed[formal/embed]
+    embed -.lazy.-> onnx
+    embed -.lazy.-> hf
+    embed --> modelcache[formal/model-cache]
+    envelope --> core
+    manifest --> core
+
+    classDef internal fill:#1f2937,stroke:#60a5fa,color:#f1f5f9;
+    classDef external fill:#4c1d95,stroke:#c084fc,color:#f1f5f9;
+    class cli,check,certify,manifest,envelope,gate,core,gtwr,solvers,encode,formal,semantic,backend,atomize,parse,embed,modelcache internal;
+    class commander,zod,z3,onnx,hf,wink external;
 ```
+
+Dotted edges (`-.lazy.->`) are dynamic `import()` calls loaded on demand, not at module load.
 
 ## Legend
 
-| Node | Resolves to | Source |
-|---|---|---|
-| `bin/symspec.mjs` | dynamic import of `dist/cli.mjs` | `bin/symspec.mjs:1-2` |
-| `bin/symspec-mcp.mjs` | dynamic import of `dist/mcp.mjs` | `bin/symspec-mcp.mjs:1-2` |
-| `src/cli` | `src/cli/index.ts` | `src/cli/index.ts:19-32` |
-| `src/mcp` | `src/mcp/server.ts` | `src/mcp/server.ts:21-41` |
-| `src/core` | `schema.ts`, `doc.ts`, `analyze.ts`, `sysml-export.ts` | — |
-| `src/solvers` | free + llm subtrees plus `index.ts` and `types.ts` | — |
-| `zod` | `^3.23.8` | `package.json:39` |
-| `@automerge/automerge` | `^2.2.8` | `package.json:35` |
-| `commander` | `^12.1.0` | `package.json:38` |
-| `@modelcontextprotocol/sdk` | `^1.0.0` | `package.json:37` |
-| `@aws-sdk/client-bedrock-runtime` | `^3.1045.0` | `package.json:36` |
-| `node:crypto` and `node:fs/promises` | Node ≥ 24 stdlib | `src/core/doc.ts:12-13`, `package.json:31` |
+| Node | Type | Module / package | Cite |
+|---|---|---|---|
+| cli/index | internal | `src/cli/index.ts` | `src/cli/index.ts:31` |
+| pipeline/check | internal | `src/pipeline/check.ts` | `src/cli/index.ts:53` |
+| pipeline/gate | internal | `src/pipeline/gate.ts` | `src/pipeline/check.ts:82` |
+| core/* | internal | `src/core/{doc,analyze,schema,render,storage,changes}.ts` | `src/pipeline/check.ts:56` |
+| lint/gtwr | internal | `src/lint/gtwr.ts` | `src/pipeline/check.ts:79` |
+| solvers/index | internal | `src/solvers/index.ts` | `src/pipeline/check.ts:80` |
+| formal/encode | internal | `src/formal/encode.ts` | `src/pipeline/check.ts:66` |
+| formal/atomize | internal | `src/formal/atomize.ts` | `src/pipeline/check.ts:61` |
+| formal/checks | internal | contradiction/subsumption/vacuity/incomplete/similar/needs-review | `src/pipeline/check.ts:64` |
+| formal/backend | internal | `src/formal/backend.ts` (Z3 WASM context) | `src/formal/backend.ts:45` |
+| formal/semantic | internal | `src/formal/semantic.ts` | `src/formal/semantic.ts:20` |
+| formal/embed | internal | `src/formal/embed.ts` | `src/formal/embed.ts:205` |
+| formal/model-cache | internal | `src/formal/model-cache.ts` | `src/formal/model-cache.ts:29` |
+| parse/ladder | internal | `src/parse/{tier1,tier2,tier3}.ts` | `src/parse/tier2.ts:41` |
+| certify/run | internal | `src/certify/run.ts` | `src/cli/index.ts:36` |
+| commander | external | `commander@^14` (dev, bundled) | `package.json:66` |
+| zod | external | `zod@^4` (dev, bundled) | `package.json:73` |
+| z3-solver | external | `z3-solver@^4.16` (runtime, lazy) | `package.json:60` |
+| onnxruntime-web | external | `onnxruntime-web@^1.27` (runtime, lazy) | `package.json:57` |
+| @huggingface/tokenizers | external | `@huggingface/tokenizers@^0.1.3` (runtime, lazy) | `package.json:56` |
+| wink-nlp | external | `wink-nlp@^2.4` + `wink-eng-lite-web-model` (runtime, lazy) | `package.json:58` |
 
-The graph is a strict DAG. Every internal arrow flows downward toward `core`. The two surfaces, `cli` and `mcp`, are siblings. Neither depends on the other. Both go through `applyChange` for behavior parity. The `solvers` module depends on `core` for `Doc` and `Requirement` types, but the inverse does not hold. The structural analysis pass in `core` does not call into the LLM tier.
 
 ## See also
 
-- [Dead code](../../analysis/dead-code.md)
-- [Module map](../../architecture/module-map.md)
-- [System overview](../../architecture/system-overview.md)
-- [Data flow](../../architecture/data-flow.md)
+- [symspec · Component diagram](../architecture/components.md) — 8 shared source citations
+- [symspec · Module map](../../architecture/module-map.md) — 8 shared source citations
+- [symspec · System overview](../../architecture/system-overview.md) — 7 shared source citations
+- [symspec · Contract map](../../insights/contract-map.md) — 6 shared source citations
+- [symspec · Data flow](../../architecture/data-flow.md) — 6 shared source citations
