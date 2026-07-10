@@ -38,7 +38,7 @@ Failure:
 ```
 
 - `type` is a closed discriminant set (see the manifest `types` array):
-  `manifest`, `init`, `add`, `update`, `parse`, `check`, `certify`, `list`, `show`, `derive`, `satisfy`, `remove-edge`, `delete`, `export`, `error`, `glossary`.
+  `manifest`, `init`, `add`, `update`, `parse`, `check`, `certify`, `list`, `show`, `derive`, `satisfy`, `remove-edge`, `delete`, `export`, `error`, `glossary`, `download-model`.
 - Exit codes: **0** clean (warn/info findings do not fail), **1** at least one
   error-severity finding (success envelope still on stdout), **2** an
   `ERR_*` operational failure (error envelope on stdout).
@@ -65,6 +65,7 @@ Failure:
 | `symspec delete` | Tombstone a requirement, removing it from the document. |
 | `symspec export` | Export the requirements graph to SysML-v2-flavored JSON for interchange with other tools. |
 | `symspec glossary` | Manage the document's committed synonym glossary: `glossary add <canonical> <alias>`, `glossary remove <canonical> <alias>`, `glossary list`. |
+| `symspec download-model` | Pre-fetch and cache the semantic tier embedding model so `check --semantic` runs fully offline afterward. |
 
 ## Recommended workflow
 

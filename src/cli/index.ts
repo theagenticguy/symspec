@@ -47,6 +47,7 @@ import {
   runSolverBinary,
 } from '../formal/binary-backend.js'
 import { emitSmt2 } from '../formal/emit-smt2.js'
+import { downloadModelAssets } from '../formal/model-cache.js'
 import { SolverBudgetExceededError } from '../formal/needs-review.js'
 import { parseBatch } from '../parse/batch.js'
 import { encodeIncluded, runCheck } from '../pipeline/check.js'
@@ -652,6 +653,22 @@ glossaryCmd
     const loaded = await loadResolved(opts.file)
     if ('envelope' in loaded) emit(loaded.envelope, flags)
     emit(glossaryList(loaded.doc).envelope, flags)
+  })
+
+// --- download-model --------------------------------------------------------
+// AC-9-4 pre-warm: fetch + sha256-verify the semantic tier's embedding model so
+// `check --semantic` runs fully offline afterward. No document is touched.
+program
+  .command('download-model')
+  .description(COMMAND_DESCRIPTIONS['download-model'])
+  .action(async (_opts, cmd: Command) => {
+    const flags = globalFlags(cmd)
+    try {
+      const report = await downloadModelAssets()
+      emit(success('download-model', report), flags)
+    } catch (e) {
+      emit(toErrorEnvelope(e, 'ERR_EMBED_MODEL_MISSING'), flags)
+    }
   })
 
 // ---------------------------------------------------------------------------

@@ -262,6 +262,7 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
       file: docFileOpt,
     }),
   },
+  { name: 'download-model', args: z.object({}) },
 ]
 
 // ---------------------------------------------------------------------------

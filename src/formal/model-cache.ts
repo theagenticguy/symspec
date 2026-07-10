@@ -183,3 +183,55 @@ export async function ensureModelAssets(allowRemote: boolean): Promise<ModelAsse
   ])
   return { modelPath, tokenizerPath, tokenizerConfigPath }
 }
+
+/** One asset's line in a {@link DownloadReport}. */
+export interface AssetReport {
+  /** Cache filename. */
+  readonly name: string
+  /** Size in bytes (the pinned expectation). */
+  readonly bytes: number
+  /** Whether this asset was already cached-and-valid before this call. */
+  readonly cached: boolean
+}
+
+/** The structured result of a {@link downloadModelAssets} run (the `download-model` envelope). */
+export interface DownloadReport {
+  /** The pinned model id (`repo`). */
+  readonly model: string
+  /** The frozen HF revision every asset is pinned to. */
+  readonly revision: string
+  /** Absolute cache directory the assets live in. */
+  readonly cacheDir: string
+  /** Per-asset cached/fetched status. */
+  readonly assets: readonly AssetReport[]
+  /** True when every asset was already present (nothing was downloaded). */
+  readonly alreadyComplete: boolean
+}
+
+/**
+ * Force-fetch all pinned assets into the cache (the `download-model` command,
+ * AC-9-4 pre-warm). Unlike {@link ensureModelAssets}, this ALWAYS allows remote
+ * fetching — the whole point is to warm an empty cache — and reports which
+ * assets were already present vs freshly downloaded so an agent can tell a
+ * no-op from a real fetch. Each asset is sha256-verified before it is trusted.
+ */
+export async function downloadModelAssets(): Promise<DownloadReport> {
+  const dir = modelCacheDir()
+  const entries = Object.values(ASSETS)
+  const results = await Promise.all(
+    entries.map(async (a) => {
+      const dest = join(dir, a.cacheName)
+      const wasCached = (await readIfValid(dest, a.sha256)) !== null
+      // ensureAsset is a no-op when already valid, else fetch + verify + publish.
+      await ensureAsset(dir, a, true)
+      return { name: a.cacheName, bytes: a.bytes, cached: wasCached }
+    }),
+  )
+  return {
+    model: MODEL_REPO,
+    revision: MODEL_REVISION,
+    cacheDir: dir,
+    assets: results,
+    alreadyComplete: results.every((r) => r.cached),
+  }
+}

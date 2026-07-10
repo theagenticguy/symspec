@@ -45,6 +45,8 @@ describe('manifest (AC-6-1)', () => {
       'remove-edge',
       'delete',
       'export',
+      'glossary',
+      'download-model',
     ]) {
       expect(names).toContain(expected)
     }

@@ -71,6 +71,8 @@ export const EnvelopeTypeSchema = z.enum([
   'error',
   // Semantic glossary management (appended after the frozen snapshot — AC-9-6).
   'glossary',
+  // Semantic-tier model pre-fetch (appended — AC-9-4 pre-warm).
+  'download-model',
 ])
 
 /** A single envelope `type` discriminant. */

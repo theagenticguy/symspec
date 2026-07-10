@@ -45,6 +45,7 @@ export type CommandName =
   | 'delete'
   | 'export'
   | 'glossary'
+  | 'download-model'
 
 /**
  * Full what / when / returns / idempotency help text per command. Wired into
@@ -162,6 +163,13 @@ export const COMMAND_DESCRIPTIONS: Record<CommandName, string> = {
     '"issue a session token" ≡ "issue a login credential" collide on one atom and a paraphrased contradiction becomes provable by `check`.',
     'This is the DECIDE half of the semantic tier: `check --semantic` only PROPOSES entries (FND_SIMILAR_SEMANTIC); confirming them here is what changes a verdict.',
     'add is idempotent; remove of an absent alias is a no-op; list is read-only. Mutating ops re-save the document.',
+  ),
+  'download-model': lines(
+    'Pre-fetch and cache the semantic tier embedding model so `check --semantic` runs fully offline afterward.',
+    'Downloads the pinned BGE model (~110 MB) plus its tokenizer from a frozen HuggingFace revision into the local',
+    'cache (SYMSPEC_MODEL_DIR / XDG_CACHE_HOME / ~/.cache), verifying every asset against a pinned sha256 so a corrupt',
+    'or tampered download fails instead of poisoning embeddings. Idempotent: already-cached assets are reported and skipped.',
+    'Run once on a networked machine to warm the cache for air-gapped or CI use; the default `check` never needs it.',
   ),
 }
 

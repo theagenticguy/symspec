@@ -109,6 +109,12 @@ export type {
 } from './formal/encode.js'
 export { and, atom, encode, implies, materialize, not, or } from './formal/encode.js'
 export * from './formal/finding.js'
+export {
+  type AssetReport,
+  type DownloadReport,
+  downloadModelAssets,
+  modelCacheDir,
+} from './formal/model-cache.js'
 export * from './formal/needs-review.js'
 export * from './formal/semantic.js'
 export * from './formal/similar.js'
