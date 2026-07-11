@@ -100,9 +100,31 @@ export type Formula =
   | { readonly op: 'and'; readonly args: readonly Formula[] }
   | { readonly op: 'or'; readonly args: readonly Formula[] }
   | { readonly op: 'implies'; readonly lhs: Formula; readonly rhs: Formula }
+  | {
+      // Arithmetic comparison over a named real-valued quantity (AC-30-1).
+      // `quantity` is the canonical per-system quantity variable (owned by
+      // numeric.ts); `value` is already unit-normalized to that quantity's base
+      // unit. Materializes to a `z3-solver` Real comparison — LIA/LRA only, so
+      // the theory stays decidable + deterministic.
+      readonly op: 'cmp'
+      readonly quantity: string
+      readonly comparator: NumericComparator
+      readonly value: number
+    }
+
+/** The six arithmetic comparators a numeric predicate can use (AC-30-1). */
+export type NumericComparator = '<' | '<=' | '=' | '>=' | '>' | '!='
 
 /** Formula constructor: a bare Boolean atom. */
 export const atom = (name: string): Formula => ({ op: 'atom', name })
+
+/** Formula constructor: an arithmetic comparison `quantity <cmp> value` (AC-30-1). */
+export const cmp = (quantity: string, comparator: NumericComparator, value: number): Formula => ({
+  op: 'cmp',
+  quantity,
+  comparator,
+  value,
+})
 /** Formula constructor: logical negation. */
 export const not = (arg: Formula): Formula => ({ op: 'not', arg })
 /** Formula constructor: material implication `lhs ⇒ rhs`. */
@@ -247,5 +269,25 @@ export function materialize(ctx: Z3Context, f: Formula): Z3Bool {
       return ctx.Or(...f.args.map((a) => materialize(ctx, a)))
     case 'implies':
       return ctx.Implies(materialize(ctx, f.lhs), materialize(ctx, f.rhs))
+    case 'cmp': {
+      // AC-30-1: a per-quantity Real variable compared against a normalized
+      // value. Real (not Int) keeps LRA available for fractional units; the
+      // comparators are total, so this stays in decidable linear arithmetic.
+      const q = ctx.Real.const(f.quantity)
+      switch (f.comparator) {
+        case '<':
+          return q.lt(f.value)
+        case '<=':
+          return q.le(f.value)
+        case '=':
+          return q.eq(f.value)
+        case '>=':
+          return q.ge(f.value)
+        case '>':
+          return q.gt(f.value)
+        case '!=':
+          return q.neq(f.value)
+      }
+    }
   }
 }

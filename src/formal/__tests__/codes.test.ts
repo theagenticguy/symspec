@@ -201,6 +201,7 @@ describe('FND_* reachability (AC-6-3 — every documented code is reachable)', (
       'FND_NEEDS_REVIEW',
       'FND_INCOMPLETE',
       'FND_SIMILAR_SEMANTIC',
+      'FND_NUMERIC_CONTRADICTION',
     ] as const) {
       expect(sources.includes(`code: '${code}'`), `no emit literal for ${code}`).toBe(true)
       reached.add(code)

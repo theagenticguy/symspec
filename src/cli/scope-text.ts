@@ -102,6 +102,17 @@ export const SCOPE_SEMANTIC_PROPOSE_ONLY =
   'and the pinned embedding model.'
 
 /**
+ * The numeric-tier scope (AC-30-5): numeric conflicts ARE now checked, over
+ * linear integer/real arithmetic; nonlinear-integer arithmetic stays out
+ * (undecidable). Contains the exact substring `"numeric conflicts are checked"`.
+ */
+export const SCOPE_NUMERIC_CHECKED =
+  'Numeric conflicts are checked over linear integer/real arithmetic (LIA/LRA): ' +
+  'requirements placing jointly unsatisfiable bounds on the same per-system ' +
+  'quantity (unit-normalized) are reported as FND_NUMERIC_CONTRADICTION. ' +
+  'Nonlinear-integer arithmetic remains out of scope (undecidable).'
+
+/**
  * The composed honest-scope disclosure, as a single readable paragraph joining
  * the claims. This is the string surfaced in the manifest `scope.text`
  * field and available for formal finding output; it contains all of the exact
@@ -113,6 +124,7 @@ export const SCOPE_TEXT = [
   SCOPE_OVER_UNIFICATION,
   SCOPE_CONTEXTUAL_AMBIGUITY_NOT_CHECKED,
   SCOPE_SEMANTIC_PROPOSE_ONLY,
+  SCOPE_NUMERIC_CHECKED,
 ].join(' ')
 
 /**
@@ -127,6 +139,7 @@ export const SCOPE = {
   overUnification: SCOPE_OVER_UNIFICATION,
   contextualAmbiguityNotChecked: SCOPE_CONTEXTUAL_AMBIGUITY_NOT_CHECKED,
   semanticProposeOnly: SCOPE_SEMANTIC_PROPOSE_ONLY,
+  numericChecked: SCOPE_NUMERIC_CHECKED,
   text: SCOPE_TEXT,
 } as const
 
@@ -141,6 +154,7 @@ export const ScopeSchema = z.object({
   overUnification: z.literal(SCOPE_OVER_UNIFICATION),
   contextualAmbiguityNotChecked: z.literal(SCOPE_CONTEXTUAL_AMBIGUITY_NOT_CHECKED),
   semanticProposeOnly: z.literal(SCOPE_SEMANTIC_PROPOSE_ONLY),
+  numericChecked: z.literal(SCOPE_NUMERIC_CHECKED),
   text: z.literal(SCOPE_TEXT),
 })
 export type Scope = z.infer<typeof ScopeSchema>

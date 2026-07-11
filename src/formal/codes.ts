@@ -74,6 +74,8 @@ export const FndCodeSchema = z.enum([
   'FND_CERTIFY_FAILED',
   // Semantic paraphrase-bridging tier (AC-9-5) — propose-only, never a verdict
   'FND_SIMILAR_SEMANTIC',
+  // Numeric/arithmetic conflict tier (AC-30-3) — deterministic verdict (LIA/LRA)
+  'FND_NUMERIC_CONTRADICTION',
 ])
 
 export type FndCode = z.infer<typeof FndCodeSchema>
@@ -148,6 +150,11 @@ export const FndCodeMeta = {
     .literal('FND_SIMILAR_SEMANTIC')
     .describe(
       'info — two responses embed with cosine ≥ threshold but did not unify to one atom; a PROPOSE-only prompt to add a `symspec glossary` entry. Never a verdict.',
+    ),
+  FND_NUMERIC_CONTRADICTION: z
+    .literal('FND_NUMERIC_CONTRADICTION')
+    .describe(
+      'error — two+ requirements place jointly unsatisfiable linear numeric constraints (LIA/LRA) on the same per-system quantity; ids are the minimal unsat core, evidence lists the conflicting predicates (unit-normalized).',
     ),
 } satisfies Record<FndCode, z.ZodLiteral<FndCode>>
 

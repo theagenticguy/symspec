@@ -116,6 +116,12 @@ export {
   modelCacheDir,
 } from './formal/model-cache.js'
 export * from './formal/needs-review.js'
+export { extractNumericPredicates, type NumericPredicate } from './formal/numeric.js'
+export {
+  findNumericContradictions,
+  type NumericContradictionFinding,
+  type RequirementPredicates,
+} from './formal/numeric-contradiction.js'
 export * from './formal/semantic.js'
 export * from './formal/similar.js'
 export * from './formal/subsumption.js'

@@ -89,6 +89,21 @@ function renderFormula(f: Formula): string {
       return `(or ${f.args.map(renderFormula).join(' ')})`
     case 'implies':
       return `(=> ${renderFormula(f.lhs)} ${renderFormula(f.rhs)})`
+    case 'cmp': {
+      // AC-30-1: an arithmetic comparison over a Real quantity variable. `!=`
+      // has no direct SMT-LIB2 operator, so it renders as `(not (= …))`.
+      const q = quoteSymbol(f.quantity)
+      const v = String(f.value)
+      const OP: Record<typeof f.comparator, string> = {
+        '<': '<',
+        '<=': '<=',
+        '=': '=',
+        '>=': '>=',
+        '>': '>',
+        '!=': 'distinct',
+      }
+      return `(${OP[f.comparator]} ${q} ${v})`
+    }
   }
 }
 

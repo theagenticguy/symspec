@@ -179,3 +179,4 @@ Failure:
 | `FND_CERTIFIED` | info — kernel-checked by Lean; carries `#print axioms` provenance. |
 | `FND_CERTIFY_FAILED` | error — Lean produced a `severity:"error"` diagnostic; certification failed. |
 | `FND_SIMILAR_SEMANTIC` | info — two responses embed with cosine ≥ threshold but did not unify to one atom; a PROPOSE-only prompt to add a `symspec glossary` entry. Never a verdict. |
+| `FND_NUMERIC_CONTRADICTION` | error — two+ requirements place jointly unsatisfiable linear numeric constraints (LIA/LRA) on the same per-system quantity; ids are the minimal unsat core, evidence lists the conflicting predicates (unit-normalized). |

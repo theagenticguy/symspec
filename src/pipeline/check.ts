@@ -72,6 +72,8 @@ import {
 import { attachEvidenceToAll, type Evidence } from '../formal/finding.js'
 import { checkCompleteness } from '../formal/incomplete.js'
 import { findNeedsReview } from '../formal/needs-review.js'
+import { extractNumericPredicates } from '../formal/numeric.js'
+import { findNumericContradictions } from '../formal/numeric-contradiction.js'
 import { findSimilarSemantic } from '../formal/semantic.js'
 import { findSimilarUnunified } from '../formal/similar.js'
 import { checkSubsumption } from '../formal/subsumption.js'
@@ -352,6 +354,21 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
         ...(options.solverBudgetMs !== undefined ? { solverBudgetMs: options.solverBudgetMs } : {}),
       })
 
+      // AC-30-3: numeric/arithmetic conflict tier. Extract per-slot numeric
+      // predicates (deterministic, unit-normalized, per-system quantity keys)
+      // and prove any same-quantity set jointly unsatisfiable over LIA/LRA.
+      const numericReqPreds = included.map((r) => ({
+        id: r.id,
+        predicates: [
+          ...extractNumericPredicates(r.systemResponse, r.systemName),
+          ...(r.trigger !== undefined ? extractNumericPredicates(r.trigger, r.systemName) : []),
+          ...(r.preCondition !== undefined
+            ? extractNumericPredicates(r.preCondition, r.systemName)
+            : []),
+        ],
+      }))
+      const numericContradictions = await findNumericContradictions(ctx, numericReqPreds)
+
       // AC-9-5: opt-in semantic paraphrase pass. Propose-only — emits
       // FND_SIMILAR_SEMANTIC info findings suggesting glossary merges for
       // high-cosine response pairs that atomize (incl. the glossary) did not
@@ -390,6 +407,20 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
           tier: 'formal',
           requirementIds: [...f.requirementIds],
           message: f.message,
+        })
+      }
+
+      // AC-30-3: numeric contradictions carry their own arithmetic-predicate
+      // evidence (quantity + normalized comparators/values), distinct from the
+      // atom-table evidence of the propositional checks.
+      for (const f of numericContradictions) {
+        formal.push({
+          code: f.code,
+          severity: f.severity,
+          tier: 'formal',
+          requirementIds: [...f.requirementIds],
+          message: f.message,
+          evidence: f.evidence,
         })
       }
 
