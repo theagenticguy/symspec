@@ -1,95 +1,89 @@
 # symspec · Sequence diagrams
 
-## 1. `symspec check --semantic` end to end
+## 1. `symspec check` end to end (all tiers)
 
-The `check` action resolves and loads the document, then — only because `--semantic` is set — lazily imports and builds the embedder before running the pipeline (`src/cli/index.ts:353-366`). `runCheck` runs the tiers in a forced order: structural, then GtWR lint, then the AC-3-7 gate partition, then the formal tier inside the solver orchestrator (`src/pipeline/check.ts:293-398`). Inside the formal callback it atomizes through the committed glossary, gets the shared Z3 context, and calls `findContradictions` plus the other SMT checks (`src/pipeline/check.ts:326-353`). The semantic pass is propose-only: it embeds responses via the loaded ONNX-WASM model and scores cosine similarity, never a verdict (`src/pipeline/check.ts:359-367`, `src/formal/embed.ts:218-236`). The result is wrapped in a `success('check', ...)` envelope and emitted with the AC-6-2b exit code (`src/cli/index.ts:397-404`, `src/cli/index.ts:91-98`).
+`runCheck` runs the tiers in a forced order: Tier-0 structural analyze, GtWR lint, the always-on deterministic ambiguity family, then the AC-3-7 gate partition, then the free + formal tiers inside `runSolvers` (`src/pipeline/check.ts:311-459`). Inside the formal callback it atomizes through the committed glossary, gets the shared Z3 context, and runs contradiction/subsumption/vacuity/completeness/similar/needs-review over the gate-included subset (`src/pipeline/check.ts:372-386`). The numeric tier runs over ALL requirements, not the gate subset, because numeric conflict is independent of the propositional-encoding soundness the gate protects (`src/pipeline/check.ts:396-406`). The temporal tier runs only when `--temporal` is set, mapping EARS→LTL and proving bounded contradictions on the same context (`src/pipeline/check.ts:412-419`); the semantic + graph passes run only when `--semantic` is set and are propose-only (`src/pipeline/check.ts:425-453`). Finally unsat-triggered findings gain atom-table + core evidence (`src/pipeline/check.ts:456`) and the report is wrapped in a `success('check', ...)` envelope with the AC-6-2b exit code (`src/cli/index.ts:412`, `src/cli/index.ts:97`).
 
 ```mermaid
 sequenceDiagram
     participant CLI as check action (cli/index.ts)
-    participant Load as loadResolved
-    participant Embed as embed.ts
     participant Pipe as runCheck (pipeline/check.ts)
+    participant Gate as gateRequirements
     participant Solv as runSolvers
-    participant Atom as atomize.ts
-    participant Z3 as findContradictions + Z3
-    participant Sem as findSimilarSemantic
-    CLI->>Load: loadResolved(file)
-    Load-->>CLI: { doc, path }
-    CLI->>Embed: loadEmbedder()
-    Embed->>Embed: ensureModelAssets + ONNX WASM session
-    Embed-->>CLI: embedder
+    participant Z3 as Z3 context (SMT)
+    participant Num as numeric tier
+    participant Tmp as temporal tier
+    participant Sem as semantic + graph
     CLI->>Pipe: runCheck(doc, checkOpts)
-    Pipe->>Pipe: normalizeStructural + normalizeLint
-    Pipe->>Pipe: gateRequirements (AC-3-7 partition)
+    Pipe->>Pipe: analyze (structural) + GtWR lint
+    Pipe->>Pipe: detectAmbiguity (always-on)
+    Pipe->>Gate: gateRequirements → excludedIds
+    Gate-->>Pipe: included / excluded partition
     Pipe->>Solv: runSolvers(doc, { formal })
-    Solv->>Atom: makeAtomize(glossaryIndex(doc.glossary))
-    Atom-->>Solv: atom table
-    Solv->>Z3: getContext + encode + findContradictions
-    Z3-->>Solv: FND_CONTRADICTION findings
-    Solv->>Sem: findSimilarSemantic(included, embedder)
-    Sem->>Embed: embedder(responses)
-    Embed-->>Sem: L2-normalized vectors
-    Sem-->>Solv: FND_SIMILAR_SEMANTIC proposals
+    Solv->>Z3: getContext + encode(included)
+    Z3-->>Solv: contradiction/subsumption/vacuity/completeness/similar/review
+    Solv->>Num: findNumericContradictions(ALL reqs)
+    Num-->>Solv: FND_NUMERIC_CONTRADICTION
+    alt --temporal
+        Solv->>Tmp: findTemporalContradictions(ALL, bound)
+        Tmp-->>Solv: FND_TEMPORAL_CONTRADICTION (sound-for-UNSAT)
+    end
+    alt --semantic
+        Solv->>Sem: findSimilarSemantic + buildSimilarityGraph(included)
+        Sem-->>Solv: FND_SIMILAR_SEMANTIC / MISSING_TRACE_LINK / DUPLICATE_CLUSTER (propose)
+    end
     Solv-->>Pipe: FormalTierResult
+    Pipe->>Pipe: attachEvidenceToAll + sort + counts
     Pipe-->>CLI: CheckReport
     CLI->>CLI: emit(success('check', report))
 ```
 
-## 2. `symspec download-model`
+## 2. Parse ladder (Tier 1 → Tier 2 → Tier 3)
 
-The `download-model` action calls `downloadModelAssets`, which force-fetches every pinned asset into the OS cache and reports which were already present (`src/cli/index.ts:664-672`). For each of the three pinned assets it first checks the cache for a digest-valid copy, then fetches from the frozen HF revision, verifies the sha256, and atomically publishes via a temp-file rename (`src/formal/model-cache.ts:218-237`, `src/formal/model-cache.ts:134-170`). A digest mismatch or network failure raises `ModelAssetsUnavailableError`, which the action maps to an `ERR_EMBED_MODEL_MISSING` envelope; success emits the `DownloadReport` (`src/formal/model-cache.ts:155-161`, `src/cli/index.ts:667-671`).
+A single line parses through an escalation ladder: `parseLine` runs the Tier-1 regex classifier, escalates to the lazy wink-nlp Tier-2 repair only when triggers fire, and falls to the Tier-3 failure classifier when neither yields a confident EARS structure (`src/parse/result.ts:258`, `src/parse/result.ts:259`, `src/parse/result.ts:237`). Tier 2 lazy-loads `wink-nlp` and reuses the Tier-1 keyword lexicon (`src/parse/tier2.ts:42`); Tier 3 emits a discriminated failure envelope with a stable `ERR_PARSE_*` code (`src/parse/tier3.ts:283`).
 
 ```mermaid
 sequenceDiagram
-    participant CLI as download-model action (cli/index.ts)
-    participant Cache as downloadModelAssets (model-cache.ts)
-    participant Asset as ensureAsset (per asset)
-    participant HF as HuggingFace (frozen revision)
-    participant FS as OS cache dir
-    CLI->>Cache: downloadModelAssets()
-    loop each of 3 pinned assets
-        Cache->>Asset: readIfValid(dest, sha256)
-        Asset->>FS: readFile + sha256
-        FS-->>Asset: bytes or null
-        alt cache miss
-            Asset->>HF: fetch(assetUrl)
-            HF-->>Asset: arrayBuffer
-            Asset->>Asset: sha256 verify vs pinned
-            Asset->>FS: writeFile(tmp) then rename(dest)
-        end
-        Asset-->>Cache: { name, bytes, cached }
+    participant Batch as parseBatch / parseLine
+    participant T1 as classifyTier1 (regex)
+    participant T2 as runTier2 (wink-nlp, lazy)
+    participant T3 as makeTier3Envelope
+    Batch->>T1: classifyTier1(line)
+    T1-->>Batch: EARS classification + confidence
+    Batch->>T2: runTier2(input) (escalation triggers)
+    T2->>T2: lazy-load wink-nlp, repair clauses
+    alt repaired to confident EARS
+        T2-->>Batch: ParseResult ok
+    else still ambiguous / no modal
+        T2->>T3: makeTier3Envelope(text, outcome)
+        T3-->>Batch: ParseResult error (ERR_PARSE_*)
     end
-    Cache-->>CLI: DownloadReport { cacheDir, assets, alreadyComplete }
-    CLI->>CLI: emit(success('download-model', report))
 ```
 
-## 3. Atomize → SMT contradiction proof for a paraphrased conflict
+## 3. `symspec certify` (Lean 4, opt-in)
 
-A paraphrased conflict is only provable because the glossary canonicalizes the two differently-worded responses to one atom before the solver sees them. `runCheck` builds the atomizer from `glossaryIndex(doc.glossary)` (`src/pipeline/check.ts:326`), and `atomize` applies glossary canonicalization FIRST — rewriting a matched alias body to its canonical phrasing — then antonym unification, so both responses resolve to the same scoped atom name (`src/formal/atomize.ts:135-165`). `findContradictions` encodes the requirements, groups by context atoms, asserts each group's context true over the whole-spec conjunction, and checks with the requirement guards as the only assumption literals (`src/formal/contradiction.ts:229-293`). On `unsat` it extracts and minimizes the core to exactly the conflicting ids and emits one `FND_CONTRADICTION` (`src/formal/contradiction.ts:293-322`, `src/formal/contradiction.ts:189-212`).
+`certify` is the only command touching `src/certify/*`; it loads the document, discovers the Lean toolchain (raising `ERR_LEAN_TOOLCHAIN_MISSING` on a miss), emits a `.lean` file, and runs Lean over it as an NDJSON stream (`src/cli/index.ts:434`, `src/certify/run.ts:305`, `src/certify/run.ts:310`, `src/certify/run.ts:322`). Each requirement is emitted as a placeholder `True` theorem — this attests the toolchain elaborates, NOT requirement semantics (`src/cli/index.ts:794-807`). It emits `FND_CERTIFIED` / `FND_CERTIFY_FAILED`.
 
 ```mermaid
 sequenceDiagram
-    participant Pipe as runCheck (pipeline/check.ts)
-    participant Atom as atomize (atomize.ts)
-    participant Find as findContradictions (contradiction.ts)
-    participant Enc as encode
-    participant Z3 as Z3 Solver
-    Pipe->>Atom: atomize(resp "issue a session token", glossary)
-    Atom->>Atom: glossary alias -> canonical (AC-9-2)
-    Atom-->>Find: atom sys__auth__resp__CANON (pos)
-    Pipe->>Atom: atomize(resp "issue a login credential", glossary)
-    Atom->>Atom: glossary alias -> same canonical
-    Atom-->>Find: atom sys__auth__resp__CANON (neg)
-    Pipe->>Find: findContradictions(encodable, { atomize })
-    Find->>Enc: encode(r, atomize) per requirement
-    Enc-->>Find: EncodedRequirement (guard + formula)
-    Find->>Z3: add whole-spec formulas + group context atoms
-    Find->>Z3: check(...guardAsts)
-    Z3-->>Find: unsat + unsatCore
-    Find->>Z3: minimizeCore (deletion re-checks)
-    Z3-->>Find: minimal core (2 guards)
-    Find-->>Pipe: FND_CONTRADICTION { requirementIds }
+    participant CLI as certify action (cli/index.ts)
+    participant Disc as discoverLeanToolchain
+    participant Emit as emitLeanFile
+    participant Run as runLean (NDJSON)
+    participant Lean as lean toolchain
+    CLI->>Disc: discoverLeanToolchain()
+    alt toolchain missing
+        Disc-->>CLI: LeanDiscoveryError → ERR_LEAN_TOOLCHAIN_MISSING
+    else discovered
+        Disc-->>CLI: toolchain pin
+        CLI->>Emit: emitLeanFile(placeholder True theorems)
+        Emit-->>CLI: .lean source
+        CLI->>Run: runLean(source, opts)
+        Run->>Lean: elaborate + parse NDJSON
+        Lean-->>Run: per-theorem results + axiom provenance
+        Run-->>CLI: FND_CERTIFIED / FND_CERTIFY_FAILED
+    end
+    CLI->>CLI: emit(success('certify', report))
 ```
 
 

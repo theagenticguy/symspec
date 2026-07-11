@@ -1,6 +1,8 @@
 # symspec · Business logic
 
-The domain rules symspec enforces over EARS (Easy Approach to Requirements Syntax) requirements: what a valid requirement looks like, how it renders, how prose is classified into it, the surface-quality lint catalog, the formal conflict semantics proved by SMT, and the propose-vs-decide boundary that keeps the verdict path deterministic. Every rule below cites the source that defines it.
+The domain rules symspec enforces over EARS (Easy Approach to Requirements Syntax) requirements: what a valid requirement looks like, how it renders, how prose is classified into it, the surface-quality lint catalog, the formal conflict semantics proved by SMT, the v3 numeric / ambiguity / temporal / requirement-graph tiers, and the propose-vs-decide boundary that keeps the verdict path deterministic. Every rule below cites the source that defines it.
+
+**The governing invariant across all tiers**: a **verdict-eligible** finding (`error`/`warn` that can drive the pass/fail gate) must recompute **bit-identically** from `(document + committed glossary + pinned model)`; everything fuzzier is `info` / propose-only. Deterministic tiers (structural DAG, GtWR lint, propositional SMT, numeric SMT, bounded temporal SMT, the mechanical `and…or` ambiguity case) can hold that contract; embedding-driven tiers only PROPOSE. This is the "propose-vs-decide split" that recurs in every section below.
 
 ---
 
@@ -91,6 +93,78 @@ The formal tier discharges four whole-spec / pairwise properties on an SMT (z3) 
 - Ubiquitous requirements have no guard and are never vacuity candidates — `src/formal/vacuity.ts:54`.
 - Shipped at `confidence: 'low'` — under regex parsing it only bites when one requirement's response atom is another's negated precondition atom under the same system — `src/formal/vacuity.ts:18`, `src/formal/vacuity.ts:37`.
 - `unknown` is never reported as vacuous — `src/formal/vacuity.ts:91`.
+
+---
+
+## Numeric / arithmetic conflict (v3.0)
+
+The propositional SMT tier is opaque to arithmetic: "temperature above 40" and "temperature below 30" become two unrelated Boolean atoms that never conflict. The numeric tier lifts numeric predicates into a real-arithmetic (LIA/LRA) SMT check so jointly-unsatisfiable bounds on one quantity prove UNSAT. It is deterministic and **verdict-eligible** (`error`), and it **runs over ALL requirements**, not the gate-included subset — numeric conflict is independent of the propositional-encoding soundness the AC-3-7 gate protects, so a lint-blocking finding (e.g. a missing-units warning on a bare number) must not hide a real numeric contradiction — `src/pipeline/check.ts:388`, `src/pipeline/check.ts:396`.
+
+### Extraction contract (`extractNumericPredicates`)
+
+`extractNumericPredicates(text, systemName)` is a pure regex/lexicon lift of `(quantity, comparator, value, unit)` tuples; no model, no guessing — a slot with no recognizable predicate yields `[]`, so a missed extraction is a false negative (the honest failure direction), never a fabricated constraint — `src/formal/numeric.ts:196`, `src/formal/numeric.ts:33`.
+
+- **Unit normalization.** Every value normalizes to a canonical base unit before comparison, or a real conflict (2000 ms vs 200 ms) is missed. Two dimensions ship: time → `ms` (`s`×1000, `min`×60000, `h`×3600000, …) and size → `B` (`kb`×1000, `kib`×1024, `mb`×1e6, …); unknown units stay unitless — `src/formal/numeric.ts:58`, `src/formal/numeric.ts:99`.
+- **Per-system quantity identity.** "temperature", "the temperature", "temp" must collapse to ONE canonical key scoped per system — `sys__<system>__qty__<label>` — mirroring the AC-4-2a atom scoping, so two systems' "latency" are distinct quantities and never cross-conflict — `src/formal/numeric.ts:142`, `src/formal/numeric.ts:16`.
+- Comparator lexicon maps phrasing to `<=`/`>=`/`<`/`>`/`=` (`no more than`→`<=`, `at least`→`>=`, `within`→`<=`, `exactly`→`=`, …); longer phrases match first so `less than` cannot re-match inside `no less than` — `src/formal/numeric.ts:114`, `src/formal/numeric.ts:206`.
+- The quantity label is the noun phrase immediately BEFORE the comparator, trimmed of trailing prepositions/fillers so "respond in", "respond in no", "respond" all normalize to one quantity — over-broad capture would split identical quantities and let a conflict escape — `src/formal/numeric.ts:159`.
+
+### Detection (`FND_NUMERIC_CONTRADICTION`, error)
+
+`findNumericContradictions` groups predicates by canonical per-system quantity; a quantity constrained by < 2 distinct requirements is skipped without a solver call. For each remaining group it asserts every requirement's predicate under its own guard literal (= requirement id) and checks joint SAT over a shared per-quantity Real variable; on `unsat` the minimal unsat core names exactly the culprit ids — the same assumption-literal-guard technique the propositional `contradiction.ts` uses — `src/formal/numeric-contradiction.ts:55`, `src/formal/numeric-contradiction.ts:82`. The core is deletion-minimized so an innocent requirement sharing the quantity cannot ride along, and a finding requires ≥2 distinct ids — `src/formal/numeric-contradiction.ts:139`. LIA/LRA is convex and decidable, so the verdict and core are reproducible; this tier introduces no approximation — `src/formal/numeric-contradiction.ts:19`.
+
+---
+
+## Ambiguity family (v3.1)
+
+A deterministic, always-on finding family grounded in the Berry & Kamsties taxonomy: lexical (vague), scope/quantifier, referential/anaphoric, and pragmatic/contextual ambiguity. The module is PURE and SYNCHRONOUS — no solver, no model, no async, no I/O — so it recomputes bit-identical findings and runs on the default `check` path like structural + lint — `src/formal/ambiguity.ts:442`, `src/pipeline/check.ts:320`. Only the mechanical case is verdict-eligible; the rest are `info` / propose-only, tagged `tier: 'lint'` in the report — `src/pipeline/check.ts:324`.
+
+- **`FND_AMBIGUOUS_VAGUE` (info).** One finding per DISTINCT vague/weasel phrase from a SHORT, high-precision lexicon (`fast, user-friendly, adequate, efficient, as appropriate, etc, reasonable, timely, robust, seamless, …`) — kept deliberately small per the SREE/Gleich false-positive-fatigue lesson so authors do not learn to ignore it — `src/formal/ambiguity.ts:103`, `src/formal/ambiguity.ts:156`.
+- **`FND_AMBIGUOUS_QUANTIFIER`.** Three patterns; only (a) is verdict-eligible: (a) an un-parenthesized `and…or` coordination — the classic `X and Y or Z` scope ambiguity — is severity `warn` and the only case that enters the reproducibility contract; a sentence that groups its coordination with parentheses is treated as disambiguated and NOT flagged — `src/formal/ambiguity.ts:262`. (b) a leading universal (`all/each/every`) + determiner and (c) a bare plural subject of `shall` are `info` — `src/formal/ambiguity.ts:280`, `src/formal/ambiguity.ts:293`.
+- **`FND_AMBIGUOUS_REFERENCE` (info).** Recall-first per Ezzini: FLAG a pronoun (`it/this/they/them/that`) or a bare definite NP (`the system`/`the service`) when ≥2 distinct `systemName`s exist across the document, and list them as candidate antecedents — resolution is deliberately punted. Reports the earliest such reference per requirement (one finding, low-noise) — `src/formal/ambiguity.ts:337`, `src/formal/ambiguity.ts:321`.
+- **`FND_AMBIGUITY_NEEDS_JUDGMENT` (info).** The structured replacement for the silent pragmatic/contextual punt (Berry & Kamsties' non-decidable class): emitted only for a long requirement (> 25 words) that triggered NONE of the deterministic categories, naming it for an LLM/agent review pass — never enters the reproducibility contract — `src/formal/ambiguity.ts:401`, `src/formal/ambiguity.ts:384`.
+
+---
+
+## Temporal / ordering conflict (v3.3, opt-in `--temporal`)
+
+The propositional tier evaluates one snapshot; the temporal tier reasons about ORDER over a finite trace. It is opt-in (`--temporal`, default bound `k=10`) and, when enabled, runs over ALL requirements on the shared in-process Z3-WASM context — `src/pipeline/check.ts:412`, `src/cli/index.ts:311`.
+
+### EARS → LTL mapping (`earsToTemporal`, pure)
+
+`earsToTemporal(req)` is a pure, solver-free map from an EARS requirement to a Dwyer/SPS LTL formula per NASA FRET semantics — `src/formal/temporal-patterns.ts:168`:
+
+| EARS pattern | SPS pattern | LTL shape |
+|---|---|---|
+| event-driven | Response | `G(trig → F resp)` |
+| unwanted-behavior | Absence | `G(trig → ¬resp)` |
+| state-driven | Universality | `G(state → resp)` |
+| optional-feature | Universality⟨feat⟩ | `G(feature → resp)` |
+| ubiquitous | Universality | `G(resp)` |
+
+- Response polarity is threaded onto the response literal (`¬resp` when `negated`), never baked into the atom name, and atoms are scoped per system `sys__<system>__<kind>__<slot>` with the same conservative normalization the propositional atomizer uses — so a temporal atom and its propositional counterpart line up by name — `src/formal/temporal-patterns.ts:142`, `src/formal/temporal-patterns.ts:121`.
+
+### Bounded lowering + detection (`FND_TEMPORAL_CONTRADICTION`, error)
+
+`findTemporalContradictions(ctx, reqs, k)` lowers each formula loop-free to per-timestep atom variables (`<atom>@<t>` for t in 0..k) — `G φ` unrolls to `⋀ φ@t`, `F φ` to `⋁ φ@t`, `X φ` shifts to t+1 (false past the horizon), `φ U ψ` to its bounded expansion — then checks joint SAT under per-id guard literals; on `unsat` the minimal core names the culprits — `src/formal/temporal.ts:118`, `src/formal/temporal.ts:62`.
+
+- **SOUND-FOR-UNSAT, not complete-for-SAT (the honest limit).** Without a loopback lasso, an `unsat` verdict is a genuine contradiction (no trace of length ≤ k satisfies the set, and `G`/response obligations only get harder with more steps), but a `sat`-at-k result is NOT a consistency certificate — a conflict may first appear past the horizon. A finding is emitted ONLY on `unsat`, so the tier never over-reports; the evidence carries `{ bound: k, complete: false }` — `src/formal/temporal.ts:13`, `src/formal/temporal.ts:143`.
+- **Reachability discipline.** A `G(ante → cons)` obligation is vacuously satisfiable by keeping `ante` false forever, which would hide a real conflict; the solver adds an `F(antecedent)` reachability assertion per distinct guarded trigger. Shared antecedents dedupe by atom name so two requirements on the same trigger become reachable together without asserting mutually-exclusive triggers — the temporal analogue of `contradiction.ts`'s context-group reachability — `src/formal/temporal.ts:186`.
+
+---
+
+## Requirement similarity graph + DAG invariant (v3.1–v3.2)
+
+### Similarity graph (propose-only, `--semantic`)
+
+`buildSimilarityGraph(reqs, embedder, opts)` is an always-on-when-`--semantic` deterministic kNN graph over rendered sentences that PROPOSES two info-tier findings — never a verdict, because the trace-link-recovery literature is clear that embedding link suggestions have too-low precision to auto-commit — `src/formal/graph.ts:102`, `src/formal/graph.ts:8`. Determinism is engineered: the embedder is injected (CPU/ONNX-WASM, byte-reproducible where GPU is not); cosine is QUANTIZED to a fixed precision (4 dp) before any threshold comparison so sub-ULP jitter can never flip an edge; neighbor ties break on requirement id; clustering is union-find over the deterministic edge set — `src/formal/graph.ts:16`, `src/formal/graph.ts:82`.
+
+- **`FND_MISSING_TRACE_LINK` (info).** A kept edge (cosine ≥ 0.82 default, in either endpoint's top-k=5) whose endpoints carry no committed `refines`/`derives`/`satisfies` link — suggests adding the edge — `src/formal/graph.ts:45`, `src/formal/graph.ts:144`.
+- **`FND_DUPLICATE_CLUSTER` (info).** A connected component of ≥3 mutually-similar requirements — surfaced as a near-duplication review prompt — `src/formal/graph.ts:56`, `src/formal/graph.ts:199`.
+
+### `FND_LEAF_UNVERIFIABLE` (structural DAG invariant, verdict)
+
+Added to the structural analyzer (`analyze`), not the graph tier. KAOS/SysML canon: a **refinement leaf** — a requirement that others refine or derive toward (has inbound `refines`/`derives`) but which itself refines/derives nothing further (a DAG sink) — must be independently verifiable. A leaf with no `verifies` edge is flagged an unverifiable dead end — `src/core/analyze.ts:102`, `src/core/analyze.ts:125`.
 
 ---
 

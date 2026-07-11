@@ -10,9 +10,9 @@ the two-paragraph orientation, then follow the map below.
 
 ## Architecture
 
-- [System overview](architecture/system-overview.md) — what symspec is, the stack, and the check pipeline diagram.
-- [Module map](architecture/module-map.md) — every `src/` module and its load-bearing files.
-- [Data flow](architecture/data-flow.md) — how a document moves through parse → lint → SMT → semantic → envelope.
+- [System overview](architecture/system-overview.md) — what symspec is, the stack, and the multi-tier check pipeline diagram.
+- [Module map](architecture/module-map.md) — every module (`src/`, `adversarial/`, `scripts/`) and its load-bearing files.
+- [Data flow](architecture/data-flow.md) — how a document moves through structural → lint → ambiguity → gate → SMT / numeric / temporal / semantic-graph → envelope.
 
 ## Reference
 
@@ -21,19 +21,19 @@ the two-paragraph orientation, then follow the map below.
 
 ## Behavior
 
-- [Processes](behavior/processes.md) — what actually runs during `check`, the parse ladder, SMT contradiction, semantic load, and `certify`.
+- [Processes](behavior/processes.md) — what actually runs during `check`: the parse ladder, the gate, SMT contradiction, the numeric/ambiguity/temporal tiers, semantic load, `certify`, and the adversarial harness.
 
 ## Diagrams
 
 - [Component diagram](diagrams/architecture/components.md) — components and their relationships (classDiagram).
 - [Dependency graph](diagrams/structural/dependency-graph.md) — internal modules + external deps (flowchart).
-- [Sequence diagrams](diagrams/behavioral/sequences.md) — call order for `check --semantic`, `download-model`, and the paraphrase proof.
+- [Sequence diagrams](diagrams/behavioral/sequences.md) — call order for the full `check` tier fan-out, the parse ladder, and `certify`.
 
 ## Insights
 
 - [Impact analysis](insights/impact-analysis.md) — if I change X, what breaks?
 - [Contract map](insights/contract-map.md) — what each module boundary assumes.
-- [Business logic](insights/business-logic.md) — EARS patterns, GtWR rules, conflict semantics, the propose/decide invariant.
+- [Business logic](insights/business-logic.md) — EARS patterns, GtWR rules, propositional/numeric/temporal/ambiguity conflict semantics, and the verdict-eligibility (propose/decide) invariant.
 - [Debugging guide](insights/debugging-guide.md) — error codes, failure modes, and where to look first.
 - [Tech debt](insights/tech-debt.md) — the ranked register (the honest `certify` placeholder, threshold calibration).
 

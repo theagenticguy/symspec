@@ -1,6 +1,8 @@
 [tools]
 node = "24"
-pnpm = "11"
+# pnpm is provided by corepack (bundled with node); the exact version is pinned
+# by `packageManager` in package.json (pnpm@11.1.1), which corepack reads
+# natively. Not declared as a mise tool to avoid a second, conflicting owner.
 
 # Optional system solver/certify binaries (AC-4-9, AC-4-10, AC-5-4, AC-7-6).
 # These are the OPTIONAL SYSTEM binaries — a different thing from the npm

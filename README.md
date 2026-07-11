@@ -222,18 +222,25 @@ package — **no external binary is required for a working `symspec check`**.
   (`finding.ts`) with the atom table and the core/witness, so the agent can
   audit exactly what the solver compared.
 
-**Honest scope.** The formal tier is **sound modulo atomization**: every
-reported conflict is a genuine logical conflict of the requirements *as
+**Honest scope.** The propositional SMT tier is **sound modulo atomization**:
+every reported conflict is a genuine logical conflict of the requirements *as
 atomized*. The dual is the honest limit — because paraphrases become distinct
 atoms, a real conflict can hide behind unmatched atoms, so **silence is not a
 consistency certificate**. The one false-positive risk is over-unification,
 held back by the conservative normalization and the `FND_SIMILAR_UNUNIFIED`
-reporter. **Contextual ambiguity is not checked** — that judgment is punted to
-the calling agent. There is no temporal/ordering logic and no numeric/arithmetic
-reasoning; the SMT stage evaluates one propositional snapshot. This same scope
-text is surfaced in the `manifest` command's `scope` field. A per-group solver
-`unknown`/timeout emits `FND_NEEDS_REVIEW` and the run continues — an
-inconclusive result is never read as "no conflict".
+reporter. The propositional stage itself evaluates one snapshot with no
+arithmetic or ordering — but that boundary is now covered by dedicated tiers:
+**numeric/arithmetic conflicts are checked** over LIA/LRA
+(`FND_NUMERIC_CONTRADICTION`), **temporal/ordering conflicts** under `--temporal`
+(`FND_TEMPORAL_CONTRADICTION`, sound-for-UNSAT), and **deterministic ambiguity
+detectors** (vague terms, quantifier/coordination scope, referential ambiguity)
+run and report — only *pragmatic/contextual* ambiguity is punted to the calling
+agent as `FND_AMBIGUITY_NEEDS_JUDGMENT`, and any LLM ambiguity judgment is
+propose-only. The v3 tiers are detailed below. This same scope text is surfaced,
+claim-by-claim, in the `manifest` command's `scope` field (the exact strings
+live in `src/cli/scope-text.ts` and are pinned by a schema so the disclosure
+cannot drift). A per-group solver `unknown`/timeout emits `FND_NEEDS_REVIEW` and
+the run continues — an inconclusive result is never read as "no conflict".
 
 Portability: `--emit-smt2` writes a standard-conformant SMT-LIB2 artifact (with
 `(set-logic ALL)`, no solver-specific prelude) you can hand to any compliant
@@ -397,8 +404,14 @@ src/
   formal/              # SMT tier — atomize, antonyms, encode, backend (z3 WASM),
                        #   contradiction, subsumption, vacuity, incomplete, similar,
                        #   needs-review, finding (evidence), emit-smt2, binary-backend, codes
-                       # semantic tier — embed (onnxruntime-web WASM + tokenizer),
-                       #   model-cache (fetch + sha256-verify + cache), semantic (paraphrase finder)
+                       # numeric tier (v3.0) — numeric (predicate extraction),
+                       #   numeric-contradiction (LIA/LRA joint-SAT, default on)
+                       # ambiguity tier (v3.1) — ambiguity (vague/quantifier/reference, default on)
+                       # temporal tier (v3.3) — temporal-patterns (EARS→LTL),
+                       #   temporal (bounded LTL→SMT, opt-in --temporal)
+                       # semantic + graph (v3.1–v3.2) — embed (onnxruntime-web WASM + tokenizer),
+                       #   model-cache (fetch + sha256-verify + cache), semantic (paraphrase finder),
+                       #   graph (deterministic kNN trace-link/duplicate proposals, opt-in --semantic)
   solvers/
     free/              # exact duplicates, ambiguity (lexical), pairwise candidate filter
     index.ts, types.ts # free+formal orchestrator + shared ReqView/finding types
@@ -413,6 +426,12 @@ src/
     descriptions.ts    # single-source command help/summary prose
     output.ts, dense.ts, exit.ts, resolve-doc.ts, errors.ts, version.ts, backends.ts,
     scope-text.ts, types-enum.ts, add.ts, update.ts, glossary.ts
+adversarial/           # generative-adversarial detection harness (v3.4):
+  generate.ts          #   bad-spec generator across five defect classes, escalating difficulty
+  harness.ts           #   scores symspec on detection + localization, gap report
+scripts/
+  gen-agents.ts        # regenerates AGENTS.md from buildManifest() (pnpm check:agents guards drift)
+  temporal-feasibility.ts # v3.3 gate: Z3-WASM bounded-LTL feasibility benchmark
 bin/
   symspec.mjs          # CLI entry (imports dist/cli.mjs)
 docs/                  # generated codebase docs (architecture, reference, insights) — see docs/README.md

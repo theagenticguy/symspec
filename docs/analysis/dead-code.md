@@ -2,17 +2,18 @@
 
 ## Result: clean
 
-`pnpm knip` reports nothing. The command exits 0 with no output:
+`pnpm knip` reports nothing. The command exits 0 with an empty findings body:
 
 ```
 $ pnpm knip
 $ knip
+EXIT=0
 ```
 
-(exit code 0, empty stdout — confirmed twice, including with `--no-progress`).
+(7 bytes of stdout — the shell echo of the `knip` script name, no findings.)
 
 knip is part of the repo's own gate: `pnpm check` runs
-`biome ci . && tsc --noEmit && vitest run && knip` (`package.json` scripts), so a
+`biome ci . && tsc --noEmit && vitest run && knip` (`package.json:46`), so a
 clean knip run is a merge precondition, not an accident. The three findings
 tables knip would populate are all empty:
 
@@ -22,9 +23,12 @@ tables knip would populate are all empty:
 | Unused/unreferenced exports | none (rule disabled — see below) |
 | Unlisted / unresolved imports & dependencies | none |
 
-There is genuinely nothing to report. The rest of this document explains the
-configuration that produces that result, so the "clean" verdict is legible
-rather than blind.
+There is genuinely nothing to report, including across the v3.0–v3.4 additions
+(`src/formal/{ambiguity,numeric,numeric-contradiction,temporal,temporal-patterns,graph,emit-smt2}.ts`,
+`adversarial/`, `scripts/temporal-feasibility.ts`) — knip's `project` and
+`entry` globs were widened to cover them (`knip.json:3-4`), and the run stays
+green. The rest of this document explains the configuration that produces that
+result, so the "clean" verdict is legible rather than blind.
 
 ## Configuration and carve-outs
 
@@ -33,7 +37,8 @@ Full `knip.json`:
 ```json
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  "project": ["src/**/*.ts"],
+  "project": ["src/**/*.ts", "adversarial/**/*.ts", "scripts/**/*.ts"],
+  "entry": ["adversarial/harness.ts", "scripts/*.ts"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": ["wink-nlp", "wink-eng-lite-web-model"],
   "ignoreBinaries": ["diff"],
@@ -48,12 +53,18 @@ Full `knip.json`:
 }
 ```
 
-The real config carves out **two dependencies** (`wink-nlp`,
-`wink-eng-lite-web-model`) and **one binary** (`diff`) — `knip.json:5-6`. It does
-*not* ignore `onnxruntime-web` or `@huggingface/tokenizers`; those resolve
-without help (see the last section).
+The `project` glob now spans three roots — `src/`, `adversarial/`, `scripts/`
+(`knip.json:3`) — so the v3.4 adversarial harness and every script are inside
+the analysis boundary. The `entry` glob (`knip.json:4`) declares
+`adversarial/harness.ts` and every `scripts/*.ts` as reachable roots; without
+this, files invoked only from the command line (the harness `main`,
+`scripts/gen-agents.ts`, `scripts/temporal-feasibility.ts`) would be flagged as
+unused `files`. The config carves out **two dependencies** (`wink-nlp`,
+`wink-eng-lite-web-model`) and **one binary** (`diff`) — `knip.json:6-7`. It does
+*not* ignore `onnxruntime-web`, `@huggingface/tokenizers`, or `z3-solver`; those
+resolve without help (see the last section).
 
-### Rule posture (`knip.json:7-14`)
+### Rule posture (`knip.json:8-15`)
 
 - `dependencies: error` and `unlisted: error` — the two rules that catch an
   actual packaging bug (a shipped dependency that is never imported, or an
@@ -61,13 +72,15 @@ without help (see the last section).
   run most meaningfully asserts.
 - `exports: off` and `types: off` — unused-export and unused-type detection is
   disabled. This is deliberate for a library that exposes a public API surface
-  (`exports` in `package.json` points at `dist/index.d.mts`): re-exported public
-  symbols look "unused" internally but are the product. Leaving these on would
-  produce false positives across the entire public API. `ignoreExportsUsedInFile:
-  true` (`knip.json:4`) is the same principle at file scope.
+  (`exports` in `package.json` points at the built `dist` barrel): re-exported
+  public symbols look "unused" internally but are the product. The barrel
+  `src/index.ts` re-exports certify/core/formal/lint/parse/pipeline/solvers;
+  leaving these rules on would produce false positives across the entire public
+  API. `ignoreExportsUsedInFile: true` (`knip.json:5`) is the same principle at
+  file scope.
 - `files: warn` and `devDependencies: warn` — soft signals, not gate failures.
 
-### `ignoreDependencies` — `wink-nlp`, `wink-eng-lite-web-model` (`knip.json:5`)
+### `ignoreDependencies` — `wink-nlp`, `wink-eng-lite-web-model` (`knip.json:6`)
 
 These two are carved out because they are loaded through **variable** dynamic
 import specifiers that knip's static analysis cannot follow. In
@@ -87,12 +100,12 @@ deps. The ignore entries suppress that false positive. This indirection is
 intentional in the source: Tier-2 parsing lazily loads wink-nlp and its English
 model only when needed (`src/parse/tier2.ts:266`).
 
-### `ignoreBinaries` — `diff` (`knip.json:6`)
+### `ignoreBinaries` — `diff` (`knip.json:7`)
 
 `diff` is a system binary invoked from the `check:agents` script
-(`tsx scripts/gen-agents.ts --stdout | diff -u AGENTS.md -`, `package.json`
-scripts), not an npm-installed binary. knip's binary check would flag it as
-unlisted; the ignore says "this is a POSIX tool, not a dependency."
+(`tsx scripts/gen-agents.ts --stdout | diff -u AGENTS.md -`, `package.json:49`),
+not an npm-installed binary. knip's binary check would flag it as unlisted; the
+ignore says "this is a POSIX tool, not a dependency."
 
 ## Note on other dynamic imports (why they are NOT carved out)
 
@@ -108,12 +121,12 @@ src/formal/backend.ts:45  const { init } = await import('z3-solver')
 `onnxruntime-web`, `@huggingface/tokenizers`, and `z3-solver` are all declared
 `dependencies` in `package.json` and are all referenced by literal `import()`
 calls, so knip resolves them and the `dependencies: error` rule stays green
-without any carve-out. (These three are lazily loaded for portability —
-`src/formal/embed.ts:6-17` — but that affects only the runtime load path, not
-static traceability; only the literal-vs-variable specifier distinction matters
-to knip.) Relative dynamic imports such as `import('./embed.js')`
-(`src/formal/semantic.ts:84`) and `import('../formal/embed.js')`
-(`src/cli/index.ts:355`) are in-project and likewise fully resolved.
+without any carve-out. These three are lazily loaded for portability, but that
+affects only the runtime load path, not static traceability; only the
+literal-vs-variable specifier distinction matters to knip. Relative dynamic
+imports such as `import('./embed.js')` (`src/formal/semantic.ts:84`) and
+`import('../formal/embed.js')` (`src/cli/index.ts:355`) are in-project and
+likewise fully resolved.
 
 ## Bottom line
 
@@ -121,7 +134,9 @@ knip is clean under a configuration that fails hard on real packaging bugs
 (`dependencies`, `unlisted`) while intentionally silencing (a) public-API export
 analysis that does not apply to a library entry point, and (b) exactly three
 carve-outs — two variable-specifier dynamic deps and one system binary — that
-are static-analysis blind spots, not dead code.
+are static-analysis blind spots, not dead code. The v3 tiers and the
+`adversarial/` harness sit inside the widened `project`/`entry` boundary and add
+nothing to the findings.
 
 
 ## See also
