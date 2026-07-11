@@ -375,7 +375,12 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       // AC-30-3: numeric/arithmetic conflict tier. Extract per-slot numeric
       // predicates (deterministic, unit-normalized, per-system quantity keys)
       // and prove any same-quantity set jointly unsatisfiable over LIA/LRA.
-      const numericReqPreds = included.map((r) => ({
+      // Runs over ALL requirements, NOT the gate-included subset: numeric
+      // conflict detection is independent of the propositional-encoding
+      // soundness the AC-3-7 gate protects, so a lint-blocking finding (e.g. a
+      // missing-units warning on a bare number) must not hide a real numeric
+      // contradiction. Reuses the shared context.
+      const numericReqPreds = reqs.map((r) => ({
         id: r.id,
         predicates: [
           ...extractNumericPredicates(r.systemResponse, r.systemName),

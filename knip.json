@@ -1,6 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  "project": ["src/**/*.ts"],
+  "project": ["src/**/*.ts", "adversarial/**/*.ts", "scripts/**/*.ts"],
+  "entry": ["adversarial/harness.ts", "scripts/*.ts"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": ["wink-nlp", "wink-eng-lite-web-model"],
   "ignoreBinaries": ["diff"],

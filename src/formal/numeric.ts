@@ -160,8 +160,30 @@ function labelBefore(text: string, comparatorStart: number): string | null {
   const before = text.slice(0, comparatorStart).trim()
   if (before === '') return null
   // Take up to the last 3 alphabetic words as the quantity label.
-  const words = before.split(/\s+/).filter((w) => /[a-zA-Z]/.test(w))
+  let words = before.split(/\s+/).filter((w) => /[a-zA-Z]/.test(w))
   if (words.length === 0) return null
+  // Strip TRAILING prepositions/fillers so "respond in", "respond in no" and
+  // "respond" all normalize to the same quantity — otherwise a unit/phrasing
+  // variant splits one quantity into several and a real conflict escapes.
+  const TRAILING_FILLER = new Set([
+    'in',
+    'of',
+    'to',
+    'for',
+    'by',
+    'at',
+    'a',
+    'an',
+    'the',
+    'no',
+    'with',
+    'be',
+    'is',
+    'are',
+  ])
+  while (words.length > 1 && TRAILING_FILLER.has(words[words.length - 1]!.toLowerCase())) {
+    words = words.slice(0, -1)
+  }
   const tail = words.slice(-3).join(' ')
   // Strip leading verb-ish stopwords so "shall respond with latency" → "latency".
   return tail.replace(/^(?:shall|be|is|are|the|a|an|with|of|to|have|has)\s+/i, '').trim() || null
@@ -174,6 +196,12 @@ function labelBefore(text: string, comparatorStart: number): string | null {
 export function extractNumericPredicates(text: string, systemName: string): NumericPredicate[] {
   const out: NumericPredicate[] = []
   const lower = text.toLowerCase()
+  // Character ranges already consumed by a matched comparator phrase, so a
+  // SHORTER phrase ("less than") can't re-match inside a longer one already
+  // claimed ("no less than"). COMPARATOR_LEXICON lists longer phrases first.
+  const claimed: Array<[number, number]> = []
+  const overlaps = (start: number, end: number): boolean =>
+    claimed.some(([s, e]) => start < e && s < end)
 
   for (const { phrase, comparator } of COMPARATOR_LEXICON) {
     let searchFrom = 0
@@ -182,11 +210,13 @@ export function extractNumericPredicates(text: string, systemName: string): Nume
       const idx = lower.indexOf(phrase, searchFrom)
       if (idx === -1) break
       searchFrom = idx + phrase.length
+      if (overlaps(idx, idx + phrase.length)) continue
 
       // Match "<phrase> <number><unit?>" allowing filler words between.
       const after = text.slice(idx + phrase.length)
       const m = new RegExp(String.raw`^\s+(?:[a-zA-Z]+\s+){0,2}${NUMBER}\s*${UNIT}`).exec(after)
       if (m === null) continue
+      claimed.push([idx, idx + phrase.length + m[0].length])
 
       const rawValue = Number(m[1]!.replace(/,/g, ''))
       if (!Number.isFinite(rawValue)) continue
