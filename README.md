@@ -240,6 +240,47 @@ Portability: `--emit-smt2` writes a standard-conformant SMT-LIB2 artifact (with
 reader; `--solver-path`/`SYMSPEC_Z3`/a PATH `z3`/`cvc5` runs that binary as an
 optional cross-check.
 
+#### v3 tiers — numeric, ambiguity, temporal, and the requirement graph
+
+Four v3 capabilities close the honest-scope limits the propositional SMT tier
+disclaims, all under the same discipline: **a verdict-eligible finding must
+recompute bit-identically from `(doc + committed glossary + pinned model)`;
+everything fuzzier is `info` and proposes, never decides.**
+
+- **Numeric/arithmetic conflicts (`src/formal/numeric.ts`, deterministic, default
+  on).** A regex/lexicon extractor lifts `(quantity, comparator, value, unit)`
+  from slot text with unit normalization (s→ms, kb→B) and per-system
+  quantity-identity; jointly-unsatisfiable bounds on one quantity (e.g. `latency
+  ≤ 2000ms ∧ latency > 3000ms`) prove UNSAT over Z3's LIA/LRA and surface as
+  `FND_NUMERIC_CONTRADICTION` with the minimal unsat core. Runs over ALL
+  requirements — a lint warning never hides a real numeric conflict.
+- **Ambiguity family (`src/formal/ambiguity.ts`, deterministic, default on).**
+  `FND_AMBIGUOUS_VAGUE` (short high-precision weasel lexicon),
+  `FND_AMBIGUOUS_QUANTIFIER` (un-parenthesized `and/or`, leading `all/each`),
+  `FND_AMBIGUOUS_REFERENCE` (a pronoun with ≥2 antecedents — detected, not
+  resolved), and `FND_AMBIGUITY_NEEDS_JUDGMENT` (a structured hand-off for
+  pragmatic ambiguity an LLM/agent reviews — the punt is surfaced, not silent).
+- **Temporal/ordering (`src/formal/temporal.ts`, opt-in `--temporal`).** EARS
+  patterns map to LTL (Dwyer/SPS via FRET semantics) and lower to a bounded
+  finite-trace SMT encoding on the in-process Z3-WASM; temporally-unsatisfiable
+  sets (e.g. "eventually open the valve" vs "never open the valve") surface as
+  `FND_TEMPORAL_CONTRADICTION`. **Sound-for-UNSAT**: a reported conflict is real;
+  a `sat`-at-bound-`k` result is not a consistency certificate (`{bound, complete:
+  false}` in the evidence).
+- **Requirement similarity graph + DAG (`src/formal/graph.ts`, opt-in with
+  `--semantic`).** A deterministic kNN graph (batch-invariant embedder, cosine
+  quantized before threshold, id tie-breaks, union-find clustering) proposes
+  `FND_MISSING_TRACE_LINK` (a high-cosine pair with no committed edge) and
+  `FND_DUPLICATE_CLUSTER` — info only, because trace-link precision is too low to
+  auto-commit. The structural analyzer adds the KAOS/SysML
+  `FND_LEAF_UNVERIFIABLE` invariant (a refinement leaf with no verify edge).
+
+A generative-adversarial harness (`adversarial/`) generates increasingly subtle
+BAD specs across all five defect classes and scores symspec on detection +
+localization, escalating difficulty with a gap report — a standing regression
+gate that the deterministic tiers catch 100% of, and 20/20 across four tiers with
+the real embedding model.
+
 ### 4. Semantic — optional paraphrase bridging (local ONNX embeddings)
 
 `src/formal/embed.ts`, `model-cache.ts`, `semantic.ts`. Opt-in with
