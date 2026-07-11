@@ -86,6 +86,8 @@ export const FndCodeSchema = z.enum([
   'FND_AMBIGUOUS_QUANTIFIER',
   'FND_AMBIGUOUS_REFERENCE',
   'FND_AMBIGUITY_NEEDS_JUDGMENT',
+  // Bounded temporal tier (AC-33-2) — sound-for-UNSAT verdict over a trace bound
+  'FND_TEMPORAL_CONTRADICTION',
 ])
 
 export type FndCode = z.infer<typeof FndCodeSchema>
@@ -200,6 +202,11 @@ export const FndCodeMeta = {
     .literal('FND_AMBIGUITY_NEEDS_JUDGMENT')
     .describe(
       'info — pragmatic/contextual ambiguity was not assessed deterministically; a structured prompt to hand the requirement to an LLM/agent review. Never a verdict, never in the reproducibility hash.',
+    ),
+  FND_TEMPORAL_CONTRADICTION: z
+    .literal('FND_TEMPORAL_CONTRADICTION')
+    .describe(
+      'error — a set of requirements is temporally inconsistent under bounded LTL→SMT (no trace of length ≤ k satisfies them jointly); sound-for-UNSAT, evidence carries {bound,complete:false}. Opt-in via `check --temporal`.',
     ),
 } satisfies Record<FndCode, z.ZodLiteral<FndCode>>
 

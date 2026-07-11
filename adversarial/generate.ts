@@ -215,9 +215,14 @@ function genTemporal(tier: number, seed: number): AdversarialCase {
   const b = `t-${seed}-b`
   const sys = 'controller'
   const trigger = 'the sensor reports overheat'
+  // A: event-driven → G(T → F open) — on overheat the valve must EVENTUALLY open.
+  // B: ubiquitous prohibition → G(¬open) — the valve must NEVER open (a global
+  // absence, not trigger-scoped, so it genuinely blocks the eventual response).
+  // With T reachable, F open and G ¬open cannot both hold: a true temporal
+  // contradiction the bounded LTL→SMT check proves (not just a snapshot clash).
   const reqs = [
     mkReq({ id: a, patternType: 'event-driven', systemName: sys, trigger, systemResponse: 'open the relief valve' }),
-    mkReq({ id: b, patternType: 'unwanted-behavior', systemName: sys, trigger, systemResponse: 'open the relief valve', negated: true }),
+    mkReq({ id: b, patternType: 'ubiquitous', systemName: sys, systemResponse: 'open the relief valve', negated: true }),
     ...(tier >= 3 ? distractors(2, seed) : []),
   ]
   return {

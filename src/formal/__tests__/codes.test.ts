@@ -213,6 +213,7 @@ describe('FND_* reachability (AC-6-3 — every documented code is reachable)', (
       'FND_AMBIGUOUS_QUANTIFIER',
       'FND_AMBIGUOUS_REFERENCE',
       'FND_AMBIGUITY_NEEDS_JUDGMENT',
+      'FND_TEMPORAL_CONTRADICTION',
     ] as const) {
       expect(sources.includes(`code: '${code}'`), `no emit literal for ${code}`).toBe(true)
       reached.add(code)

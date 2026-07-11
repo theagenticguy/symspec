@@ -165,6 +165,16 @@ const CheckOptionShape = {
     .string()
     .describe('`--solver-path <path>`: explicit path to an external z3/cvc5 binary (AC-4-9).')
     .optional(),
+  temporal: z
+    .boolean()
+    .describe(
+      '`--temporal`: opt-in bounded LTL→SMT temporal-ordering conflict detection (FND_TEMPORAL_CONTRADICTION, AC-33-2). Sound-for-UNSAT over a finite trace bound.',
+    )
+    .optional(),
+  'temporal-bound': z
+    .string()
+    .describe('`--temporal-bound <k>`: trace bound k for --temporal (default 10).')
+    .optional(),
 }
 
 /**

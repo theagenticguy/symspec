@@ -308,6 +308,11 @@ program
     'opt-in: embed responses (local BGE-ONNX model) to PROPOSE glossary merges for paraphrased conflicts (AC-9-5)',
   )
   .option('--semantic-threshold <n>', 'cosine threshold for --semantic (default 0.82)')
+  .option(
+    '--temporal',
+    'opt-in: bounded LTL→SMT temporal-ordering conflict detection (FND_TEMPORAL_CONTRADICTION, AC-33-2)',
+  )
+  .option('--temporal-bound <k>', 'trace bound k for --temporal (default 10)')
   .action(
     async (
       file: string | undefined,
@@ -320,6 +325,8 @@ program
         solverPath?: string
         semantic?: boolean
         semanticThreshold?: string
+        temporal?: boolean
+        temporalBound?: string
       },
       cmd: Command,
     ) => {
@@ -363,6 +370,13 @@ program
         } catch (e) {
           emit(toErrorEnvelope(e, 'ERR_EMBED_MODEL_MISSING'), flags)
         }
+      }
+
+      // AC-33-2: opt-in bounded temporal tier. No model — pure Z3-WASM — so it
+      // just flips on with an optional trace bound.
+      if (opts.temporal === true) {
+        const bound = opts.temporalBound !== undefined ? Number(opts.temporalBound) : undefined
+        checkOpts.temporal = bound !== undefined && Number.isFinite(bound) ? { bound } : {}
       }
 
       try {

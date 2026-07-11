@@ -139,6 +139,12 @@ export * from './formal/semantic.js'
 export * from './formal/similar.js'
 export * from './formal/subsumption.js'
 export {
+  findTemporalContradictions,
+  lowerAt,
+  type RequirementTemporal,
+  type TemporalContradictionFinding,
+} from './formal/temporal.js'
+export {
   earsToTemporal,
   type TemporalFormula,
 } from './formal/temporal-patterns.js'

@@ -187,3 +187,4 @@ Failure:
 | `FND_AMBIGUOUS_QUANTIFIER` | warn/info — scope/quantifier ambiguity: un-parenthesized "and…or" coordination (warn), leading "all/each/every", or a bare-plural subject; deterministic pattern scan with a span. |
 | `FND_AMBIGUOUS_REFERENCE` | info — a pronoun or bare definite NP ("it", "the system") with ≥2 candidate antecedents in scope; deterministic detection (recall-first), resolution is punted to the agent. |
 | `FND_AMBIGUITY_NEEDS_JUDGMENT` | info — pragmatic/contextual ambiguity was not assessed deterministically; a structured prompt to hand the requirement to an LLM/agent review. Never a verdict, never in the reproducibility hash. |
+| `FND_TEMPORAL_CONTRADICTION` | error — a set of requirements is temporally inconsistent under bounded LTL→SMT (no trace of length ≤ k satisfies them jointly); sound-for-UNSAT, evidence carries {bound,complete:false}. Opt-in via `check --temporal`. |

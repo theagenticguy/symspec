@@ -79,6 +79,8 @@ import { findNumericContradictions } from '../formal/numeric-contradiction.js'
 import { findSimilarSemantic } from '../formal/semantic.js'
 import { findSimilarUnunified } from '../formal/similar.js'
 import { checkSubsumption } from '../formal/subsumption.js'
+import { findTemporalContradictions } from '../formal/temporal.js'
+import { earsToTemporal } from '../formal/temporal-patterns.js'
 import { checkVacuity } from '../formal/vacuity.js'
 import { checkGtWRules, checkGtWRulesSet } from '../lint/gtwr.js'
 import { type FormalTierResult, runSolvers } from '../solvers/index.js'
@@ -130,6 +132,17 @@ export interface CheckOptions {
     embedder: Embedder
     /** Cosine threshold (default 0.82, `--semantic-threshold`). */
     threshold?: number
+  }
+  /**
+   * Opt-in bounded temporal tier (AC-33-2, `--temporal`). When set, EARS
+   * requirements map to LTL (Dwyer/FRET) and a bounded LTL→SMT check proves
+   * temporal contradictions (FND_TEMPORAL_CONTRADICTION). Off by default. The
+   * `bound` is the finite trace length (default 10); the tier is sound-for-UNSAT
+   * (a `sat` result at the bound is not a consistency certificate).
+   */
+  temporal?: {
+    /** Trace bound k for the bounded encoding (default 10). */
+    bound?: number
   }
 }
 
@@ -392,6 +405,19 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       }))
       const numericContradictions = await findNumericContradictions(ctx, numericReqPreds)
 
+      // AC-33-2: opt-in bounded temporal tier. Map each requirement to LTL
+      // (Dwyer/FRET) and prove temporal contradictions via bounded LTL→SMT on
+      // the shared Z3-WASM context. Runs over ALL requirements (temporal
+      // consistency is independent of the propositional gate). Sound-for-UNSAT.
+      const temporalContradictions =
+        options.temporal !== undefined
+          ? await findTemporalContradictions(
+              ctx,
+              reqs.map((r) => ({ id: r.id, formula: earsToTemporal(r) })),
+              options.temporal.bound ?? 10,
+            )
+          : []
+
       // AC-9-5: opt-in semantic paraphrase pass. Propose-only — emits
       // FND_SIMILAR_SEMANTIC info findings suggesting glossary merges for
       // high-cosine response pairs that atomize (incl. the glossary) did not
@@ -457,6 +483,18 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       // evidence (quantity + normalized comparators/values), distinct from the
       // atom-table evidence of the propositional checks.
       for (const f of numericContradictions) {
+        formal.push({
+          code: f.code,
+          severity: f.severity,
+          tier: 'formal',
+          requirementIds: [...f.requirementIds],
+          message: f.message,
+          evidence: f.evidence,
+        })
+      }
+
+      // AC-33-2: temporal contradictions carry bounded-check evidence.
+      for (const f of temporalContradictions) {
         formal.push({
           code: f.code,
           severity: f.severity,
