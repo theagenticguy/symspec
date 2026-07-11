@@ -103,7 +103,7 @@ Failure:
 
 > The one false-positive risk is over-unification (too-aggressive normalization collapsing two distinct conditions into one atom); it is mitigated by conservative normalization (no stemming or stopword-stripping beyond leading articles) and the info-severity FND_SIMILAR_UNUNIFIED reporter.
 
-> Whether a phrase is vague in its domain context — that is, contextual ambiguity is not checked; that judgment is not made by symspec and is punted to the calling agent.
+> Deterministic ambiguity detectors (vague terms, quantifier/coordination scope, and referential ambiguity) run and report; but whether a phrase is vague in its domain context — pragmatic/contextual ambiguity — is surfaced for review (FND_AMBIGUITY_NEEDS_JUDGMENT), not decided by symspec, and any LLM ambiguity judgment is propose-only, never a verdict.
 
 ## Error codes (`ERR_*`)
 
@@ -180,3 +180,10 @@ Failure:
 | `FND_CERTIFY_FAILED` | error — Lean produced a `severity:"error"` diagnostic; certification failed. |
 | `FND_SIMILAR_SEMANTIC` | info — two responses embed with cosine ≥ threshold but did not unify to one atom; a PROPOSE-only prompt to add a `symspec glossary` entry. Never a verdict. |
 | `FND_NUMERIC_CONTRADICTION` | error — two+ requirements place jointly unsatisfiable linear numeric constraints (LIA/LRA) on the same per-system quantity; ids are the minimal unsat core, evidence lists the conflicting predicates (unit-normalized). |
+| `FND_LEAF_UNVERIFIABLE` | warn — a refinement-DAG leaf (inbound refines/derives, no outbound) with no `verifies` edge; a leaf must be independently verifiable (KAOS/SysML leaf-verifiability). |
+| `FND_MISSING_TRACE_LINK` | info — two requirements embed with cosine ≥ threshold but share no committed refines/derives/satisfies edge; a PROPOSE-only candidate trace link. Never a verdict. |
+| `FND_DUPLICATE_CLUSTER` | info — three+ requirements form a tight semantic cluster; a PROPOSE-only prompt to review for near-duplication or an unstated shared parent. Never a verdict. |
+| `FND_AMBIGUOUS_VAGUE` | info — a vague/weasel term (e.g. "fast", "user-friendly", "as appropriate") with no measurable meaning; deterministic lexical scan, carries the offending span. |
+| `FND_AMBIGUOUS_QUANTIFIER` | warn/info — scope/quantifier ambiguity: un-parenthesized "and…or" coordination (warn), leading "all/each/every", or a bare-plural subject; deterministic pattern scan with a span. |
+| `FND_AMBIGUOUS_REFERENCE` | info — a pronoun or bare definite NP ("it", "the system") with ≥2 candidate antecedents in scope; deterministic detection (recall-first), resolution is punted to the agent. |
+| `FND_AMBIGUITY_NEEDS_JUDGMENT` | info — pragmatic/contextual ambiguity was not assessed deterministically; a structured prompt to hand the requirement to an LLM/agent review. Never a verdict, never in the reproducibility hash. |

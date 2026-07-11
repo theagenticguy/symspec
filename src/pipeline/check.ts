@@ -58,6 +58,7 @@ import type { Doc } from '../core/doc.js'
 import { listRequirements } from '../core/doc.js'
 import { renderSentence } from '../core/render.js'
 import type { Requirement } from '../core/schema.js'
+import { detectAmbiguity } from '../formal/ambiguity.js'
 import { glossaryIndex, atomize as realAtomize } from '../formal/atomize.js'
 import { getContext } from '../formal/backend.js'
 import { type FndCode, structuralKindToFndCode } from '../formal/codes.js'
@@ -70,6 +71,7 @@ import {
   encode,
 } from '../formal/encode.js'
 import { attachEvidenceToAll, type Evidence } from '../formal/finding.js'
+import { buildSimilarityGraph, type GraphRequirement } from '../formal/graph.js'
 import { checkCompleteness } from '../formal/incomplete.js'
 import { findNeedsReview } from '../formal/needs-review.js'
 import { extractNumericPredicates } from '../formal/numeric.js'
@@ -223,6 +225,7 @@ const STRUCTURAL_SEVERITY: Record<FndCode & `FND_${string}`, CheckSeverity> = {
   FND_MISSING_PRECONDITION: 'error',
   FND_CYCLE: 'error',
   FND_ORPHAN: 'warn',
+  FND_LEAF_UNVERIFIABLE: 'warn',
 } as Record<FndCode, CheckSeverity>
 
 /** The requirement ids a Tier-0 structural finding names, per finding kind. */
@@ -300,6 +303,21 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
 
   // ---- Lint: GtWR (per-statement + set-level) ----------------------------
   findings.push(...normalizeLint(requirements))
+
+  // ---- Ambiguity family (AC-31): deterministic, always-on ----------------
+  // Vague/quantifier/reference detectors + the structured contextual-ambiguity
+  // punt. Pure over the requirement set (no solver, no model), so it runs on
+  // the default `check` path like structural + lint.
+  for (const f of detectAmbiguity(requirements.map(asView))) {
+    findings.push({
+      code: f.code,
+      severity: f.severity,
+      tier: 'lint',
+      requirementIds: [...f.requirementIds],
+      message: f.message,
+      ...(f.span !== undefined ? { span: f.span } : {}),
+    })
+  }
 
   // ---- AC-3-7 gate: partition before symbolization -----------------------
   const gateResult = gateRequirements(requirements)
@@ -383,6 +401,26 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
             })
           : []
 
+      // AC-32-2/4: always-on-when-semantic embedding graph. Builds a
+      // deterministic kNN similarity graph over the INCLUDED requirements'
+      // rendered sentences and proposes (info-only) missing trace links +
+      // near-duplicate clusters. Reuses the same injected embedder as the
+      // paraphrase pass; propose-only, never a verdict.
+      const graph =
+        options.semantic !== undefined
+          ? await buildSimilarityGraph(
+              included.map((r): GraphRequirement => {
+                const full = doc.requirements[r.id]
+                const linkedTo = full ? [...full.refines, ...full.derives, ...full.satisfies] : []
+                return { id: r.id, text: r.sentence || r.systemResponse, linkedTo }
+              }),
+              options.semantic.embedder,
+              options.semantic.threshold !== undefined
+                ? { threshold: options.semantic.threshold }
+                : {},
+            )
+          : []
+
       // AC-4-6: unsat-triggered findings carry the atom table + core.
       const withEvidence = attachEvidenceToAll(
         [...contradictions, ...subsumptions, ...vacuities],
@@ -400,7 +438,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
           evidence: f.evidence,
         })
       }
-      for (const f of [...incompletes, ...similar, ...review, ...semantic]) {
+      for (const f of [...incompletes, ...similar, ...review, ...semantic, ...graph]) {
         formal.push({
           code: f.code,
           severity: f.severity,

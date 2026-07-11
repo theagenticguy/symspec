@@ -81,6 +81,11 @@ export * from './core/render.js'
 export * from './core/schema.js'
 export * from './core/storage.js'
 export * from './core/sysml-export.js'
+export {
+  type AmbiguityCode,
+  type AmbiguityFinding,
+  detectAmbiguity,
+} from './formal/ambiguity.js'
 // ---------------------------------------------------------------------------
 // formal — the SMT-backed formal tier (all members except the two
 // `AtomKind`-colliding modules, re-exported explicitly below)
@@ -110,6 +115,14 @@ export type {
 export { and, atom, encode, implies, materialize, not, or } from './formal/encode.js'
 export * from './formal/finding.js'
 export {
+  buildSimilarityGraph,
+  type DuplicateClusterFinding,
+  type GraphFinding,
+  type GraphOptions,
+  type GraphRequirement,
+  type MissingTraceLinkFinding,
+} from './formal/graph.js'
+export {
   type AssetReport,
   type DownloadReport,
   downloadModelAssets,
@@ -125,6 +138,10 @@ export {
 export * from './formal/semantic.js'
 export * from './formal/similar.js'
 export * from './formal/subsumption.js'
+export {
+  earsToTemporal,
+  type TemporalFormula,
+} from './formal/temporal-patterns.js'
 export * from './formal/vacuity.js'
 // ---------------------------------------------------------------------------
 // lint — INCOSE Guide to Writing Requirements (GtWR) rule engine

@@ -76,6 +76,16 @@ export const FndCodeSchema = z.enum([
   'FND_SIMILAR_SEMANTIC',
   // Numeric/arithmetic conflict tier (AC-30-3) — deterministic verdict (LIA/LRA)
   'FND_NUMERIC_CONTRADICTION',
+  // DAG well-formedness (AC-32-3) — deterministic structural verdict
+  'FND_LEAF_UNVERIFIABLE',
+  // Embedding-graph proposals (AC-32-2/4) — propose-only, never a verdict
+  'FND_MISSING_TRACE_LINK',
+  'FND_DUPLICATE_CLUSTER',
+  // Ambiguity family (AC-31-1/2/3/5) — deterministic detectors + structured punt
+  'FND_AMBIGUOUS_VAGUE',
+  'FND_AMBIGUOUS_QUANTIFIER',
+  'FND_AMBIGUOUS_REFERENCE',
+  'FND_AMBIGUITY_NEEDS_JUDGMENT',
 ])
 
 export type FndCode = z.infer<typeof FndCodeSchema>
@@ -156,6 +166,41 @@ export const FndCodeMeta = {
     .describe(
       'error — two+ requirements place jointly unsatisfiable linear numeric constraints (LIA/LRA) on the same per-system quantity; ids are the minimal unsat core, evidence lists the conflicting predicates (unit-normalized).',
     ),
+  FND_LEAF_UNVERIFIABLE: z
+    .literal('FND_LEAF_UNVERIFIABLE')
+    .describe(
+      'warn — a refinement-DAG leaf (inbound refines/derives, no outbound) with no `verifies` edge; a leaf must be independently verifiable (KAOS/SysML leaf-verifiability).',
+    ),
+  FND_MISSING_TRACE_LINK: z
+    .literal('FND_MISSING_TRACE_LINK')
+    .describe(
+      'info — two requirements embed with cosine ≥ threshold but share no committed refines/derives/satisfies edge; a PROPOSE-only candidate trace link. Never a verdict.',
+    ),
+  FND_DUPLICATE_CLUSTER: z
+    .literal('FND_DUPLICATE_CLUSTER')
+    .describe(
+      'info — three+ requirements form a tight semantic cluster; a PROPOSE-only prompt to review for near-duplication or an unstated shared parent. Never a verdict.',
+    ),
+  FND_AMBIGUOUS_VAGUE: z
+    .literal('FND_AMBIGUOUS_VAGUE')
+    .describe(
+      'info — a vague/weasel term (e.g. "fast", "user-friendly", "as appropriate") with no measurable meaning; deterministic lexical scan, carries the offending span.',
+    ),
+  FND_AMBIGUOUS_QUANTIFIER: z
+    .literal('FND_AMBIGUOUS_QUANTIFIER')
+    .describe(
+      'warn/info — scope/quantifier ambiguity: un-parenthesized "and…or" coordination (warn), leading "all/each/every", or a bare-plural subject; deterministic pattern scan with a span.',
+    ),
+  FND_AMBIGUOUS_REFERENCE: z
+    .literal('FND_AMBIGUOUS_REFERENCE')
+    .describe(
+      'info — a pronoun or bare definite NP ("it", "the system") with ≥2 candidate antecedents in scope; deterministic detection (recall-first), resolution is punted to the agent.',
+    ),
+  FND_AMBIGUITY_NEEDS_JUDGMENT: z
+    .literal('FND_AMBIGUITY_NEEDS_JUDGMENT')
+    .describe(
+      'info — pragmatic/contextual ambiguity was not assessed deterministically; a structured prompt to hand the requirement to an LLM/agent review. Never a verdict, never in the reproducibility hash.',
+    ),
 } satisfies Record<FndCode, z.ZodLiteral<FndCode>>
 
 // ---------------------------------------------------------------------------
@@ -174,6 +219,7 @@ export const structuralKindToFndCode = {
   MissingPreCondition: 'FND_MISSING_PRECONDITION',
   CycleDetected: 'FND_CYCLE',
   OrphanRequirement: 'FND_ORPHAN',
+  LeafUnverifiable: 'FND_LEAF_UNVERIFIABLE',
 } as const satisfies Record<string, FndCode>
 
 /**

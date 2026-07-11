@@ -543,6 +543,7 @@ export type Finding =
       message: string
     }
   | { kind: 'OrphanRequirement'; id: string; message: string }
+  | { kind: 'LeafUnverifiable'; id: string; message: string }
 
 // ---------------------------------------------------------------------------
 // Document shape

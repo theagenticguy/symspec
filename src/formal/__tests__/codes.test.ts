@@ -63,7 +63,7 @@ const req = (
   patternType: EarsPattern,
   systemName: string,
   systemResponse: string,
-  extras: Partial<Pick<Requirement, 'trigger' | 'preCondition' | 'derives'>> = {},
+  extras: Partial<Pick<Requirement, 'trigger' | 'preCondition' | 'derives' | 'refines'>> = {},
 ): Requirement => ({
   id,
   patternType,
@@ -142,6 +142,10 @@ describe('FND_* reachability (AC-6-3 — every documented code is reachable)', (
       req('d', 'ubiquitous', 'svc', 'do D', { derives: ['d'] }),
       // isolated node in a >1 doc → FND_ORPHAN
       req('e', 'ubiquitous', 'svc', 'do E'),
+      // a parent 'p' that refines leaf 'g'; 'g' is a refinement leaf with no
+      // verify edge → FND_LEAF_UNVERIFIABLE (AC-32-3)
+      req('p', 'ubiquitous', 'svc', 'do P', { refines: ['g'] }),
+      req('g', 'ubiquitous', 'svc', 'do G'),
     )
     for (const f of analyze(doc)) {
       const code = structuralKindToFndCode[f.kind as keyof typeof structuralKindToFndCode]
@@ -154,6 +158,7 @@ describe('FND_* reachability (AC-6-3 — every documented code is reachable)', (
       'FND_MISSING_PRECONDITION',
       'FND_CYCLE',
       'FND_ORPHAN',
+      'FND_LEAF_UNVERIFIABLE',
     ] as const) {
       expect(reached.has(c), `${c} not reached via analyze()`).toBe(true)
     }
@@ -202,6 +207,12 @@ describe('FND_* reachability (AC-6-3 — every documented code is reachable)', (
       'FND_INCOMPLETE',
       'FND_SIMILAR_SEMANTIC',
       'FND_NUMERIC_CONTRADICTION',
+      'FND_MISSING_TRACE_LINK',
+      'FND_DUPLICATE_CLUSTER',
+      'FND_AMBIGUOUS_VAGUE',
+      'FND_AMBIGUOUS_QUANTIFIER',
+      'FND_AMBIGUOUS_REFERENCE',
+      'FND_AMBIGUITY_NEEDS_JUDGMENT',
     ] as const) {
       expect(sources.includes(`code: '${code}'`), `no emit literal for ${code}`).toBe(true)
       reached.add(code)

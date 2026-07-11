@@ -84,9 +84,11 @@ export const SCOPE_OVER_UNIFICATION =
  * AC-4-11's manifest snapshot test greps for.
  */
 export const SCOPE_CONTEXTUAL_AMBIGUITY_NOT_CHECKED =
-  'Whether a phrase is vague in its domain context — that is, contextual ' +
-  'ambiguity is not checked; that judgment is not made by symspec and is ' +
-  'punted to the calling agent.'
+  'Deterministic ambiguity detectors (vague terms, quantifier/coordination ' +
+  'scope, and referential ambiguity) run and report; but whether a phrase is ' +
+  'vague in its domain context — pragmatic/contextual ambiguity — is surfaced ' +
+  'for review (FND_AMBIGUITY_NEEDS_JUDGMENT), not decided by symspec, and any ' +
+  'LLM ambiguity judgment is propose-only, never a verdict.'
 
 /**
  * The propose-only boundary for the semantic paraphrase tier (AC-9-7): the

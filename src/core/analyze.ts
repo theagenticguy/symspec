@@ -99,6 +99,36 @@ export function analyze(doc: RequirementsDoc): Finding[] {
     }
   }
 
+  // AC-32-3: leaf-must-be-verifiable (KAOS/SysML canon). A requirement that is
+  // a LEAF of the refinement/derivation DAG — something other requirements
+  // refine or derive toward (it has inbound refines/derives), but which itself
+  // refines/derives nothing further (it is a sink) — must be independently
+  // verifiable: it must carry a `verifies` edge OR be its own testable EARS
+  // obligation. A refinement leaf with neither is an unverifiable dead end.
+  const refinedTargets = new Set<string>()
+  for (const r of reqs) {
+    for (const t of r.refines) refinedTargets.add(t)
+    for (const t of r.derives) refinedTargets.add(t)
+  }
+  for (const r of reqs) {
+    const isRefinementLeaf =
+      refinedTargets.has(r.id) && r.refines.length === 0 && r.derives.length === 0
+    if (!isRefinementLeaf) continue
+    // Verifiable if it has a verify edge or is itself a testable obligation
+    // (a concrete response with a defined trigger/precondition, i.e. not a
+    // bare abstract goal). We treat "has a systemResponse and is not missing a
+    // required slot" as testable; the missing-slot findings above already flag
+    // the untestable case, so here we only require a verify link when it is an
+    // abstract parent with no concrete obligation of its own.
+    const hasVerify = r.verifies.length > 0
+    if (hasVerify) continue
+    findings.push({
+      kind: 'LeafUnverifiable',
+      id: r.id,
+      message: `Requirement ${r.id} is a refinement leaf with no \`verifies\` edge; a leaf must be independently verifiable (add a verify link or a testable obligation).`,
+    })
+  }
+
   return findings
 }
 

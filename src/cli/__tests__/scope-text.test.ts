@@ -20,7 +20,9 @@ describe('honest-scope text (AC-4-11)', () => {
   it('exposes the three exact claim substrings as constants', () => {
     expect(SCOPE_SOUNDNESS).toContain('sound modulo atomization')
     expect(SCOPE_SILENCE).toContain('silence is not')
-    expect(SCOPE_CONTEXTUAL_AMBIGUITY_NOT_CHECKED).toContain('contextual ambiguity is not checked')
+    // v3.1 (AC-31-5): contextual ambiguity is now SURFACED for review, not
+    // silently punted — the claim shifted from "not checked" to "not decided".
+    expect(SCOPE_CONTEXTUAL_AMBIGUITY_NOT_CHECKED).toContain('not decided by symspec')
   })
 
   it('the composed SCOPE.text carries every required substring', () => {
@@ -28,7 +30,9 @@ describe('honest-scope text (AC-4-11)', () => {
     expect(SCOPE.text).toContain('silence is not')
     // The full canonical phrase, not just the fragment.
     expect(SCOPE.text).toContain('silence is not a consistency certificate')
-    expect(SCOPE.text).toContain('contextual ambiguity is not checked')
+    expect(SCOPE.text).toContain('not decided by symspec')
+    // The numeric tier (v3.0) and its LIA/LRA scope are disclosed.
+    expect(SCOPE.text).toContain('Numeric conflicts are checked')
     // The over-unification false-positive risk and mitigation are disclosed.
     expect(SCOPE.text).toContain('over-unification')
     expect(SCOPE.text).toContain('FND_SIMILAR_UNUNIFIED')
@@ -50,7 +54,7 @@ describe('honest-scope text (AC-4-11)', () => {
     const serialized = JSON.stringify(buildManifest())
     expect(serialized).toContain('sound modulo atomization')
     expect(serialized).toContain('silence is not a consistency certificate')
-    expect(serialized).toContain('contextual ambiguity is not checked')
+    expect(serialized).toContain('not decided by symspec')
   })
 
   it('the scope disclosure is byte-stable across builds (pure/deterministic)', () => {
