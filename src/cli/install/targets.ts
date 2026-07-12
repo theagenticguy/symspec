@@ -88,15 +88,33 @@ const yamlFrontmatter = (fields: Record<string, string>, body: string): string =
 }
 
 /**
- * agentskills.io open standard: `.agents/skills/<name>/SKILL.md`, read by Claude
- * Code, Cursor, and Codex CLI. `name` + `description` frontmatter; the host's
- * model auto-loads the body when the description matches the task.
+ * Claude Code skill: `.claude/skills/<name>/SKILL.md`. Claude Code discovers
+ * skills from `.claude/skills/` (project) or `~/.claude/skills/` (global) — NOT
+ * from `.agents/skills/`, so it needs its own target even though the SKILL.md
+ * frontmatter (`name` + `description`) is identical to the open standard. The
+ * model loads the body when the description matches the task.
+ */
+const claude = makeSkillFileTarget({
+  id: 'claude',
+  label: 'Claude Code (.claude/skills)',
+  relPath: (root) => join(root, '.claude', 'skills', SKILL_NAME, 'SKILL.md'),
+  detectMarkers: ['.claude'],
+  supportsGlobal: true,
+  frontmatter: (body) =>
+    yamlFrontmatter({ name: SKILL_NAME, description: quote(SKILL_DESCRIPTION) }, body),
+})
+
+/**
+ * agentskills.io open standard: `.agents/skills/<name>/SKILL.md`, read by Cursor
+ * and Codex CLI (Claude Code has its own `.claude/skills/` target above).
+ * `name` + `description` frontmatter; the host's model auto-loads the body when
+ * the description matches the task.
  */
 const agentsStandard = makeSkillFileTarget({
   id: 'agents-standard',
-  label: 'Claude Code / Cursor / Codex (.agents/skills)',
+  label: 'Cursor / Codex (.agents/skills)',
   relPath: (root) => join(root, '.agents', 'skills', SKILL_NAME, 'SKILL.md'),
-  detectMarkers: ['.agents', '.claude', '.cursor', '.codex', '.agents/skills'],
+  detectMarkers: ['.agents', '.cursor', '.codex', '.agents/skills'],
   supportsGlobal: true,
   frontmatter: (body) =>
     yamlFrontmatter({ name: SKILL_NAME, description: quote(SKILL_DESCRIPTION) }, body),
@@ -154,7 +172,7 @@ function quote(s: string): string {
 }
 
 /** The registry, in install order. */
-export const TARGETS: readonly AgentTarget[] = [agentsStandard, kiro, windsurf, copilot]
+export const TARGETS: readonly AgentTarget[] = [claude, agentsStandard, kiro, windsurf, copilot]
 
 /** Look up a target by id. */
 export function targetById(id: string): AgentTarget | undefined {

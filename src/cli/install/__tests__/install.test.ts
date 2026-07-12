@@ -82,8 +82,18 @@ describe('install → files written into dedicated dirs, root docs untouched', (
     expect(content).toContain('description:')
   })
 
+  it('writes the Claude Code skill into .claude/skills (its native dir, not .agents)', async () => {
+    await runInstall({ location: 'local', target: 'claude', cwd: dir, home: HOME })
+    const skill = join(dir, '.claude', 'skills', 'symspec', 'SKILL.md')
+    expect(existsSync(skill)).toBe(true)
+    expect(readFileSync(skill, 'utf8').startsWith('---\nname: symspec\n')).toBe(true)
+    // Targeting claude alone must NOT also write the .agents/skills variant.
+    expect(existsSync(join(dir, '.agents', 'skills', 'symspec', 'SKILL.md'))).toBe(false)
+  })
+
   it('writes each host into its own dedicated path', async () => {
     await runInstall({ location: 'local', target: 'all', cwd: dir, home: HOME })
+    expect(existsSync(join(dir, '.claude', 'skills', 'symspec', 'SKILL.md'))).toBe(true)
     expect(existsSync(join(dir, '.kiro', 'steering', 'symspec.md'))).toBe(true)
     expect(existsSync(join(dir, '.windsurf', 'rules', 'symspec.md'))).toBe(true)
     expect(existsSync(join(dir, '.github', 'instructions', 'symspec.instructions.md'))).toBe(true)

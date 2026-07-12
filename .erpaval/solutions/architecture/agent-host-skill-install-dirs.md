@@ -14,9 +14,13 @@ pattern: |
   Every capable coding-agent host has a DEDICATED skill/rule dir separate from
   its root instruction file — so you can add capability by writing a NEW file,
   never appending to CLAUDE.md/AGENTS.md/GEMINI.md (verified 2026-07):
+    - .claude/skills/<name>/SKILL.md    — Claude Code's NATIVE skill dir. Claude
+      Code reads .claude/skills/ (project) / ~/.claude/skills/ (global), NOT
+      .agents/skills/ — verified against a live install. It needs its own target;
+      do not assume the open standard below covers it.
     - .agents/skills/<name>/SKILL.md  — agentskills.io OPEN STANDARD, read by
-      Claude Code, Cursor, AND Codex CLI. One file, three hosts. name+description
-      frontmatter; model auto-loads the body when description matches the task.
+      Cursor AND Codex CLI (identical name+description frontmatter to the Claude
+      one). Model auto-loads the body when description matches the task.
     - .kiro/steering/<name>.md          (frontmatter: inclusion: fileMatch|always|manual)
     - .windsurf/rules/<name>.md         (frontmatter: trigger: model_decision|always_on|glob|manual)
     - .github/instructions/<name>.instructions.md  (frontmatter: applyTo: <glob>)
@@ -61,8 +65,10 @@ from drifting the way a hand-written one would.
 
 # What NOT to do
 
-Do not edit a host's root instruction file. Do not treat Codex as AGENTS.md-only
-(it has .agents/skills now). Do not force-write opencode/Gemini (no dedicated
+Do not edit a host's root instruction file. Do not assume `.agents/skills`
+covers Claude Code — it does NOT; Claude Code reads `.claude/skills/` and needs
+its own target (this bit us: shipped agents-standard alone, Claude Code saw
+nothing). Do not treat Codex as AGENTS.md-only (it has .agents/skills now). Do not force-write opencode/Gemini (no dedicated
 always-on dir — report them skipped). Do not hand-write the skill body — derive
 it from the same corpus the manifest uses. Do not marker-splice a file you own
 whole; whole-file byte-equality is the idempotency check.
