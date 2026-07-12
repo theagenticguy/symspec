@@ -2,14 +2,17 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**A deterministic spec validator built for coding agents.** Write software
-requirements in [EARS](https://alistairmavin.com/ears/) form; symspec parses
-them, lints them against the INCOSE *Guide to Writing Requirements*, and
-**formally proves** conflicts — contradictions, subsumption, redundancy,
-numeric and temporal clashes — with a Z3 SMT solver, handing back the exact
-requirement IDs at fault and a machine-checkable unsat core. Every command
-answers in a typed JSON envelope with stable, branchable codes. No prose to
-scrape, no guessing whether you succeeded.
+**A tool that helps coding agents *write* good software requirements — not just
+grade them afterward.** You describe what a system should do in plain,
+structured sentences; symspec turns each sentence into a clean requirement,
+warns you the moment two of them disagree, and — when you ask — mathematically
+*proves* that a set of requirements can't all be true at once, pointing at the
+exact ones to blame.
+
+It is built for an AI coding agent to operate directly: every command answers
+with structured data (not paragraphs the agent has to re-read), so the agent
+always knows whether it succeeded and what to do next. Humans can read the same
+output in plain text.
 
 > "I authored a 25-requirement architecture spec in a single atomic `symspec
 > apply` batch — every requirement, every `derives` edge, stable human keys
@@ -27,17 +30,25 @@ scrape, no guessing whether you succeeded.
 >
 > — *An Opus 4.8 Claude Code agent*
 
+*(New to the terms below? Every abbreviation is spelled out on first use, and
+there's a plain-language [glossary](#glossary) at the very bottom.)*
+
 ## Quick start
 
 ```bash
-# Install the CLI globally
+# Install the command-line tool globally
 git clone https://github.com/theagenticguy/symspec.git && cd symspec
 pnpm install && pnpm build && pnpm pack
-npm install -g ./symspec-*.tgz     # exposes the `symspec` bin on PATH
+npm install -g ./symspec-*.tgz     # puts the `symspec` command on your PATH
 ```
 
-Author and check a spec. Every command prints a JSON envelope to stdout by
-default — no flag needed.
+symspec writes requirements in the **EARS** style (Easy Approach to Requirements
+Syntax — a simple, well-established template like *"When X happens, the system
+shall do Y"*). You give it the pieces; it writes the sentence for you and keeps
+the whole set consistent.
+
+Start a document, add two requirements, and check them. Every command prints its
+result as structured data (JSON) to the screen by default:
 
 ```console
 $ symspec init reqs.symspec.json
@@ -49,9 +60,9 @@ $ symspec add reqs.symspec.json --pattern event-driven --system "auth service" \
 $ symspec check reqs.symspec.json
 ```
 
-Those two requirements contradict — `grant access` vs `revoke access` resolve to
-the same atom at opposite polarity — and `check` proves it, naming exactly the
-two culprits with the atom table and unsat core as evidence:
+Those two requirements contradict each other — one grants access on exactly the
+event where the other revokes it — and `check` catches it, naming the two
+requirements at fault and showing its work:
 
 ```jsonc
 {
@@ -62,100 +73,109 @@ two culprits with the atom table and unsat core as evidence:
       {
         "code": "FND_CONTRADICTION",
         "severity": "error",
-        "tier": "formal",
         "requirementIds": ["586d8933-…", "d50c8fff-…"],
-        "message": "Requirements 586d8933…, d50c8fff… cannot all hold: their responses resolve to the same atom with opposite polarity under a reachable context.",
-        "evidence": {
-          "atomTable": [ /* every atom the solver compared */ ],
-          "core":      [ "586d8933-…", "d50c8fff-…" ]
-        }
+        "message": "Requirements 586d8933…, d50c8fff… cannot all hold: on the same trigger, one grants access and the other revokes it.",
+        "evidence": { "...": "the exact reasoning the checker used" }
       }
     ],
-    "pairsChecked": 1,
     "counts": { "error": 1, "warn": 0, "info": 0 }
   }
 }
-# exit code 1 — an error-severity finding is present
+# the command also exits with status 1 — a blocking problem was found
 ```
 
-The exit code *is* the gate: `0` clean (or only `warn`/`info`), `1` an
-`error`-severity finding is present (the envelope is still on stdout — the
-findings are the data), `2` an operational error (`ERR_*`). That's the whole
-pass/fail contract an editing loop or CI needs.
+**The exit status is the pass/fail signal**, so a script or continuous-
+integration (CI) pipeline can gate on it without reading anything: `0` = clean
+(or only warnings), `1` = a blocking problem was found, `2` = the command itself
+couldn't run (bad arguments, missing file). The full detail is always printed
+too — the problems *are* the output.
 
-**Let your agent discover it.** `symspec install` drops a skill file into
-whatever coding-agent host is present — Claude Code (`.claude/skills/`), Cursor
-and Codex (`.agents/skills/`), Kiro, Windsurf, Copilot — so the agent learns to
-drive symspec on its own. It never edits your `CLAUDE.md` / `AGENTS.md`. And
-`symspec manifest` emits the entire command surface as one JSON blob an agent
-fetches once and never has to guess at again.
+**Let your agent set it up for itself.** Run `symspec install` and it drops a
+small "skill" file into whichever AI coding assistant you have — Claude Code,
+Cursor, Codex, Kiro, Windsurf, or GitHub Copilot — so the assistant learns to
+use symspec on its own. It writes only into each tool's dedicated skills folder
+and never edits your existing instruction files.
 
 ---
 
 ## Who is this for?
 
-**Coding agents that write specs — and the humans who supervise them.**
+**AI coding agents that write software specs — and the people who supervise
+them.**
 
-Requirements are where software goes wrong before a line of code is written: two
-requirements quietly contradict, a "shall" hides a compound clause, a latency
-bound says `≤ 2000ms` in one place and `> 3s` in another. Humans miss these; so
-do LLMs asked to "review the spec" in prose. symspec makes the check
-*mechanical* — a solver either proves a conflict or it doesn't, and when it
-does, it hands you the culprits and the evidence instead of a paragraph of
-hedging.
+Requirements are where software goes wrong *before* anyone writes code: two
+requirements quietly contradict, one sentence secretly bundles two demands
+together, or a speed limit says "under 2 seconds" in one place and "over 3
+seconds" in another. People skim past these. So do language models asked to
+"review the spec" in prose — they'll happily write a confident paragraph that
+misses the actual conflict.
 
-It is built so an agent can drive it with zero trial-and-error:
+symspec makes the check **mechanical** instead of impressionistic. A conflict is
+either provable or it isn't, and when it is, symspec hands you the specific
+requirements to fix and the reasoning behind the verdict — never a vague
+"looks mostly fine."
 
-- **One call to learn everything.** `symspec manifest` returns every command,
-  every argument schema, every stable error/finding code, and a live report of
-  which backends are installed. The agent queries, then decides — it never
-  fails-then-learns.
-- **Nothing to parse.** Success is `{ apiVersion, type, data }`; failure is
-  `{ ..., code, suggestions }`. The agent branches on a code, never on an
-  English sentence.
-- **Author in one atomic move.** `symspec apply` folds a whole JSONL batch of
-  operations — adds, edges, updates — into a single transaction with stable
-  human keys (`G1`, `AUTH-3`) that resolve forward within the batch. It all
-  lands or none of it does. No hundred-subprocess ceremony, no UUID sidecar file.
-- **Honest about its own limits.** Every tier states what it does and does not
-  guarantee, in the manifest, in machine-readable form. A clean `check` means
-  "no conflict was *proven*", never "the spec is proven consistent" — and
-  symspec says so.
+Crucially, it helps agents **author**, not just audit:
 
-Humans get the same thing through `--pretty`, and the whole surface is an
-importable TypeScript library, not just a CLI.
+- **Build the whole spec in one safe move.** `symspec apply` takes a batch of
+  edits — add these requirements, link this one to that one, update those — and
+  applies them as a single all-or-nothing transaction. If any step is invalid,
+  nothing is saved and you're told exactly which line failed. You can even give
+  each requirement a friendly name like `G1` or `AUTH-3` and refer to it later
+  in the same batch before its permanent ID exists. No hundred separate
+  commands, no bookkeeping file mapping names to IDs.
+- **Write from plain prose.** Hand symspec ordinary sentences and it turns each
+  into a structured requirement — or, if a sentence is too vague or secretly
+  two requirements in one, it tells you precisely how to rewrite it. Authoring
+  and correcting are the same loop.
+- **Fix with guidance, not guesswork.** Each problem comes with a stable code,
+  the exact character positions in the sentence, and a concrete rewrite
+  suggestion.
+- **Decide once, keep it decided.** Flagged a warning you meant on purpose? Set
+  it aside with a recorded reason (`symspec waive`), so the next review shows a
+  clean, deliberate baseline instead of the same noise every run.
+
+For the agent, the payoff is no trial-and-error: one command (`symspec
+manifest`) describes the entire tool — every command, every option, every
+result code — so the agent reads the rules once and drives correctly from there.
+People get the same results in plain text with `--pretty`, and everything is
+also available as an importable code library, not only a command-line tool.
 
 ---
 
-## The power under the hood
+## What's under the hood
 
-symspec is **neurosymbolic**: a fast deterministic core, with an optional
-learned tier that only ever *proposes* — never decides. Given a document, its
-committed glossary, and the pinned model, every verdict reproduces byte-for-byte.
+symspec pairs a fast, **fully repeatable** core with an optional "smart" layer
+that can only *suggest* — never decide. Run it twice on the same document and
+you get the exact same answer, every time.
 
-| Engine | What it proves | Backend |
+Each row below is one checking engine. "Proves" means a mathematical guarantee,
+not a heuristic guess:
+
+| Engine | What it catches | How |
 |---|---|---|
-| **Parse ladder** | prose → EARS slots, or a structured error with a rewrite | regex-first; `wink-nlp` only on escalation — clean sentences never load a model |
-| **Structural + GtWR lint** | dangling refs, cycles, missing slots, 24 INCOSE writing rules | pure regex/lexicon; character spans + rewrite suggestions |
-| **SMT formal tier** | contradiction, subsumption, redundancy, vacuity | **Z3, in-process (WASM)** — no external binary required; minimal unsat core on every finding |
-| **Numeric tier** | jointly-unsatisfiable quantity bounds (`latency ≤ 2s ∧ latency > 3s`) | Z3 over linear integer/real arithmetic (LIA/LRA) |
-| **Temporal tier** | ordering/liveness conflicts ("eventually open" vs "never open") | EARS → LTL → bounded finite-trace SMT on Z3; sound-for-UNSAT |
-| **Ambiguity family** | vague terms, quantifier/coordination scope, dangling pronouns | deterministic detectors; pragmatic ambiguity is *flagged for review*, never guessed |
-| **Semantic tier** *(opt-in)* | paraphrased conflicts a lexical check misses | **local `bge-base-en-v1.5` on `onnxruntime-web` (WASM)** — no network at verdict time, no external API; *proposes* glossary merges, SMT decides |
-| **Lean 4 certify** *(opt-in)* | a kernel-checked proof artifact with `#print axioms` provenance | `lean --json`; retains a re-checkable `.lean` + pinned toolchain |
+| **Sentence parser** | turns prose into a clean requirement, or explains the rewrite it needs | pattern-matching first; only reaches for a language parser on hard sentences |
+| **Writing-quality lint** | broken cross-references, circular links, missing pieces, and 24 industry-standard writing rules | plain text rules from the *Guide to Writing Requirements* by INCOSE (the International Council on Systems Engineering); each flag includes the offending text span and a fix |
+| **Logic checker** *(the core)* | two requirements that can't both be true; one that makes another redundant; a rule that can never actually fire | an automated theorem prover (**Z3**) running in-process — nothing to install — that shows the minimal reason for each verdict |
+| **Numbers checker** | conflicting limits, like "under 2 seconds" vs "over 3 seconds" on the same measurement | the same prover, reasoning about arithmetic |
+| **Timing checker** *(opt-in)* | ordering and timing clashes, like "must eventually open" vs "must never open" | translates timing rules into logic the prover can test over a bounded timeline |
+| **Ambiguity checker** | vague words, "and/or" that could be read two ways, pronouns with no clear referent | fixed detectors; genuinely judgment-call ambiguity is *flagged for a human/agent*, never silently guessed |
+| **Meaning-similarity layer** *(opt-in)* | conflicts hidden behind different wording ("issue a token" vs "grant a credential") | a small language model running **locally on your machine** (no internet, no external service) that *suggests* treating two phrasings as synonyms — you confirm, then the logic checker proves the conflict |
+| **Formal certificate** *(opt-in)* | a re-checkable proof artifact for the whole spec | the **Lean 4** proof assistant; keeps a file anyone can independently verify later |
 
-The load-bearing design rule ties it together: **a verdict-eligible finding must
-recompute bit-identically from `(document + committed glossary + pinned model)`.
-Everything fuzzier is `info` and proposes; it never decides.** The one learned
-step — embeddings — runs once, is reviewed by a human or agent, and its outcome
-is committed to git as a glossary. Determinism is never traded for recall.
+The rule that holds it all together: **any result that can block your build must
+be perfectly reproducible from the document itself plus a couple of pinned,
+version-controlled inputs.** The one "smart" step — the meaning-similarity layer
+— runs once, gets reviewed by a person or agent, and its decision is saved into
+the project so it never varies again. Convenience never costs you repeatability.
 
-Across the surface: **19 commands**, **21 `ERR_*` + 24 `GTWR_*` + 26 `FND_*`**
-stable codes (append-only, snapshot-guarded), a self-describing manifest, typed
-JSON envelopes, a `--dense` token-lean output mode, a POSIX exit-code contract,
-and a generative-adversarial test harness that keeps the detectors honest.
+In numbers: **19 commands**, **71 stable result codes** (they only ever get
+added, never renamed or removed, so automation built on them keeps working), a
+self-describing `manifest`, structured output everywhere, a compact `--dense`
+mode for token-limited agents, and a built-in adversarial test suite that keeps
+the checkers honest.
 
-Everything below is how it works.
+Everything below is how it works in detail.
 
 ---
 
@@ -574,3 +594,38 @@ Add one when **a future you (or a teammate) would lose 15+ minutes** rediscoveri
 3. Bump the recent-additions line at the bottom of `INDEX.md` so the next session sees what's new.
 
 The lessons are part of the repo on purpose — they travel with the code and with anyone who clones it.
+
+---
+
+## Glossary
+
+Plain-language definitions for the terms and abbreviations used above.
+
+| Term | Meaning |
+|---|---|
+| **Agent (coding agent)** | An AI assistant that writes and edits code and specs — e.g. Claude Code, Cursor, Codex — usually by running commands like symspec on your behalf. |
+| **Spec / requirement** | A single statement of what a system must do (e.g. *"When the user logs in, the system shall issue a token"*). A spec is a collection of these. |
+| **EARS** | *Easy Approach to Requirements Syntax.* A simple, widely used set of sentence templates (ubiquitous, event-driven, state-driven, optional-feature, unwanted-behavior) that keep requirements clear and consistent. |
+| **INCOSE GtWR** | The International Council on Systems Engineering's *Guide to Writing Requirements* — an industry standard of writing rules (avoid vague words, one requirement per sentence, and so on). symspec checks 24 of them automatically. |
+| **Lint** | An automatic check for style and clarity problems in text, borrowed from the term for code linters. |
+| **Formal / "proves"** | A result backed by mathematics, not a guess. If symspec says two requirements contradict, a solver has proven it; a clean result means no conflict was *proven*, not that the spec is guaranteed perfect. |
+| **Theorem prover / solver** | Software that can mathematically determine whether a set of logical statements can all be true at once. |
+| **SMT** | *Satisfiability Modulo Theories* — the category of solver symspec uses. It answers "is there any way to make all these statements true simultaneously?" and, if not, explains why. |
+| **Z3** | The specific SMT solver symspec runs. It ships built in (compiled to WebAssembly), so there's nothing extra to install. |
+| **Unsat core** | Short for *unsatisfiable core*: the smallest subset of requirements that already conflict. symspec reports this so you know exactly which ones to fix, not just that "something" is wrong. |
+| **Atom** | The normalized, canonical form of a requirement's action (e.g. "grant access") that the logic checker compares. Two requirements clash when their atoms match but their polarity (do vs. don't) is opposite. |
+| **LIA / LRA** | *Linear Integer Arithmetic* / *Linear Real Arithmetic* — the kinds of number reasoning the solver uses to catch conflicting limits like "under 2 seconds" vs "over 3 seconds". |
+| **LTL** | *Linear Temporal Logic* — a standard way to express timing and ordering rules ("eventually", "never", "until") so the timing checker can test them. |
+| **Sound-for-UNSAT** | A precise honesty guarantee: when the timing checker reports a conflict, it's real; but because it checks a bounded window, *not* finding one isn't a full guarantee of safety. symspec labels this in its output. |
+| **Semantic / embeddings** | Techniques that measure how similar two phrasings *mean*, even when the words differ. symspec uses a small local model to *suggest* that two requirements might be talking about the same thing; a human or agent confirms before it affects any verdict. |
+| **Deterministic / reproducible** | Same input always produces the same output. symspec keeps every build-blocking result deterministic so results never drift between runs or machines. |
+| **Glossary (in symspec)** | A saved list of confirmed synonyms in your document. Distinct from *this* glossary — in symspec, it's how you tell the tool "these two phrasings mean the same thing," committed to your project so the decision is permanent. |
+| **Lean 4** | A *proof assistant* — software mathematicians use to write proofs a computer verifies. symspec can optionally emit a Lean proof artifact anyone can independently re-check. |
+| **Manifest** | A single command (`symspec manifest`) that describes the entire tool as structured data, so an agent can learn every command and option in one call instead of trial and error. |
+| **JSON envelope** | The consistent structured shape every command returns: a success wrapper `{ apiVersion, type, data }` or an error wrapper `{ ..., code, suggestions }`. Lets an agent reliably tell success from failure without reading prose. |
+| **Result code** | A short, stable identifier for a specific finding or error (e.g. `FND_CONTRADICTION`, `ERR_DOC_NOT_FOUND`). Codes are only ever added, never renamed, so automation built on them keeps working. |
+| **Waive** | To deliberately set aside a specific warning with a recorded reason, so intentional style choices don't clutter every future review. |
+| **Atomic (transaction)** | All-or-nothing: `symspec apply` either applies an entire batch of edits or, if any step is invalid, saves nothing at all. |
+| **CI** | *Continuous Integration* — the automated pipeline that runs checks on every code change. symspec's exit status plugs straight into one. |
+| **PATH** | The list of folders your shell searches for commands. Installing symspec "on your PATH" means you can type `symspec` from anywhere. |
+| **WebAssembly (WASM)** | A portable format that lets software like the Z3 solver run inside any environment with no separate install. |
