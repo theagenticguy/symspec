@@ -2,74 +2,58 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**A deterministic neurosymbolic spec validator, built agent-first.** Hand it EARS-shaped requirement prose or structured slots; get back provable conflict findings with the exact requirement IDs responsible. symspec parses requirements into EARS slots (regex-first, no model calls), lints them against the INCOSE Guide to Writing Requirements, and formally checks the set for contradictions, subsumption, redundancy, and vacuity using an in-process Z3 SMT solver — every conflict backed by a minimal unsat core you can audit. An optional semantic tier bridges paraphrased conflicts a lexical check would miss, using a **local ONNX-WASM embedding model** (no network calls at verdict time, no external API) that only ever *proposes* glossary merges — the deterministic SMT stage decides. It is a CLI and an importable TypeScript library whose primary consumer is a coding agent: every command emits a typed JSON envelope with stable error and finding codes, a self-describing `manifest`, and a POSIX exit-code contract. Given a document, its committed glossary, and the pinned model, every verdict is reproducible byte-for-byte — the fuzzy step runs once, is reviewed, and is versioned in git.
+**A deterministic spec validator built for coding agents.** Write software
+requirements in [EARS](https://alistairmavin.com/ears/) form; symspec parses
+them, lints them against the INCOSE *Guide to Writing Requirements*, and
+**formally proves** conflicts — contradictions, subsumption, redundancy,
+numeric and temporal clashes — with a Z3 SMT solver, handing back the exact
+requirement IDs at fault and a machine-checkable unsat core. Every command
+answers in a typed JSON envelope with stable, branchable codes. No prose to
+scrape, no guessing whether you succeeded.
+
+> "I authored a 25-requirement architecture spec in a single atomic `symspec
+> apply` batch — every requirement, every `derives` edge, stable human keys
+> resolving forward before the UUIDs existed — and it either all landed or none
+> of it did. Then `check` handed me stable error codes with character spans and
+> rewrite suggestions I could act on without guessing, `waive` let me suppress
+> 122 intentional style findings with a recorded reason so the baseline reads as
+> triage instead of neglect, the semantic tier flagged one genuinely-similar
+> pair and I kept it distinct on purpose, and `certify` kernel-checked the whole
+> thing in Lean. It's the first spec tool I've used that's built for an agent to
+> drive: JSON envelopes everywhere, honest about what each tier does and doesn't
+> guarantee, and it never made me parse prose to find out whether I'd succeeded.
+> It turned spec authoring from a hundred fragile subprocess calls into a
+> handful of clean, verifiable moves."
+>
+> — *An Opus 4.8 Claude Code agent*
 
 ## Quick start
 
 ```bash
-pnpm install       # install dependencies
-pnpm build         # compile src/ to dist/ (tsdown)
-pnpm test          # vitest unit tests (the AC verification suite)
-pnpm check         # full quality gate: biome ci + tsc + vitest + knip
+# Install the CLI globally
+git clone https://github.com/theagenticguy/symspec.git && cd symspec
+pnpm install && pnpm build && pnpm pack
+npm install -g ./symspec-*.tgz     # exposes the `symspec` bin on PATH
 ```
 
-Install it globally as a CLI:
-
-```bash
-pnpm build && pnpm pack           # produces symspec-<version>.tgz
-npm install -g ./symspec-*.tgz    # exposes the `symspec` bin
-```
-
-Then `init` a document, `add` requirements, and `check` the set. Every command
-prints a typed JSON envelope to stdout by default — no flag needed.
+Author and check a spec. Every command prints a JSON envelope to stdout by
+default — no flag needed.
 
 ```console
 $ symspec init reqs.symspec.json
-{
-  "apiVersion": 1,
-  "type": "init",
-  "data": {
-    "path": "/work/reqs.symspec.json",
-    "created": true
-  }
-}
-
 $ symspec add reqs.symspec.json --pattern event-driven --system "auth service" \
     --response "grant access" --trigger "the user submits valid credentials"
-{
-  "apiVersion": 1,
-  "type": "add",
-  "data": {
-    "id": "586d8933-44ed-4100-af27-f365b5804e7d",
-    "requirement": {
-      "id": "586d8933-44ed-4100-af27-f365b5804e7d",
-      "patternType": "event-driven",
-      "systemName": "auth service",
-      "systemResponse": "grant access",
-      "sentence": "When the user submits valid credentials, the auth service shall grant access.",
-      "priority": "medium",
-      "status": "draft",
-      "derives": [],
-      "satisfies": [],
-      "verifies": [],
-      "refines": [],
-      "trigger": "the user submits valid credentials"
-    }
-  }
-}
-```
-
-Add a second, conflicting requirement and `check` finds the contradiction —
-`grant access` vs `revoke access` unify to the same atom with opposite polarity
-via the seed antonym table, and the finding names exactly the two culprits with
-the atom table and unsat core as evidence:
-
-```console
 $ symspec add reqs.symspec.json --pattern event-driven --system "auth service" \
     --response "revoke access" --trigger "the user submits valid credentials"
-# → { "type": "add", "data": { "id": "d50c8fff-…", … } }
 
 $ symspec check reqs.symspec.json
+```
+
+Those two requirements contradict — `grant access` vs `revoke access` resolve to
+the same atom at opposite polarity — and `check` proves it, naming exactly the
+two culprits with the atom table and unsat core as evidence:
+
+```jsonc
 {
   "apiVersion": 1,
   "type": "check",
@@ -79,25 +63,14 @@ $ symspec check reqs.symspec.json
         "code": "FND_CONTRADICTION",
         "severity": "error",
         "tier": "formal",
-        "requirementIds": [
-          "586d8933-44ed-4100-af27-f365b5804e7d",
-          "d50c8fff-0917-4119-a7e8-5374c99a977c"
-        ],
+        "requirementIds": ["586d8933-…", "d50c8fff-…"],
         "message": "Requirements 586d8933…, d50c8fff… cannot all hold: their responses resolve to the same atom with opposite polarity under a reachable context.",
         "evidence": {
-          "atomTable": [
-            { "atom": "sys__auth_service__trig__user_submits_valid_credentials", "kind": "trig", "slotText": "the user submits valid credentials", "negated": false },
-            { "atom": "sys__auth_service__resp__grant_access", "kind": "resp", "slotText": "grant access", "negated": false },
-            { "atom": "sys__auth_service__resp__grant_access", "kind": "resp", "slotText": "revoke access", "negated": true }
-          ],
-          "core": [
-            "586d8933-44ed-4100-af27-f365b5804e7d",
-            "d50c8fff-0917-4119-a7e8-5374c99a977c"
-          ]
+          "atomTable": [ /* every atom the solver compared */ ],
+          "core":      [ "586d8933-…", "d50c8fff-…" ]
         }
       }
     ],
-    "excluded": [],
     "pairsChecked": 1,
     "counts": { "error": 1, "warn": 0, "info": 0 }
   }
@@ -105,34 +78,84 @@ $ symspec check reqs.symspec.json
 # exit code 1 — an error-severity finding is present
 ```
 
-`check` exits `0` when clean (or only `warn`/`info` findings), `1` when an
+The exit code *is* the gate: `0` clean (or only `warn`/`info`), `1` an
 `error`-severity finding is present (the envelope is still on stdout — the
-findings are the data), and `2` on an operational error (`ERR_*`). That is the
-whole pass/fail gate an editing or CI loop needs.
+findings are the data), `2` an operational error (`ERR_*`). That's the whole
+pass/fail contract an editing loop or CI needs.
 
-You do not have to hand-author slots. Feed prose — one line, a `--file`, or
-`--stdin` — and symspec returns structured slots, a `skipped` marker for
-no-obligation prose, or a Tier-3 error with a stable `ERR_PARSE_*` code and a
-mechanical rewrite suggestion:
+**Let your agent discover it.** `symspec install` drops a skill file into
+whatever coding-agent host is present — Claude Code (`.claude/skills/`), Cursor
+and Codex (`.agents/skills/`), Kiro, Windsurf, Copilot — so the agent learns to
+drive symspec on its own. It never edits your `CLAUDE.md` / `AGENTS.md`. And
+`symspec manifest` emits the entire command surface as one JSON blob an agent
+fetches once and never has to guess at again.
 
-```console
-$ printf 'The auth service shall reject expired tokens.\nFast response times are important.\nThe API shall log requests and the API shall reject bad input.\n' \
-    | symspec parse --stdin
-{
-  "apiVersion": 1,
-  "type": "parse",
-  "data": {
-    "results": [
-      { "outcome": "ok", "pattern": "ubiquitous", "slots": { "patternType": "ubiquitous", "systemName": "auth service", "systemResponse": "reject expired tokens" }, "negated": false, "confidence": "high", "tier": 1, "notes": [] },
-      { "outcome": "skipped", "reason": "no-modal", "text": "Fast response times are important." },
-      { "outcome": "error", "code": "ERR_PARSE_COMPOUND", "error": "Compound requirement with top-level \"and\"/\"or\" conjunction: …", "partial": { "patternType": "ubiquitous", "systemName": "API", "systemResponse": "log requests and the API shall reject bad input" }, "suggestions": [ "Split into separate requirements at each \"and\" or \"or\" conjunction.", "Each requirement must contain exactly one \"shall\" clause (one system, one response).", … ] }
-    ],
-    "summary": { "ok": 1, "skipped": 1, "error": 1 }
-  }
-}
-```
+---
 
-That is the whole user-facing surface. Everything below is how it works.
+## Who is this for?
+
+**Coding agents that write specs — and the humans who supervise them.**
+
+Requirements are where software goes wrong before a line of code is written: two
+requirements quietly contradict, a "shall" hides a compound clause, a latency
+bound says `≤ 2000ms` in one place and `> 3s` in another. Humans miss these; so
+do LLMs asked to "review the spec" in prose. symspec makes the check
+*mechanical* — a solver either proves a conflict or it doesn't, and when it
+does, it hands you the culprits and the evidence instead of a paragraph of
+hedging.
+
+It is built so an agent can drive it with zero trial-and-error:
+
+- **One call to learn everything.** `symspec manifest` returns every command,
+  every argument schema, every stable error/finding code, and a live report of
+  which backends are installed. The agent queries, then decides — it never
+  fails-then-learns.
+- **Nothing to parse.** Success is `{ apiVersion, type, data }`; failure is
+  `{ ..., code, suggestions }`. The agent branches on a code, never on an
+  English sentence.
+- **Author in one atomic move.** `symspec apply` folds a whole JSONL batch of
+  operations — adds, edges, updates — into a single transaction with stable
+  human keys (`G1`, `AUTH-3`) that resolve forward within the batch. It all
+  lands or none of it does. No hundred-subprocess ceremony, no UUID sidecar file.
+- **Honest about its own limits.** Every tier states what it does and does not
+  guarantee, in the manifest, in machine-readable form. A clean `check` means
+  "no conflict was *proven*", never "the spec is proven consistent" — and
+  symspec says so.
+
+Humans get the same thing through `--pretty`, and the whole surface is an
+importable TypeScript library, not just a CLI.
+
+---
+
+## The power under the hood
+
+symspec is **neurosymbolic**: a fast deterministic core, with an optional
+learned tier that only ever *proposes* — never decides. Given a document, its
+committed glossary, and the pinned model, every verdict reproduces byte-for-byte.
+
+| Engine | What it proves | Backend |
+|---|---|---|
+| **Parse ladder** | prose → EARS slots, or a structured error with a rewrite | regex-first; `wink-nlp` only on escalation — clean sentences never load a model |
+| **Structural + GtWR lint** | dangling refs, cycles, missing slots, 24 INCOSE writing rules | pure regex/lexicon; character spans + rewrite suggestions |
+| **SMT formal tier** | contradiction, subsumption, redundancy, vacuity | **Z3, in-process (WASM)** — no external binary required; minimal unsat core on every finding |
+| **Numeric tier** | jointly-unsatisfiable quantity bounds (`latency ≤ 2s ∧ latency > 3s`) | Z3 over linear integer/real arithmetic (LIA/LRA) |
+| **Temporal tier** | ordering/liveness conflicts ("eventually open" vs "never open") | EARS → LTL → bounded finite-trace SMT on Z3; sound-for-UNSAT |
+| **Ambiguity family** | vague terms, quantifier/coordination scope, dangling pronouns | deterministic detectors; pragmatic ambiguity is *flagged for review*, never guessed |
+| **Semantic tier** *(opt-in)* | paraphrased conflicts a lexical check misses | **local `bge-base-en-v1.5` on `onnxruntime-web` (WASM)** — no network at verdict time, no external API; *proposes* glossary merges, SMT decides |
+| **Lean 4 certify** *(opt-in)* | a kernel-checked proof artifact with `#print axioms` provenance | `lean --json`; retains a re-checkable `.lean` + pinned toolchain |
+
+The load-bearing design rule ties it together: **a verdict-eligible finding must
+recompute bit-identically from `(document + committed glossary + pinned model)`.
+Everything fuzzier is `info` and proposes; it never decides.** The one learned
+step — embeddings — runs once, is reviewed by a human or agent, and its outcome
+is committed to git as a glossary. Determinism is never traded for recall.
+
+Across the surface: **19 commands**, **21 `ERR_*` + 24 `GTWR_*` + 26 `FND_*`**
+stable codes (append-only, snapshot-guarded), a self-describing manifest, typed
+JSON envelopes, a `--dense` token-lean output mode, a POSIX exit-code contract,
+and a generative-adversarial test harness that keeps the detectors honest.
+
+Everything below is how it works.
 
 ---
 
