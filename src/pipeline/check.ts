@@ -57,12 +57,13 @@ import { analyze, type Finding } from '../core/analyze.js'
 import type { Doc } from '../core/doc.js'
 import { listRequirements } from '../core/doc.js'
 import { renderSentence } from '../core/render.js'
-import type { Requirement } from '../core/schema.js'
+import type { Requirement, Waiver } from '../core/schema.js'
 import { detectAmbiguity } from '../formal/ambiguity.js'
 import { glossaryIndex, atomize as realAtomize } from '../formal/atomize.js'
 import { getContext } from '../formal/backend.js'
 import { type FndCode, structuralKindToFndCode } from '../formal/codes.js'
 import { findContradictions } from '../formal/contradiction.js'
+import { noPairsCheckedFinding } from '../formal/coverage.js'
 import type { Embedder } from '../formal/embed.js'
 import {
   type Atomize,
@@ -154,8 +155,68 @@ export interface CheckReport {
   excluded: Exclusion[]
   /** How many candidate pairs the formal tier evaluated (AC-8-3 counter). */
   pairsChecked: number
+  /**
+   * How many findings were dropped by a committed waiver (wishlist #3). A
+   * waived finding is removed from {@link findings} AND from {@link counts}, so
+   * the exit gate honors the waiver too; this counter keeps the suppression
+   * visible so a reader can tell a reviewed baseline from silent neglect.
+   */
+  waived: number
   /** Findings tallied by severity — the exit-code contract's input. */
   counts: { error: number; warn: number; info: number }
+}
+
+/**
+ * True when finding `f` is suppressed by waiver `w` (wishlist #3): the codes
+ * match, and either the waiver is document-wide (no `requirementId`) or the
+ * finding names that requirement. Scoped waivers only bite findings that
+ * actually reference the scoped requirement.
+ */
+function isWaived(f: CheckFinding, w: Waiver): boolean {
+  if (f.code !== w.code) return false
+  if (w.requirementId === undefined) return true
+  return f.requirementIds.includes(w.requirementId)
+}
+
+const SEVERITY_RANK: Record<CheckSeverity, number> = { error: 0, warn: 1, info: 2 }
+
+/** Output-shaping options for {@link filterReport} (wishlist #5). */
+export interface ReportFilter {
+  /**
+   * Drop findings below this severity from the emitted report. `error` keeps
+   * only error-severity findings; `warn` keeps error+warn; `info` (default)
+   * keeps everything. SAFE for the exit gate: because `error` is the top of the
+   * severity order, a min-severity filter can never remove the error-severity
+   * finding the gate keys on, so it only ever hides warn/info noise.
+   */
+  minSeverity?: CheckSeverity
+  /**
+   * Return only the findings array (plus the always-cheap `counts`/`waived`
+   * tallies), dropping the heavier `excluded` table. The findings themselves —
+   * and therefore the exit gate — are untouched.
+   */
+  findingsOnly?: boolean
+}
+
+/**
+ * Apply the output-shaping filters (wishlist #5) to a finished report, upstream
+ * of rendering. This is a presentation projection for a tight fix loop, NOT a
+ * semantic change: it never removes an error-severity finding (min-severity
+ * stops at `error`) and never alters `counts`, so `exitCodeForEnvelope` returns
+ * the same code whether or not the caller filtered. `counts` continues to
+ * reflect the FULL post-waiver finding set, so a `--min-severity error` view
+ * still truthfully reports how many warn/info findings were hidden.
+ */
+export function filterReport(report: CheckReport, filter: ReportFilter): CheckReport {
+  const min = filter.minSeverity ?? 'info'
+  const threshold = SEVERITY_RANK[min]
+  const findings =
+    threshold === SEVERITY_RANK.info
+      ? report.findings
+      : report.findings.filter((f) => SEVERITY_RANK[f.severity] <= threshold)
+  const next: CheckReport = { ...report, findings }
+  if (filter.findingsOnly === true) next.excluded = []
+  return next
 }
 
 /**
@@ -291,8 +352,6 @@ function normalizeLint(requirements: readonly Requirement[]): CheckFinding[] {
 
   return [...perStatement, ...setLevel]
 }
-
-const SEVERITY_RANK: Record<CheckSeverity, number> = { error: 0, warn: 1, info: 2 }
 
 /** Stable output order: severity, then code, then first requirement id. */
 function compareFindings(a: CheckFinding, b: CheckFinding): number {
@@ -524,10 +583,44 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
   }
 
   findings.push(...formal)
-  findings.sort(compareFindings)
+
+  // Wishlist #6: a formal tier that compared zero pairs proved nothing ACROSS
+  // requirements. Emit a loud info finding (only when there were ≥2
+  // requirements that COULD have been related) so the coverage gap is visible
+  // in findings[] rather than only in the numeric pairsChecked field.
+  if (report.pairsChecked === 0 && requirements.length >= 2) {
+    const coverage = noPairsCheckedFinding(requirements.map((r) => r.id))
+    findings.push({
+      code: coverage.code,
+      severity: coverage.severity,
+      tier: 'formal',
+      requirementIds: [...coverage.requirementIds],
+      message: coverage.message,
+    })
+  }
+
+  // Wishlist #3: drop findings suppressed by a committed waiver BEFORE tallying,
+  // so the exit-code gate honors the waiver too. Count what was dropped so the
+  // report can surface a reviewed-baseline `waived` number.
+  const waivers = doc.waivers ?? []
+  let waived = 0
+  const kept = findings.filter((f) => {
+    if (waivers.some((w) => isWaived(f, w))) {
+      waived += 1
+      return false
+    }
+    return true
+  })
+  kept.sort(compareFindings)
 
   const counts = { error: 0, warn: 0, info: 0 }
-  for (const f of findings) counts[f.severity] += 1
+  for (const f of kept) counts[f.severity] += 1
 
-  return { findings, excluded: gateResult.excluded, pairsChecked: report.pairsChecked, counts }
+  return {
+    findings: kept,
+    excluded: gateResult.excluded,
+    pairsChecked: report.pairsChecked,
+    waived,
+    counts,
+  }
 }

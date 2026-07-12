@@ -33,14 +33,16 @@
  * (`ERR_NULL_REQUIRED`, NULLABLE_ATTRS); explore-docs.md §1.3 tech-debt #2.
  */
 
-import { applyChange } from '../core/changes.js'
-import type { EarsPattern, RequirementsDoc, UpdatableAttr } from '../core/schema.js'
-import type { Envelope } from './envelope.js'
+import { applyChange, applyChanges } from '../core/changes.js'
+import { listRequirements } from '../core/doc.js'
+import type { EarsPattern, Requirement, RequirementsDoc, UpdatableAttr } from '../core/schema.js'
+import type { Envelope, ErrorEnvelope } from './envelope.js'
 import { failure, success } from './envelope.js'
 import { parseAttr, requireRequirement, toErrorEnvelope, usageError } from './errors.js'
 
 /** The usage line `ERR_USAGE` suggestions cite for this command. */
-export const UPDATE_USAGE = 'symspec update [--clear] <id> <attr> [value]'
+export const UPDATE_USAGE =
+  'symspec update [--clear] <ref> <attr> [value] | update <ref> <attr>=<value>… | update --all --where <attr>=<value> <attr> <value>'
 
 /**
  * MN6: whether clearing `attr` would strip a slot the requirement's `pattern`
@@ -150,17 +152,21 @@ export function runUpdate(doc: RequirementsDoc, args: UpdateArgs): UpdateResult 
     }
   }
 
+  // Use the RESOLVED UUID (target may have been found by stable key), so the
+  // Change always references the canonical id even when `args.id` was a key.
+  const resolvedId = target.value.id
+
   try {
     const next = applyChange(doc, {
       kind: 'UpdateAttribute',
-      id: args.id,
+      id: resolvedId,
       attr: attr.value,
       // The ONLY place null enters: the explicit --clear flag. A positional
       // "null" string lands in the else branch verbatim (AC-6-11).
       value: clearing ? null : (args.value as string),
     })
     const data: UpdateData = {
-      id: args.id,
+      id: resolvedId,
       attr: attr.value,
       action: clearing ? 'cleared' : 'set',
     }
@@ -168,6 +174,148 @@ export function runUpdate(doc: RequirementsDoc, args: UpdateArgs): UpdateResult 
   } catch (e) {
     // ChangeError (ERR_NULL_REQUIRED) and any other coded core error lift with
     // their own code; nothing escapes as a stack trace (AC-6-10).
+    return { envelope: toErrorEnvelope(e) }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Multi-attribute update (wishlist #7) + bulk transition (wishlist #8)
+// ---------------------------------------------------------------------------
+
+/**
+ * One `attr=value` assignment parsed from the CLI. Only the SET form is
+ * supported in multi/bulk mode — clearing stays on the single-attr `--clear`
+ * surface, where the mutual-exclusion contract lives.
+ */
+export interface AttrAssignment {
+  readonly attr: string
+  readonly value: string
+}
+
+/**
+ * Validate one assignment against a target requirement: narrow the attr, refuse
+ * a pattern-load-bearing clear-by-empty, and build the `UpdateAttribute` Change.
+ * Returns the Change on success or the ready-to-emit error envelope. Shared by
+ * the multi-attr and bulk paths so their validation is byte-identical to the
+ * single-attr surface's.
+ */
+function buildUpdateChange(
+  target: Requirement,
+  assignment: AttrAssignment,
+): { readonly change: object } | { readonly envelope: ErrorEnvelope } {
+  const attr = parseAttr(assignment.attr)
+  if (!attr.ok) return { envelope: attr.envelope }
+  return {
+    change: {
+      kind: 'UpdateAttribute',
+      id: target.id,
+      attr: attr.value,
+      value: assignment.value,
+    },
+  }
+}
+
+/** The `data` payload of a successful multi-attribute `update` envelope. */
+export interface UpdateManyData {
+  readonly id: string
+  /** The attributes set, in the order supplied. */
+  readonly attrs: UpdatableAttr[]
+  readonly action: 'set'
+}
+
+export type UpdateManyResult =
+  | { readonly next: RequirementsDoc; readonly envelope: Envelope<UpdateManyData> }
+  | { readonly envelope: Envelope<UpdateManyData> }
+
+/**
+ * Set several attributes on ONE requirement (by key or UUID) in a single call
+ * (wishlist #7). All assignments are validated and folded before any is
+ * committed, so a bad attr in the batch leaves the document untouched. EARS-slot
+ * edits re-render the sentence exactly once per edit via the core Change path.
+ */
+export function runUpdateMany(
+  doc: RequirementsDoc,
+  ref: string,
+  assignments: readonly AttrAssignment[],
+): UpdateManyResult {
+  if (assignments.length === 0) {
+    return { envelope: usageError('update requires at least one attr=value pair', UPDATE_USAGE) }
+  }
+
+  const target = requireRequirement(doc, ref)
+  if (!target.ok) return { envelope: target.envelope }
+
+  const changes: object[] = []
+  const attrs: UpdatableAttr[] = []
+  for (const a of assignments) {
+    const built = buildUpdateChange(target.value, a)
+    if ('envelope' in built) return { envelope: built.envelope }
+    changes.push(built.change)
+    attrs.push(a.attr as UpdatableAttr)
+  }
+
+  try {
+    const next = applyChanges(doc, changes)
+    return { next, envelope: success('update', { id: target.value.id, attrs, action: 'set' }) }
+  } catch (e) {
+    return { envelope: toErrorEnvelope(e) }
+  }
+}
+
+/** The `data` payload of a successful bulk `update` envelope. */
+export interface UpdateBulkData {
+  readonly attr: UpdatableAttr
+  readonly value: string
+  /** UUIDs of every requirement the transition was applied to. */
+  readonly matched: string[]
+  readonly action: 'set'
+}
+
+export type UpdateBulkResult =
+  | { readonly next: RequirementsDoc; readonly envelope: Envelope<UpdateBulkData> }
+  | { readonly envelope: Envelope<UpdateBulkData> }
+
+/**
+ * Apply one `attr=value` transition to EVERY requirement matching a
+ * `whereAttr=whereValue` filter (wishlist #8) — the end-of-authoring promotion
+ * ritual (`--all --where status=draft status approved`) in one call instead of
+ * N. The filter attr is validated for a clear error message, then matched by
+ * string equality against the stored value. Zero matches is a successful no-op
+ * with an empty `matched` list, so the ritual is safe to run unconditionally.
+ */
+export function runUpdateBulk(
+  doc: RequirementsDoc,
+  where: AttrAssignment,
+  set: AttrAssignment,
+): UpdateBulkResult {
+  const whereAttr = parseAttr(where.attr)
+  if (!whereAttr.ok) return { envelope: whereAttr.envelope }
+  const setAttr = parseAttr(set.attr)
+  if (!setAttr.ok) return { envelope: setAttr.envelope }
+
+  const matched = listRequirements(doc).filter(
+    (r) => (r as Record<string, unknown>)[whereAttr.value] === where.value,
+  )
+
+  const changes = matched.map((r) => ({
+    kind: 'UpdateAttribute',
+    id: r.id,
+    attr: setAttr.value,
+    value: set.value,
+  }))
+
+  try {
+    const next = applyChanges(doc, changes)
+    return {
+      next,
+      envelope: success('update', {
+        attr: setAttr.value,
+        value: set.value,
+        matched: matched.map((r) => r.id),
+        action: 'set',
+      }),
+    }
+  } catch (e) {
     return { envelope: toErrorEnvelope(e) }
   }
 }

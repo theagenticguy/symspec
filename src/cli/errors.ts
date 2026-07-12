@@ -47,6 +47,7 @@
 
 import type { ErrCode } from '../core/codes.js'
 import { ErrCodeSchema } from '../core/codes.js'
+import { resolveRequirement } from '../core/doc.js'
 import type { Relation, Requirement, RequirementsDoc, UpdatableAttr } from '../core/schema.js'
 import { RELATIONS, UPDATABLE_ATTRS } from '../core/schema.js'
 import type { ErrorEnvelope } from './envelope.js'
@@ -93,14 +94,15 @@ export function usageError(
 }
 
 /**
- * `ERR_NOT_FOUND`: a requirement id that a command requires to exist
- * (show / update / delete-target / edge source) is not present in the document.
+ * `ERR_NOT_FOUND`: a requirement reference (UUID or stable key) that a command
+ * requires to exist (show / update / delete-target / edge source) is not present
+ * in the document.
  */
-export function notFoundError(id: string): ErrorEnvelope {
+export function notFoundError(ref: string): ErrorEnvelope {
   return failure({
-    error: `Requirement ${id} not found`,
+    error: `Requirement ${ref} not found`,
     code: 'ERR_NOT_FOUND',
-    suggestions: ['List ids with `symspec list`.'],
+    suggestions: ['List ids and keys with `symspec list`.'],
   })
 }
 
@@ -149,15 +151,17 @@ export function parseAttr(raw: string): ArgResult<UpdatableAttr> {
 }
 
 /**
- * Require that `id` resolves to a requirement in `doc`, yielding the node on
- * success and the `ERR_NOT_FOUND` envelope otherwise. Commands that must fail
- * on a missing id (show / update / edge source) call this BEFORE building a
+ * Require that `ref` resolves to a requirement in `doc` — by stable key OR by
+ * UUID (see {@link resolveRequirement}) — yielding the node on success and the
+ * `ERR_NOT_FOUND` envelope otherwise. Commands that must fail on a missing
+ * reference (show / update / edge source / delete) call this BEFORE building a
  * Change, so the core layer's untyped `throw new Error(... not found)` path is
- * never reached from the CLI.
+ * never reached from the CLI, and every one of them accepts a human key wherever
+ * it accepts a UUID for free.
  */
-export function requireRequirement(doc: RequirementsDoc, id: string): ArgResult<Requirement> {
-  const r = doc.requirements[id]
-  return r === undefined ? err(notFoundError(id)) : ok(r)
+export function requireRequirement(doc: RequirementsDoc, ref: string): ArgResult<Requirement> {
+  const r = resolveRequirement(doc, ref)
+  return r === undefined ? err(notFoundError(ref)) : ok(r)
 }
 
 // ---------------------------------------------------------------------------

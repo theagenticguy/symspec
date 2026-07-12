@@ -51,8 +51,9 @@
 
 import type { z } from 'zod'
 import { applyChange } from '../core/changes.js'
-import { newId } from '../core/doc.js'
+import { newId, resolveRequirement } from '../core/doc.js'
 import type { CreateRequirementAttrsSchema, Requirement, RequirementsDoc } from '../core/schema.js'
+import { checkGtWRules } from '../lint/gtwr.js'
 import { parseLine } from '../parse/result.js'
 import type { Tier2Options } from '../parse/tier2.js'
 import type { Envelope } from './envelope.js'
@@ -60,7 +61,8 @@ import { failure, success } from './envelope.js'
 import { toErrorEnvelope, usageError } from './errors.js'
 
 /** The usage line `ERR_USAGE` suggestions cite for this command. */
-export const ADD_USAGE = 'symspec add [--id <uuid>] (--from-parse "<prose>" | <EARS slots>)'
+export const ADD_USAGE =
+  'symspec add [--id <uuid>] [--key <slug>] [--dry-run] (--from-parse "<prose>" | <EARS slots>)'
 
 /** Structured EARS slots a caller may supply to `add` (the create-attrs shape). */
 export type AddSlots = z.infer<typeof CreateRequirementAttrsSchema>
@@ -78,6 +80,36 @@ export interface AddArgs {
   readonly slots?: AddSlots
   /** A single line of prose to parse through the ladder (mutually exclusive with `slots`). */
   readonly fromParse?: string
+  /**
+   * Preview only (`--dry-run`): render the canonical sentence and the lint
+   * findings the create WOULD trigger, then return WITHOUT a `next` document so
+   * the caller writes nothing (wishlist #10).
+   */
+  readonly dryRun?: boolean
+}
+
+/**
+ * One lint finding a `--dry-run` preview surfaces — the per-statement GtWR hits
+ * the rendered sentence would trigger, so an agent catches a "42"/"every" lint
+ * problem at authoring time instead of at the next `check`.
+ */
+export interface DryRunFinding {
+  readonly code: string
+  readonly severity: 'error' | 'warn' | 'info'
+  readonly message: string
+  readonly span?: [number, number]
+  readonly suggestion?: string
+}
+
+/** The `data` payload of a successful `add --dry-run` preview envelope. */
+export interface AddDryRunData {
+  /** Always true — marks this as a preview, not a create. */
+  readonly dryRun: true
+  /** The requirement that WOULD be created (id auto-minted for the preview). */
+  readonly requirement: Requirement
+  /** The per-statement GtWR findings the rendered sentence would trigger. */
+  readonly findings: DryRunFinding[]
+  readonly parse?: AddParseMeta
 }
 
 /** Parse provenance echoed back on the `--from-parse` create path. */
@@ -107,7 +139,7 @@ export interface AddData {
  */
 export type AddResult =
   | { readonly next: RequirementsDoc; readonly envelope: Envelope<AddData> }
-  | { readonly envelope: Envelope<AddData> }
+  | { readonly envelope: Envelope<AddData | AddDryRunData> }
 
 /**
  * Execute an `add` against a loaded document. Pure: returns a new document (via
@@ -195,6 +227,22 @@ export async function runAdd(
     attrs = args.slots as AddSlots
   }
 
+  // Stable-key uniqueness (wishlist #2): a key must resolve to exactly one
+  // requirement, so a create that reuses an existing key is refused up front
+  // with the typed ERR_DUPLICATE_KEY — before any id is minted or written.
+  if (attrs.key !== undefined && resolveRequirement(doc, attrs.key) !== undefined) {
+    return {
+      envelope: failure({
+        error: `Key "${attrs.key}" is already used by another requirement.`,
+        code: 'ERR_DUPLICATE_KEY',
+        suggestions: [
+          'Choose a different --key.',
+          'Omit --key to create the requirement without a stable key.',
+        ],
+      }),
+    }
+  }
+
   // Auto-mint unless an explicit --id was supplied. The minted UUID cannot
   // collide; a supplied duplicate is caught by applyChange below.
   const id = args.id ?? newId()
@@ -207,6 +255,28 @@ export async function runAdd(
       // noUncheckedIndexedAccess without a non-null assertion.
       return { envelope: toErrorEnvelope(new Error(`add failed to persist requirement ${id}`)) }
     }
+
+    // --dry-run (wishlist #10): the create already succeeded against a CLONED
+    // doc (applyChange never mutates its input), so `created` is the fully
+    // rendered requirement. Lint its sentence with the per-statement GtWR rules
+    // and return the preview WITHOUT a `next`, so the caller writes nothing.
+    if (args.dryRun === true) {
+      const findings: DryRunFinding[] = checkGtWRules(created, created.sentence).map((finding) => ({
+        code: finding.code,
+        severity: finding.severity,
+        message: finding.message,
+        span: finding.span,
+        ...(finding.suggestion !== undefined ? { suggestion: finding.suggestion } : {}),
+      }))
+      const preview: AddDryRunData = {
+        dryRun: true,
+        requirement: created,
+        findings,
+        ...(parseMeta !== undefined ? { parse: parseMeta } : {}),
+      }
+      return { envelope: success('add', preview) }
+    }
+
     const data: AddData = {
       id,
       requirement: created,

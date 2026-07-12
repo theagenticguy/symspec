@@ -78,6 +78,10 @@ export const ErrCodeSchema = z.enum([
   // and remote loading is disabled. Opt-in `--semantic` only; never blocks the
   // SMT/lint tiers.
   'ERR_EMBED_MODEL_MISSING',
+  // Stable human keys (appended): a create supplied a `--key` that another
+  // requirement in the document already uses. Keys must be unique so a key
+  // resolves to exactly one requirement.
+  'ERR_DUPLICATE_KEY',
 ])
 
 export type ErrCode = z.infer<typeof ErrCodeSchema>
@@ -190,6 +194,11 @@ export const ErrCodeMeta = {
     .literal('ERR_EMBED_MODEL_MISSING')
     .describe(
       'The opt-in `--semantic` embedding model is not cached and remote loading is disabled. Suggestion: pre-download the model or set SYMSPEC_EMBED_ALLOW_REMOTE=1 once. Never blocks the SMT/lint tiers.',
+    ),
+  ERR_DUPLICATE_KEY: z
+    .literal('ERR_DUPLICATE_KEY')
+    .describe(
+      'A create supplied a --key that another requirement already uses; keys must be unique. Suggestion: choose a different key, or omit --key to create the requirement without one.',
     ),
 } satisfies Record<ErrCode, z.ZodLiteral<ErrCode>>
 

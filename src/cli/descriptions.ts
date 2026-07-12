@@ -46,6 +46,9 @@ export type CommandName =
   | 'export'
   | 'glossary'
   | 'download-model'
+  | 'apply'
+  | 'waive'
+  | 'install'
 
 /**
  * Full what / when / returns / idempotency help text per command. Wired into
@@ -72,20 +75,28 @@ export const COMMAND_DESCRIPTIONS: Record<CommandName, string> = {
     'Use once per requirement you intend to author, from either structured EARS slots or, via --from-parse,',
     'a single line of prose run through the tiered parse ladder. The runtime mints the UUID (unless you pass',
     "--id), renders the canonical sentence, and applies defaults (priority='medium', status='draft', empty",
-    'edge arrays). Pre-condition/trigger are not enforced here even when the pattern wants them — `symspec check`',
+    'edge arrays). Pass --key to assign a stable human handle (e.g. G1, AUTH-3) you can use in place of the UUID',
+    'everywhere; --verification-note attaches a free-text evidence plan alongside the verification-method enum.',
+    'Pass --dry-run to preview the rendered canonical sentence and the lint findings the create WOULD trigger',
+    'WITHOUT writing anything — catch a "42"/"every" lint hit at authoring time instead of at check time.',
+    'Pre-condition/trigger are not enforced here even when the pattern wants them — `symspec check`',
     'surfaces missing slots as findings rather than rejecting the create, so you can author a stub and refine it.',
     'After adding a batch of requirements, run `symspec check` to surface any missing-slot or structural findings.',
-    'Not idempotent — each call creates a distinct requirement (a supplied --id that already exists errors).',
+    'Not idempotent — each call creates a distinct requirement (a supplied --id or --key that already exists errors).',
   ),
   update: lines(
-    'Patch exactly one typed attribute on an existing requirement.',
+    'Patch one or more typed attributes on an existing requirement (by UUID or stable key).',
     'Use for incremental refinement: tightening a trigger, escalating priority, moving status forward through',
-    'draft -> approved -> implemented -> verified. Updating any EARS structural slot (patternType, preCondition,',
-    'trigger, systemName, systemResponse) automatically re-renders the canonical sentence; metadata edits',
-    '(priority, status, verificationMethod) leave the sentence alone.',
-    'Pass --clear to remove an optional attribute (preCondition, trigger, verificationMethod); clearing a required',
-    'attribute errors. The literal string "null" is stored as text, never interpreted as a clear.',
-    'Errors when the id does not resolve to a current requirement. Idempotent: re-applying the same set is a no-op.',
+    'draft -> approved -> implemented -> verified. Pass a single <attr> <value>, OR several attr=value pairs in one',
+    'call (update <ref> status=approved priority=high) to set many attributes at once. Updating any EARS structural',
+    'slot (patternType, preCondition, trigger, systemName, systemResponse) automatically re-renders the canonical',
+    'sentence; metadata edits (priority, status, verificationMethod, verificationNote) leave the sentence alone.',
+    'Bulk mode: --all --where <attr>=<value> applies one attr=value transition to every matching requirement in one',
+    'call (e.g. --all --where status=draft status approved to promote a whole draft batch at end of authoring).',
+    'Pass --clear to remove an optional attribute (preCondition, trigger, verificationMethod, verificationNote);',
+    'clearing a required attribute errors. The literal string "null" is stored as text, never interpreted as a clear.',
+    'The stable `key` is not updatable — it is assigned once at create time so references never break.',
+    'Errors when the ref does not resolve to a current requirement. Idempotent: re-applying the same set is a no-op.',
   ),
   parse: lines(
     'Parse natural-language requirement prose into structured EARS slots.',
@@ -103,8 +114,13 @@ export const COMMAND_DESCRIPTIONS: Record<CommandName, string> = {
     'in-process SMT formal tier (contradiction, subsumption, redundancy, vacuity, completeness heuristic). The formal',
     'tier is sound modulo atomization: every reported conflict is real, but silence is not a consistency certificate,',
     'and contextual ambiguity is not checked (it is punted to you). Statements that fail a parse or a blocking surface',
-    'check are excluded from the formal layer so the SMT tier never sees unsound input. Exit code 0 means no',
-    'error-severity finding, 1 means the pass/fail gate failed on findings, 2 means an operational error. Read-only.',
+    'check are excluded from the formal layer so the SMT tier never sees unsound input. When the formal tier',
+    'compares zero pairs (no two requirements shared an atom) it emits an FND_NO_PAIRS_CHECKED info finding so',
+    'that coverage gap is visible instead of a silent pairsChecked:0. Waived findings (see `symspec waive`) are',
+    'dropped from findings[] and the exit gate and tallied under `waived`. Narrow the output for a fix loop with',
+    '--min-severity error (drop warn/info) and/or --findings-only (drop everything but findings) — these shape',
+    'output only and never change the exit code. Exit code 0 means no error-severity finding, 1 means the',
+    'pass/fail gate failed on findings, 2 means an operational error. Read-only.',
   ),
   certify: lines(
     'Emit and kernel-check an optional Lean 4 proof artifact for the document.',
@@ -170,6 +186,36 @@ export const COMMAND_DESCRIPTIONS: Record<CommandName, string> = {
     'cache (SYMSPEC_MODEL_DIR / XDG_CACHE_HOME / ~/.cache), verifying every asset against a pinned sha256 so a corrupt',
     'or tampered download fails instead of poisoning embeddings. Idempotent: already-cached assets are reported and skipped.',
     'Run once on a networked machine to warm the cache for air-gapped or CI use; the default `check` never needs it.',
+  ),
+  apply: lines(
+    'Apply a batch of mutation ops from JSONL (a file, or --stdin) in one process and one save.',
+    'Use to author or edit many requirements without one subprocess per op: each line is a JSON record',
+    '{"op":"add|update|derive|satisfy|remove-edge|delete", ...} using the same fields as the matching command,',
+    'and every op may reference a requirement by its stable key or its UUID. An `add` op may carry a "key" so',
+    'later ops in the SAME batch reference the new requirement by that key before its UUID is known.',
+    'Atomic by default: all ops are validated and folded in memory and the document is written exactly once',
+    'only if every op succeeds — any failure writes nothing and reports the failing op index, so a crashed batch',
+    'never leaves the document half-mutated. Pass --continue-on-error for best-effort mode: apply what succeeds,',
+    'save once, and return a per-op results array plus an { ok, failed } summary. Returns the per-op results and summary.',
+  ),
+  waive: lines(
+    'Record a reviewed, reasoned waiver that suppresses a finding code in `symspec check`.',
+    'Use to retire a heuristic false positive (e.g. GTWR_R6 on "RFC 9457") or a knowingly accepted warning with a',
+    'durable reason, instead of degrading prose to dodge a lint rule or re-triaging the same finding every run.',
+    'Scope it to one requirement (by key or UUID) or leave it document-wide to waive every occurrence of the code.',
+    '`waive list` shows the committed waivers; `waive remove` retracts one. `symspec check` drops waived findings',
+    'from findings[] and the exit gate and reports the count under `waived`, so a suppressed-with-reason baseline',
+    'stays visible and a reader can tell triage from neglect. add is idempotent; remove of an absent waiver is a no-op.',
+  ),
+  install: lines(
+    'Install the symspec skill into your coding agent so it discovers and drives symspec automatically.',
+    'Detects which agent hosts are present in the project (or, with --global, your home config) and writes a',
+    'single self-contained skill/rule file into each host’s dedicated dir — never touching CLAUDE.md, AGENTS.md,',
+    'or GEMINI.md. Covers the .agents/skills open standard (Claude Code, Cursor, Codex), Kiro steering, Windsurf',
+    'rules, and Copilot path-instructions; the skill body is generated from the same corpus as the manifest, so it',
+    'cannot drift. --target auto|all|<id,id> chooses hosts; --check reports what would be written; --print <id> shows',
+    'one host’s file; --uninstall removes them. Idempotent: an unchanged file is left untouched. Hosts whose only',
+    'always-on surface is a root doc (opencode, Gemini CLI) are reported as skipped rather than edited.',
   ),
 }
 

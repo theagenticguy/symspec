@@ -64,6 +64,31 @@ function getMatches(sentence: string, pattern: RegExp): RegExpExecArray[] {
 }
 
 /**
+ * Standard-identifier allowlist for the bare-number rules (R6 missing-units,
+ * R33 missing-tolerance). A digit run that is part of a standard's NAME — "RFC
+ * 9457", "HTTP 401", "ISO 8601", "IEEE 754" — is an identifier, not a bare
+ * quantity that forgot its unit, so it must NOT trip those rules (real field
+ * report: users were degrading good prose to dodge the false positive).
+ *
+ * The token list covers the four reported cases (RFC/HTTP/ISO/IEEE) plus their
+ * obvious close cousins (standards-body / encoding prefixes that are likewise
+ * followed by a bare number: ANSI, NIST, FIPS, ECMA, ITU, UTF as in "UTF 8").
+ * Kept deliberately tight — a genuine bare quantity like "store 42 records"
+ * has no such preceding token and is still flagged.
+ *
+ * The lookbehind is done on the text slice BEFORE the number (the standard name
+ * PRECEDES the digits). `[-\s]*$` after the token accepts both the spaced
+ * ("RFC 9457") and hyphenated ("RFC-9457") forms the field report hit: for
+ * "RFC-9457" the bare-number regex's `\b` starts after the hyphen, so the slice
+ * ends with "RFC-" and the trailing `[-\s]*` matches the hyphen.
+ */
+const STANDARD_ID_BEFORE = /\b(RFC|HTTP|ISO|IEEE|ANSI|NIST|FIPS|ECMA|ITU|UTF)[-\s]*$/i
+
+function isStandardIdentifierNumber(sentence: string, matchIndex: number): boolean {
+  return STANDARD_ID_BEFORE.test(sentence.slice(0, matchIndex))
+}
+
+/**
  * Check a single requirement's systemResponse field against GTWR rules.
  * Runs the ~24 T1 lexicon checks on the rendered sentence.
  *
@@ -229,6 +254,9 @@ function checkR6MissingUnits(sentence: string, findings: GtWRFinding[]): void {
     /\b(\d+(?:\.\d+)?)\b(?!\s*(?:s|ms|Hz|m|km|km\/h|Mbps|%|°C|°F|seconds|ms|hours|minutes|days|units|attempts|times|iterations|percent)\b)/gi
   const matches = getMatches(sentence, bareNumberPattern)
   for (const match of matches) {
+    // Skip numbers that are part of a standard's name (e.g. "RFC 9457",
+    // "HTTP 401") — those are identifiers, not units-less quantities.
+    if (isStandardIdentifierNumber(sentence, match.index)) continue
     const [matched, num] = match
     findings.push({
       code: 'GTWR_R6_MISSING_UNITS',
@@ -649,6 +677,9 @@ function checkR33MissingTolerance(sentence: string, findings: GtWRFinding[]): vo
     /\b(\d+(?:\.\d+)?)\s+(?!(?:±|to|less than|at least|between|within|from|through|exceeds|below|above|maximum|minimum|or greater|or fewer|percent|times)\b)/gi
   const matches = getMatches(sentence, numberWithoutRangePattern)
   for (const match of matches) {
+    // Skip standard-identifier numbers (e.g. "ISO 8601", "IEEE 754"): they are
+    // names, not quantities missing a tolerance. Mirrors the R6 guard.
+    if (isStandardIdentifierNumber(sentence, match.index)) continue
     findings.push({
       code: 'GTWR_R33_MISSING_TOLERANCE',
       severity: 'warn',

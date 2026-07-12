@@ -122,6 +122,22 @@ describe('argument guards (AC-6-10)', () => {
       expect(() => ErrorEnvelopeSchema.parse(miss.envelope)).not.toThrow()
     }
   })
+
+  it('requireRequirement resolves a stable human key to the same node (#2)', () => {
+    const doc = docWithA()
+    // Attach a key to the fixture's requirement.
+    const node = doc.requirements[ID_A]
+    if (node !== undefined) node.key = 'G1'
+
+    const byKey = requireRequirement(doc, 'G1')
+    expect(byKey.ok).toBe(true)
+    if (byKey.ok) expect(byKey.value.id).toBe(ID_A)
+
+    // A key that no requirement uses is still ERR_NOT_FOUND.
+    const miss = requireRequirement(doc, 'NOPE')
+    expect(miss.ok).toBe(false)
+    if (!miss.ok) expect(miss.envelope.code).toBe('ERR_NOT_FOUND')
+  })
 })
 
 describe('toErrorEnvelope — no unhandled stack traces (AC-6-10)', () => {

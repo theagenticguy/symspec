@@ -30,6 +30,7 @@ export function emptyDoc(): Doc {
     schemaVersion: SCHEMA_VERSION,
     requirements: {},
     glossary: [],
+    waivers: [],
   }
 }
 
@@ -61,6 +62,38 @@ export function listRequirements(doc: Doc): Requirement[] {
 
 export function getRequirement(doc: Doc, id: string): Requirement | undefined {
   return doc.requirements[id]
+}
+
+/**
+ * True when `ref` is shaped like a UUID (the canonical id form). Used to decide
+ * whether a raw reference should be looked up directly in the UUID-keyed map or
+ * treated as a human key that needs a scan. Deliberately loose (8-4-4-4-12 hex);
+ * anything that is not UUID-shaped is a key candidate.
+ */
+const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Resolve a raw reference — either a UUID or a stable human key — to the
+ * requirement it names, or `undefined` if nothing matches. A UUID-shaped `ref`
+ * is looked up directly in the O(1) map; anything else is matched against the
+ * requirements' `key` field. This is the single place the key⇄UUID duality is
+ * decided, so every id-taking command resolves keys by delegating here.
+ */
+export function resolveRequirement(doc: Doc, ref: string): Requirement | undefined {
+  if (UUID_LIKE.test(ref)) {
+    const byId = doc.requirements[ref]
+    if (byId !== undefined) return byId
+  }
+  return Object.values(doc.requirements).find((r) => r.key === ref)
+}
+
+/**
+ * Resolve a raw reference to the requirement's stable UUID, or `undefined`. The
+ * id-taking commands work in UUID terms internally (edges, Change records), so
+ * this returns the canonical id even when the caller passed a human key.
+ */
+export function resolveId(doc: Doc, ref: string): string | undefined {
+  return resolveRequirement(doc, ref)?.id
 }
 
 /**

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { emptyDoc } from '../../core/doc.js'
 import type { RequirementsDoc } from '../../core/schema.js'
 import { ErrorEnvelopeSchema, SuccessEnvelopeSchema } from '../envelope.js'
-import { runUpdate, UPDATE_USAGE } from '../update.js'
+import { runUpdate, runUpdateBulk, runUpdateMany, UPDATE_USAGE } from '../update.js'
 
 /**
  * AC-6-11: the explicit `--clear` flag replaces the v1 magic string-`"null"`
@@ -187,5 +187,148 @@ describe('mutual exclusion of --clear and <value> (ERR_USAGE)', () => {
     const res = runUpdate(docWithA(), { id: ID_A, attr: 'trigger' })
     expect(res.envelope.type).toBe('error')
     if (res.envelope.type === 'error') expect(res.envelope.code).toBe('ERR_USAGE')
+  })
+})
+
+/** A ubiquitous fixture with a stable key, for multi-attr / bulk / key tests. */
+function keyedDoc(): RequirementsDoc {
+  const doc = emptyDoc()
+  doc.requirements[ID_A] = {
+    id: ID_A,
+    key: 'G1',
+    patternType: 'ubiquitous',
+    systemName: 'api',
+    systemResponse: 'log the access',
+    negated: false,
+    sentence: 'The api shall log the access.',
+    priority: 'medium',
+    status: 'draft',
+    derives: [],
+    satisfies: [],
+    verifies: [],
+    refines: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+  return doc
+}
+
+describe('runUpdateMany — multi-attribute update (#7)', () => {
+  it('sets several attributes in one call', () => {
+    const res = runUpdateMany(docWithA(), ID_A, [
+      { attr: 'status', value: 'approved' },
+      { attr: 'priority', value: 'high' },
+    ])
+    expect('next' in res).toBe(true)
+    if (!('next' in res)) return
+    const r = res.next.requirements[ID_A]
+    expect(r?.status).toBe('approved')
+    expect(r?.priority).toBe('high')
+    if (res.envelope.type !== 'error') {
+      expect(res.envelope.data.attrs).toEqual(['status', 'priority'])
+    }
+    expect(() => SuccessEnvelopeSchema.parse(res.envelope)).not.toThrow()
+  })
+
+  it('resolves the ref by stable key (#2)', () => {
+    const res = runUpdateMany(keyedDoc(), 'G1', [{ attr: 'status', value: 'approved' }])
+    expect('next' in res).toBe(true)
+    if ('next' in res) expect(res.next.requirements[ID_A]?.status).toBe('approved')
+  })
+
+  it('a bad attr in the batch fails atomically (nothing set)', () => {
+    const res = runUpdateMany(docWithA(), ID_A, [
+      { attr: 'status', value: 'approved' },
+      { attr: 'bogus', value: 'x' },
+    ])
+    expect('next' in res).toBe(false)
+    if (res.envelope.type === 'error') expect(res.envelope.code).toBe('ERR_INVALID_ATTR')
+  })
+
+  it('an empty assignment list is ERR_USAGE', () => {
+    const res = runUpdateMany(docWithA(), ID_A, [])
+    expect(res.envelope.type).toBe('error')
+    if (res.envelope.type === 'error') expect(res.envelope.code).toBe('ERR_USAGE')
+  })
+
+  it('an unresolvable ref is ERR_NOT_FOUND', () => {
+    const res = runUpdateMany(docWithA(), 'NOPE', [{ attr: 'status', value: 'approved' }])
+    expect(res.envelope.type).toBe('error')
+    if (res.envelope.type === 'error') expect(res.envelope.code).toBe('ERR_NOT_FOUND')
+  })
+
+  it('does not mutate the input document', () => {
+    const doc = docWithA()
+    runUpdateMany(doc, ID_A, [{ attr: 'status', value: 'approved' }])
+    expect(doc.requirements[ID_A]?.status).toBe('draft')
+  })
+})
+
+describe('runUpdateBulk — --all --where transition (#8)', () => {
+  function twoDrafts(): RequirementsDoc {
+    const doc = emptyDoc()
+    for (const id of [ID_A, '22222222-2222-4222-8222-222222222222']) {
+      doc.requirements[id] = {
+        id,
+        patternType: 'ubiquitous',
+        systemName: 'api',
+        systemResponse: `do ${id.slice(0, 4)}`,
+        negated: false,
+        sentence: `The api shall do ${id.slice(0, 4)}.`,
+        priority: 'medium',
+        status: 'draft',
+        derives: [],
+        satisfies: [],
+        verifies: [],
+        refines: [],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }
+    }
+    // A third requirement already approved — must NOT be re-touched by a
+    // status=draft filter.
+    doc.requirements['33333333-3333-4333-8333-333333333333'] = {
+      ...doc.requirements[ID_A],
+      id: '33333333-3333-4333-8333-333333333333',
+      status: 'approved',
+    } as RequirementsDoc['requirements'][string]
+    return doc
+  }
+
+  it('applies the transition to every matching requirement', () => {
+    const res = runUpdateBulk(
+      twoDrafts(),
+      { attr: 'status', value: 'draft' },
+      { attr: 'status', value: 'approved' },
+    )
+    expect('next' in res).toBe(true)
+    if (!('next' in res)) return
+    if (res.envelope.type !== 'error') {
+      expect(res.envelope.data.matched).toHaveLength(2)
+    }
+    const statuses = Object.values(res.next.requirements).map((r) => r.status)
+    expect(statuses.filter((s) => s === 'approved')).toHaveLength(3)
+  })
+
+  it('zero matches is a successful no-op with an empty matched list', () => {
+    const res = runUpdateBulk(
+      twoDrafts(),
+      { attr: 'status', value: 'verified' },
+      { attr: 'priority', value: 'high' },
+    )
+    expect('next' in res).toBe(true)
+    if ('next' in res && res.envelope.type !== 'error') {
+      expect(res.envelope.data.matched).toHaveLength(0)
+    }
+  })
+
+  it('a bad --where attr is ERR_INVALID_ATTR', () => {
+    const res = runUpdateBulk(
+      twoDrafts(),
+      { attr: 'bogus', value: 'draft' },
+      { attr: 'status', value: 'approved' },
+    )
+    expect(res.envelope.type).toBe('error')
+    if (res.envelope.type === 'error') expect(res.envelope.code).toBe('ERR_INVALID_ATTR')
   })
 })

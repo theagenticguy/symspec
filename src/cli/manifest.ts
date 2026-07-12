@@ -273,6 +273,82 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     }),
   },
   { name: 'download-model', args: z.object({}) },
+  {
+    name: 'apply',
+    args: z.object({
+      file: z
+        .string()
+        .min(1)
+        .describe(
+          lines(
+            'Path to a JSONL op file — one {"op":"add|update|derive|satisfy|remove-edge|delete", ...} record',
+            'per line. Blank lines and #-comment lines are skipped. Requirement refs (ref/from/to) accept a',
+            'stable key or a UUID; an `add` op may carry "key" so later ops in the SAME batch reference it.',
+            'Omit and pass --stdin to read the op stream from standard input instead.',
+          ),
+        )
+        .optional(),
+      stdin: z
+        .boolean()
+        .describe('Read the JSONL op stream from stdin instead of a file.')
+        .optional(),
+      doc: docFileOpt,
+      'continue-on-error': z
+        .boolean()
+        .describe(
+          'Best-effort mode: apply the ops that succeed and save once, instead of the atomic default (abort on first error, write nothing).',
+        )
+        .optional(),
+    }),
+  },
+  {
+    name: 'waive',
+    args: z.object({
+      op: z
+        .enum(['add', 'remove', 'list'])
+        .describe('The waiver operation: add | remove | list (wishlist #3).'),
+      code: z
+        .string()
+        .describe('The finding code to waive/unwaive (e.g. GTWR_R6_MISSING_UNITS) (add/remove).')
+        .optional(),
+      ref: f.id
+        .describe(
+          'Optional requirement scope (stable key or UUID). When set, only findings naming this requirement are waived.',
+        )
+        .optional(),
+      reason: z.string().describe('Why the finding is waived — the audit trail (add).').optional(),
+      file: docFileOpt,
+    }),
+  },
+  {
+    name: 'install',
+    args: z.object({
+      global: z
+        .boolean()
+        .describe(
+          'Install into your home config (~/.agents/skills, ~/.kiro/steering, …) instead of the current project.',
+        )
+        .optional(),
+      target: z
+        .string()
+        .describe(
+          'Which hosts to install into: `auto` (default — detected hosts), `all`, or a CSV of ids (agents-standard, kiro, windsurf, copilot).',
+        )
+        .optional(),
+      uninstall: z
+        .boolean()
+        .describe("Remove symspec's skill file from each target host.")
+        .optional(),
+      check: z
+        .boolean()
+        .describe('Report what would be written and whether it is already present; write nothing.')
+        .optional(),
+      print: z
+        .string()
+        .describe('Print one target host’s exact skill-file content and exit; write nothing.')
+        .optional(),
+    }),
+  },
 ]
 
 // ---------------------------------------------------------------------------

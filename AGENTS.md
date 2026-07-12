@@ -38,7 +38,7 @@ Failure:
 ```
 
 - `type` is a closed discriminant set (see the manifest `types` array):
-  `manifest`, `init`, `add`, `update`, `parse`, `check`, `certify`, `list`, `show`, `derive`, `satisfy`, `remove-edge`, `delete`, `export`, `error`, `glossary`, `download-model`.
+  `manifest`, `init`, `add`, `update`, `parse`, `check`, `certify`, `list`, `show`, `derive`, `satisfy`, `remove-edge`, `delete`, `export`, `error`, `glossary`, `download-model`, `apply`, `waive`, `install`.
 - Exit codes: **0** clean (warn/info findings do not fail), **1** at least one
   error-severity finding (success envelope still on stdout), **2** an
   `ERR_*` operational failure (error envelope on stdout).
@@ -53,7 +53,7 @@ Failure:
 | `symspec manifest` | Emit the self-describing manifest — the whole command surface as one JSON blob. |
 | `symspec init` | Create an empty requirements document at the resolved path. |
 | `symspec add` | Create a new EARS requirement and return its assigned UUID. |
-| `symspec update` | Patch exactly one typed attribute on an existing requirement. |
+| `symspec update` | Patch one or more typed attributes on an existing requirement (by UUID or stable key). |
 | `symspec parse` | Parse natural-language requirement prose into structured EARS slots. |
 | `symspec check` | Run the full linter loop over the document and return findings in one envelope. |
 | `symspec certify` | Emit and kernel-check an optional Lean 4 proof artifact for the document. |
@@ -66,6 +66,9 @@ Failure:
 | `symspec export` | Export the requirements graph to SysML-v2-flavored JSON for interchange with other tools. |
 | `symspec glossary` | Manage the document's committed synonym glossary: `glossary add <canonical> <alias>`, `glossary remove <canonical> <alias>`, `glossary list`. |
 | `symspec download-model` | Pre-fetch and cache the semantic tier embedding model so `check --semantic` runs fully offline afterward. |
+| `symspec apply` | Apply a batch of mutation ops from JSONL (a file, or --stdin) in one process and one save. |
+| `symspec waive` | Record a reviewed, reasoned waiver that suppresses a finding code in `symspec check`. |
+| `symspec install` | Install the symspec skill into your coding agent so it discovers and drives symspec automatically. |
 
 ## Recommended workflow
 
@@ -129,6 +132,7 @@ Failure:
 | `ERR_LEAN_TOOLCHAIN_MISSING` | `certify` was requested but no Lean toolchain is discoverable. Suggestion: run `elan default stable`. This never blocks a prior SMT-tier result. |
 | `ERR_DOC_EXISTS` | `init` refused to overwrite an existing document at the resolved path. Suggestion: pass --force to recreate it, or choose a different path — the existing file is left intact. |
 | `ERR_EMBED_MODEL_MISSING` | The opt-in `--semantic` embedding model is not cached and remote loading is disabled. Suggestion: pre-download the model or set SYMSPEC_EMBED_ALLOW_REMOTE=1 once. Never blocks the SMT/lint tiers. |
+| `ERR_DUPLICATE_KEY` | A create supplied a --key that another requirement already uses; keys must be unique. Suggestion: choose a different key, or omit --key to create the requirement without one. |
 
 ## Lint rule codes (`GTWR_*`)
 
@@ -188,3 +192,4 @@ Failure:
 | `FND_AMBIGUOUS_REFERENCE` | info — a pronoun or bare definite NP ("it", "the system") with ≥2 candidate antecedents in scope; deterministic detection (recall-first), resolution is punted to the agent. |
 | `FND_AMBIGUITY_NEEDS_JUDGMENT` | info — pragmatic/contextual ambiguity was not assessed deterministically; a structured prompt to hand the requirement to an LLM/agent review. Never a verdict, never in the reproducibility hash. |
 | `FND_TEMPORAL_CONTRADICTION` | error — a set of requirements is temporally inconsistent under bounded LTL→SMT (no trace of length ≤ k satisfies them jointly); sound-for-UNSAT, evidence carries {bound,complete:false}. Opt-in via `check --temporal`. |
+| `FND_NO_PAIRS_CHECKED` | info — the formal tier evaluated 0 candidate pairs (no two requirements shared an atom), so no cross-requirement conflict/subsumption analysis actually ran. Silence here is not a consistency certificate; consider glossary entries to align vocabulary so related requirements share atoms. |

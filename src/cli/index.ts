@@ -50,19 +50,22 @@ import { emitSmt2 } from '../formal/emit-smt2.js'
 import { downloadModelAssets } from '../formal/model-cache.js'
 import { SolverBudgetExceededError } from '../formal/needs-review.js'
 import { parseBatch } from '../parse/batch.js'
-import { encodeIncluded, runCheck } from '../pipeline/check.js'
+import { type CheckSeverity, encodeIncluded, filterReport, runCheck } from '../pipeline/check.js'
 import { runAdd } from './add.js'
+import { APPLY_USAGE, runApply } from './apply.js'
 import { denseEnvelope } from './dense.js'
 import { COMMAND_DESCRIPTIONS } from './descriptions.js'
 import { type Envelope, failure, success } from './envelope.js'
 import { parseRelation, requireRequirement, toErrorEnvelope, usageError } from './errors.js'
 import { exitCodeForEnvelope } from './exit.js'
 import { glossaryAdd, glossaryList, glossaryRemove } from './glossary.js'
+import { runInstall } from './install/run.js'
 import { buildManifestWithBackends } from './manifest.js'
 import { formatEnvelope, type OutputFlags } from './output.js'
 import { DocResolveError, docNotFoundEnvelope, resolveDoc } from './resolve-doc.js'
-import { runUpdate } from './update.js'
+import { runUpdate, runUpdateBulk, runUpdateMany, UPDATE_USAGE } from './update.js'
 import { VERSION } from './version.js'
+import { waiveAdd, waiveList, waiveRemove } from './waive.js'
 
 // ---------------------------------------------------------------------------
 // Global output flags + emit/exit spine
@@ -200,6 +203,14 @@ program
   .description(COMMAND_DESCRIPTIONS.add)
   .argument('[file]', 'path to the requirements document')
   .option('--id <uuid>', 'explicit requirement UUID (default: auto-minted)')
+  .option(
+    '--key <slug>',
+    'stable human key (e.g. G1, AUTH-3) usable in place of the UUID everywhere',
+  )
+  .option(
+    '--dry-run',
+    'preview the rendered sentence + lint findings the create would trigger; write nothing',
+  )
   .option('--from-parse <prose>', 'a single line of prose to parse into EARS slots')
   .option(
     '--pattern <p>',
@@ -213,6 +224,10 @@ program
   .option('--priority <p>', 'priority (low|medium|high|critical)')
   .option('--status <s>', 'status (draft|approved|implemented|verified)')
   .option('--verification <m>', 'verification method (test|inspection|analysis|demonstration)')
+  .option(
+    '--verification-note <t>',
+    'free-text verification-plan note (companion to --verification)',
+  )
   // Aliases matching the manifest's argument field names, so an agent that
   // derives flags from `symspec manifest` gets a working call (F1).
   .option('--pattern-type <p>', 'alias of --pattern (manifest field name)')
@@ -233,20 +248,28 @@ program
   })
 
 // --- update ----------------------------------------------------------------
+// Three surfaces on one command (M2 doc-path stays an option):
+//   single    update <ref> <attr> <value> | update <ref> <attr> --clear
+//   multi (#7) update <ref> attr=val attr2=val2 …
+//   bulk (#8)  update --all --where <attr>=<value> <setAttr> <setValue>
+// A <ref> accepts a stable key or a UUID (resolved by requireRequirement).
 program
   .command('update')
   .description(COMMAND_DESCRIPTIONS.update)
-  .argument('<id>', 'UUID of the requirement to update')
-  .argument('<attr>', 'attribute to set')
-  .argument('[value]', 'new value (omit and pass --clear to remove an optional attr)')
+  .argument('[ref]', 'requirement to update — stable key or UUID (omit only in --all bulk mode)')
+  .argument(
+    '[rest...]',
+    'either <attr> <value>, one or more attr=value pairs, or in --all mode the <setAttr> <setValue>',
+  )
   .option('--file <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
   .option('--clear', 'clear (remove) an optional attribute instead of setting a value')
+  .option('--all', 'bulk mode: apply the set transition to every requirement matching --where')
+  .option('--where <attr=value>', 'bulk-mode filter: only requirements whose <attr> equals <value>')
   .action(
     async (
-      id: string,
-      attr: string,
-      value: string | undefined,
-      opts: { file?: string; clear?: boolean },
+      ref: string | undefined,
+      rest: string[],
+      opts: { file?: string; clear?: boolean; all?: boolean; where?: string },
       cmd: Command,
     ) => {
       const flags = globalFlags(cmd)
@@ -254,9 +277,65 @@ program
       if ('envelope' in loaded) emit(loaded.envelope, flags)
       const { doc, path } = loaded
 
+      const positionals = ref !== undefined ? [ref, ...rest] : [...rest]
+
+      // --- bulk (#8): --all --where <attr>=<value> <setAttr> <setValue> ------
+      if (opts.all === true) {
+        const where = parseKeyValue(opts.where)
+        if (where === undefined) {
+          emit(usageError('--all requires --where <attr>=<value>', UPDATE_USAGE), flags)
+        }
+        // The set is the two remaining positionals (setAttr setValue) or one
+        // attr=value pair.
+        const setPair =
+          positionals.length === 1
+            ? parseKeyValue(positionals[0])
+            : { attr: positionals[0] ?? '', value: positionals[1] ?? '' }
+        if (setPair === undefined || setPair.attr.length === 0) {
+          emit(
+            usageError('--all bulk mode requires a <setAttr> <setValue> to apply', UPDATE_USAGE),
+            flags,
+          )
+        }
+        const result = runUpdateBulk(doc, where, setPair)
+        if ('next' in result) await saveOrEmit(result.next, path, flags)
+        emit(result.envelope, flags)
+      }
+
+      if (ref === undefined) {
+        emit(usageError('update requires a <ref> (key or UUID)', UPDATE_USAGE), flags)
+      }
+
+      // --- multi-attr (#7): the first post-ref token is an attr=value pair ---
+      if (rest.length >= 1 && rest[0]?.includes('=') === true) {
+        const assignments = rest.map((tok) => parseKeyValue(tok))
+        if (assignments.some((a) => a === undefined)) {
+          emit(
+            usageError(
+              `every argument must be an attr=value pair; got "${rest.join(' ')}"`,
+              UPDATE_USAGE,
+            ),
+            flags,
+          )
+        }
+        const result = runUpdateMany(
+          doc,
+          ref as string,
+          assignments as { attr: string; value: string }[],
+        )
+        if ('next' in result) await saveOrEmit(result.next, path, flags)
+        emit(result.envelope, flags)
+      }
+
+      // --- single-attr (back-compat): <attr> [value] | <attr> --clear -------
+      const attr = rest[0]
+      const value = rest[1]
+      if (attr === undefined) {
+        emit(usageError('update requires an <attr>', UPDATE_USAGE), flags)
+      }
       const result = runUpdate(doc, {
-        id,
-        attr,
+        id: ref as string,
+        attr: attr as string,
         ...(value !== undefined ? { value } : {}),
         ...(opts.clear === true ? { clear: true } : {}),
       })
@@ -313,6 +392,14 @@ program
     'opt-in: bounded LTL→SMT temporal-ordering conflict detection (FND_TEMPORAL_CONTRADICTION, AC-33-2)',
   )
   .option('--temporal-bound <k>', 'trace bound k for --temporal (default 10)')
+  .option(
+    '--min-severity <sev>',
+    'output filter: drop findings below <sev> (error|warn|info); never changes the exit code (#5)',
+  )
+  .option(
+    '--findings-only',
+    'output filter: return only findings[], dropping the excluded table (#5)',
+  )
   .action(
     async (
       file: string | undefined,
@@ -327,6 +414,8 @@ program
         semanticThreshold?: string
         temporal?: boolean
         temporalBound?: string
+        minSeverity?: string
+        findingsOnly?: boolean
       },
       cmd: Command,
     ) => {
@@ -379,8 +468,31 @@ program
         checkOpts.temporal = bound !== undefined && Number.isFinite(bound) ? { bound } : {}
       }
 
+      // Wishlist #5: validate --min-severity up front so a typo is a clean
+      // usage error rather than a silently-ignored filter.
+      if (opts.minSeverity !== undefined && !['error', 'warn', 'info'].includes(opts.minSeverity)) {
+        emit(
+          usageError(
+            `Unknown --min-severity "${opts.minSeverity}"`,
+            'symspec check [file] --min-severity <error|warn|info>',
+          ),
+          flags,
+        )
+      }
+
       try {
-        const report = await runCheck(doc, checkOpts)
+        const fullReport = await runCheck(doc, checkOpts)
+
+        // Wishlist #5: shape the output (never the exit code) for a fix loop.
+        const report =
+          opts.minSeverity !== undefined || opts.findingsOnly === true
+            ? filterReport(fullReport, {
+                ...(opts.minSeverity !== undefined
+                  ? { minSeverity: opts.minSeverity as CheckSeverity }
+                  : {}),
+                ...(opts.findingsOnly === true ? { findingsOnly: true } : {}),
+              })
+            : fullReport
 
         // AC-4-8: export the portable .smt2 artifact for the included set.
         let emittedSmt2: string | undefined
@@ -685,6 +797,146 @@ program
     }
   })
 
+// --- apply -----------------------------------------------------------------
+// Wishlist #1: apply a JSONL op stream in one process + one atomic save.
+program
+  .command('apply')
+  .description(COMMAND_DESCRIPTIONS.apply)
+  .argument('[file]', 'path to a JSONL op file (one {op,...} record per line)')
+  .option('--doc <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
+  .option('--stdin', 'read the JSONL op stream from stdin instead of a file')
+  .option(
+    '--continue-on-error',
+    'best-effort: apply the ops that succeed and save once, instead of aborting on the first error',
+  )
+  .action(
+    async (
+      file: string | undefined,
+      opts: { doc?: string; stdin?: boolean; continueOnError?: boolean },
+      cmd: Command,
+    ) => {
+      const flags = globalFlags(cmd)
+      const loaded = await loadResolved(opts.doc)
+      if ('envelope' in loaded) emit(loaded.envelope, flags)
+      const { doc, path } = loaded
+
+      // The op stream comes from --stdin or the [file] positional. The document
+      // path is the separate --doc option, so the positional is unambiguously
+      // the op file (never mistaken for the doc).
+      let opsText: string
+      try {
+        if (opts.stdin === true) {
+          opsText = await readStdin()
+        } else if (file !== undefined) {
+          const { readFile } = await import('node:fs/promises')
+          opsText = await readFile(file, 'utf8')
+        } else {
+          emit(usageError('apply requires an ops [file] or --stdin', APPLY_USAGE), flags)
+        }
+      } catch (e) {
+        emit(toErrorEnvelope(e, 'ERR_IO'), flags)
+      }
+
+      const result = runApply(
+        doc,
+        opsText,
+        opts.continueOnError === true ? { continueOnError: true } : {},
+      )
+      if ('next' in result) await saveOrEmit(result.next, path, flags)
+      emit(result.envelope, flags)
+    },
+  )
+
+// --- waive -----------------------------------------------------------------
+// Wishlist #3: manage committed finding waivers `check` honors.
+const waiveCmd = program.command('waive').description(COMMAND_DESCRIPTIONS.waive)
+
+waiveCmd
+  .command('add')
+  .description('Record a reviewed waiver suppressing a finding code (idempotent).')
+  .argument('<code>', 'the finding code to waive (e.g. GTWR_R6_MISSING_UNITS)')
+  .requiredOption('--reason <why>', 'why this finding is waived (the audit trail)')
+  .option('--ref <keyOrId>', 'scope the waiver to one requirement (stable key or UUID)')
+  .option('--file <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
+  .action(
+    async (code: string, opts: { reason: string; ref?: string; file?: string }, cmd: Command) => {
+      const flags = globalFlags(cmd)
+      const loaded = await loadResolved(opts.file)
+      if ('envelope' in loaded) emit(loaded.envelope, flags)
+      const { doc, path } = loaded
+      const result = waiveAdd(doc, code, opts.reason, opts.ref)
+      if ('next' in result) await saveOrEmit(result.next, path, flags)
+      emit(result.envelope, flags)
+    },
+  )
+
+waiveCmd
+  .command('remove')
+  .description('Retract a waiver (no-op if absent).')
+  .argument('<code>', 'the finding code whose waiver to remove')
+  .option(
+    '--ref <keyOrId>',
+    'the requirement scope of the waiver to remove (omit for document-wide)',
+  )
+  .option('--file <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
+  .action(async (code: string, opts: { ref?: string; file?: string }, cmd: Command) => {
+    const flags = globalFlags(cmd)
+    const loaded = await loadResolved(opts.file)
+    if ('envelope' in loaded) emit(loaded.envelope, flags)
+    const { doc, path } = loaded
+    const result = waiveRemove(doc, code, opts.ref)
+    if ('next' in result) await saveOrEmit(result.next, path, flags)
+    emit(result.envelope, flags)
+  })
+
+waiveCmd
+  .command('list')
+  .description('List the committed finding waivers (read-only).')
+  .option('--file <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
+  .action(async (opts: { file?: string }, cmd: Command) => {
+    const flags = globalFlags(cmd)
+    const loaded = await loadResolved(opts.file)
+    if ('envelope' in loaded) emit(loaded.envelope, flags)
+    emit(waiveList(loaded.doc).envelope, flags)
+  })
+
+// --- install ---------------------------------------------------------------
+// Drop the symspec skill into each detected agent host's dedicated dir; never
+// edits a host's root instruction file.
+program
+  .command('install')
+  .description(COMMAND_DESCRIPTIONS.install)
+  .option('--global', 'install into your home config instead of the current project')
+  .option('--target <sel>', 'hosts to target: auto (default) | all | csv of ids')
+  .option('--uninstall', "remove symspec's skill file from each target host")
+  .option('--check', 'report what would be written (present/missing) without writing')
+  .option('--print <id>', 'print one host’s exact skill-file content and exit; write nothing')
+  .action(
+    async (
+      opts: {
+        global?: boolean
+        target?: string
+        uninstall?: boolean
+        check?: boolean
+        print?: string
+      },
+      cmd: Command,
+    ) => {
+      const flags = globalFlags(cmd)
+      const { homedir } = await import('node:os')
+      const env = await runInstall({
+        location: opts.global === true ? 'global' : 'local',
+        ...(opts.target !== undefined ? { target: opts.target } : {}),
+        ...(opts.uninstall === true ? { uninstall: true } : {}),
+        ...(opts.check === true ? { check: true } : {}),
+        ...(opts.print !== undefined ? { print: opts.print } : {}),
+        cwd: process.cwd(),
+        home: homedir(),
+      })
+      emit(env, flags)
+    },
+  )
+
 // ---------------------------------------------------------------------------
 // Shared command helpers
 // ---------------------------------------------------------------------------
@@ -703,12 +955,14 @@ function resolvePathForWrite(file: string | undefined): { path: string } {
 
 /** Map raw `add` slot flags to the {@link runAdd} argument shape (AC-2-10). */
 function buildAddArgs(opts: Record<string, string | boolean>): Parameters<typeof runAdd>[1] {
+  const dryRun = opts.dryRun === true ? { dryRun: true as const } : {}
   if (typeof opts.fromParse === 'string') {
     // --from-parse determines polarity itself (the parse tier's AC-2-4 flag);
     // an explicit --negated here would be redundant/ambiguous, so it is ignored
-    // on the prose path.
+    // on the prose path. --key/--dry-run still apply.
     return {
       ...(typeof opts.id === 'string' ? { id: opts.id } : {}),
+      ...dryRun,
       fromParse: opts.fromParse,
     }
   }
@@ -721,6 +975,7 @@ function buildAddArgs(opts: Record<string, string | boolean>): Parameters<typeof
   const response = str(opts.response) ?? str(opts.systemResponse)
   const pre = str(opts.pre) ?? str(opts.preCondition)
   const verification = str(opts.verification) ?? str(opts.verificationMethod)
+  if (typeof opts.key === 'string') slots.key = opts.key
   if (pattern !== undefined) slots.patternType = pattern
   if (system !== undefined) slots.systemName = system
   if (response !== undefined) slots.systemResponse = response
@@ -730,12 +985,28 @@ function buildAddArgs(opts: Record<string, string | boolean>): Parameters<typeof
   if (typeof opts.priority === 'string') slots.priority = opts.priority
   if (typeof opts.status === 'string') slots.status = opts.status
   if (verification !== undefined) slots.verificationMethod = verification
+  if (typeof opts.verificationNote === 'string') slots.verificationNote = opts.verificationNote
   // Slots pass through to applyChange's ChangeSchema.parse, which rejects a bad
   // shape as a typed envelope (never a stack trace) — so no flag-layer Zod here.
   return {
     ...(typeof opts.id === 'string' ? { id: opts.id } : {}),
+    ...dryRun,
     slots: slots as z.infer<typeof CreateRequirementAttrsSchema>,
   }
+}
+
+/**
+ * Split an `attr=value` token into its parts, or `undefined` when it carries no
+ * `=`. The value may itself contain `=` (split on the FIRST only), and both
+ * sides are used verbatim — an empty attr (leading `=`) yields `undefined` so a
+ * malformed pair is rejected upstream. Shared by `update`'s multi-attr (#7) and
+ * bulk `--where`/set (#8) paths.
+ */
+function parseKeyValue(token: string | undefined): { attr: string; value: string } | undefined {
+  if (token === undefined) return undefined
+  const eq = token.indexOf('=')
+  if (eq <= 0) return undefined
+  return { attr: token.slice(0, eq), value: token.slice(eq + 1) }
 }
 
 /** Build the {@link runCheck} options from the raw string flags (AC-6-8 wiring). */

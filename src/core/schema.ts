@@ -54,14 +54,24 @@ export const UPDATABLE_ATTRS = [
   'priority',
   'status',
   'verificationMethod',
+  // Free-text verification-plan note (appended): the taxonomy-free companion to
+  // the closed `verificationMethod` enum, so a rich evidence plan ("Hypothesis
+  // suite in tests/property/") lives on the requirement instead of a README.
+  'verificationNote',
 ] as const
 export type UpdatableAttr = (typeof UPDATABLE_ATTRS)[number]
 
-/** Attrs that may legally be set to `null` (meaning "delete this optional field"). */
+/**
+ * Attrs that may legally be set to `null` (meaning "delete this optional field").
+ * `key` is intentionally NOT here: a stable human key is assigned once at create
+ * time and never mutated, so edges and cross-references stay valid — exactly the
+ * UUID discipline, extended to the human-facing handle.
+ */
 export const NULLABLE_ATTRS: ReadonlySet<UpdatableAttr> = new Set([
   'preCondition',
   'trigger',
   'verificationMethod',
+  'verificationNote',
 ])
 
 // ---------------------------------------------------------------------------
@@ -167,6 +177,26 @@ const idDescription = lines(
   "Example: '550e8400-e29b-41d4-a716-446655440000'",
 )
 
+const keyDescription = lines(
+  'Optional stable human key for the requirement — a short slug you choose (e.g. "G1", "AUTH-3", "S12").',
+  'Assigned once at create time and NEVER changed, so it is as safe to reference as the UUID.',
+  'Every id-taking command (show/update/derive/satisfy/remove-edge/delete and the batch `apply` op refs)',
+  'accepts a key wherever it accepts a UUID, so you can drive the whole document in human terms and skip',
+  'maintaining a label→UUID sidecar map. Must be unique within the document (duplicate keys are rejected',
+  'with ERR_DUPLICATE_KEY). Format: 1–64 chars of letters, digits, hyphen, underscore, dot; must contain',
+  'at least one non-digit so a key can never be mistaken for a bare number, and must not look like a UUID.',
+  "Examples: 'G1', 'AUTH-3', 'S12', 'perf.p99'.",
+)
+
+const verificationNoteDescription = lines(
+  'Free-text verification-plan note — the open companion to the closed `verificationMethod` enum.',
+  'Use it to record the concrete evidence plan the 4-value enum cannot capture: which suite, which',
+  'theorem, which harness. Optional; clear it with --clear. Does not affect the formal tier or the',
+  'canonical sentence — it is documentation that travels with the requirement instead of a README table.',
+  "Examples: 'Hypothesis property suite in tests/property/test_auth.py', 'Lean theorem next to RSM-1',",
+  "  'integration test (testcontainers) in it/auth_flow_test.ts'.",
+)
+
 const sentenceDescription = lines(
   'Canonical EARS sentence rendered from the structured slots above.',
   'Maintained automatically — the renderer re-runs whenever any EARS slot changes.',
@@ -194,8 +224,9 @@ const relationDescription = lines(
 const attrDescription = lines(
   'Which attribute to update.',
   'Allowed values are the EARS structural slots (patternType, preCondition, trigger, systemName, systemResponse)',
-  'and the typed metadata (priority, status, verificationMethod).',
+  'and the typed metadata (priority, status, verificationMethod, verificationNote).',
   'Updating any EARS slot triggers an automatic re-render of the canonical sentence; metadata updates do not.',
+  'The stable `key` is deliberately NOT updatable — it is assigned once at create time so references never break.',
 )
 
 const attrValueDescription = lines(
@@ -209,8 +240,19 @@ const attrValueDescription = lines(
 // Atomic field schemas — every other schema in the project composes from these.
 // ---------------------------------------------------------------------------
 
+/**
+ * Stable-human-key format. Flagless regex on purpose: Zod 4's `z.toJSONSchema`
+ * (which the manifest derivation runs) throws on a flagged pattern, so this must
+ * carry no `i`/`g`. Requires 1–64 chars from [A-Za-z0-9._-], at least one
+ * non-digit (so "42" can never be a key and key-vs-number is unambiguous), and a
+ * leading alphanumeric. A raw arg is treated as a UUID first (see KEY_LIKE in
+ * the resolver), so this pattern never needs to exclude UUIDs itself.
+ */
+export const KEY_PATTERN = /^(?=.*[A-Za-z._-])[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+
 export const f = {
   id: z.string().uuid().describe(idDescription),
+  key: z.string().regex(KEY_PATTERN).describe(keyDescription),
   patternType: z.enum(EARS_PATTERNS).describe(patternTypeDescription),
   preCondition: z.string().min(1).describe(preConditionDescription),
   trigger: z.string().min(1).describe(triggerDescription),
@@ -221,6 +263,7 @@ export const f = {
   priority: z.enum(PRIORITIES).describe(priorityDescription),
   status: z.enum(STATUSES).describe(statusDescription),
   verificationMethod: z.enum(VERIFICATION_METHODS).describe(verificationMethodDescription),
+  verificationNote: z.string().min(1).describe(verificationNoteDescription),
   derives: z
     .array(z.string().uuid())
     .describe(
@@ -277,6 +320,7 @@ export const f = {
 export const RequirementSchema = z
   .object({
     id: f.id,
+    key: f.key.optional(),
     patternType: f.patternType,
     preCondition: f.preCondition.optional(),
     trigger: f.trigger.optional(),
@@ -287,6 +331,7 @@ export const RequirementSchema = z
     priority: f.priority.default('medium'),
     status: f.status.default('draft'),
     verificationMethod: f.verificationMethod.optional(),
+    verificationNote: f.verificationNote.optional(),
     derives: f.derives.default([]),
     satisfies: f.satisfies.default([]),
     verifies: f.verifies.default([]),
@@ -334,6 +379,48 @@ export const GlossaryEntrySchema = z
   })
   .describe('A canonical phrase and its synonymous aliases (AC-9-1).')
 
+/**
+ * One reviewed finding waiver. Records a deliberate decision to suppress a
+ * specific finding code — optionally scoped to one requirement — with a reason,
+ * so a heuristic false positive (e.g. GTWR_R6 on "RFC 9457") or a knowingly
+ * accepted warning gets a dignified, auditable exit instead of degrading prose
+ * or being silently re-emitted on every run. `symspec check` honors these: a
+ * waived finding is dropped from `findings[]` (and therefore from the exit
+ * gate) and tallied under the report's `waived` counter. This is the same
+ * suppression-with-reason discipline linters already use for security rules.
+ */
+export const WaiverSchema = z
+  .object({
+    code: z
+      .string()
+      .min(1)
+      .describe(
+        lines(
+          'The finding code to waive — a GTWR_*, FND_*, or other code from `symspec check`.',
+          "Example: 'GTWR_R6_MISSING_UNITS'.",
+        ),
+      ),
+    requirementId: f.id
+      .optional()
+      .describe(
+        lines(
+          'Optional UUID scope. When set, only findings of `code` that name this requirement are waived;',
+          'when omitted, every finding of `code` is waived document-wide. Resolved from a key at waive time,',
+          'so the stored scope is always the stable UUID.',
+        ),
+      ),
+    reason: z
+      .string()
+      .min(1)
+      .describe(
+        lines(
+          'Why this finding is waived — the audit trail a future reader needs to tell triage from neglect.',
+          "Example: 'RFC 9457 is a standard identifier, not a bare quantity missing units.'",
+        ),
+      ),
+  })
+  .describe('A reviewed, reasoned suppression of a finding code (optionally requirement-scoped).')
+
 export const RequirementsDocSchema = z
   .object({
     schemaVersion: z.number().int(),
@@ -345,6 +432,16 @@ export const RequirementsDocSchema = z
         lines(
           'Agent-confirmed synonym groups (AC-9-1). Optional; defaults to []. The formal tier',
           'canonicalizes response atoms through this list so paraphrased conflicts are provable.',
+        ),
+      ),
+    waivers: z
+      .array(WaiverSchema)
+      .default([])
+      .describe(
+        lines(
+          'Reviewed finding waivers. Optional; defaults to []. `symspec check` drops any finding matching',
+          'a waiver (by code, and by requirement when the waiver is scoped) from findings[] and the exit',
+          'gate, reporting the count under `waived` so a suppressed-with-reason baseline stays visible.',
         ),
       ),
   })
@@ -360,6 +457,7 @@ export const RequirementsDocSchema = z
 /** What a caller may legally supply when creating a requirement. */
 export const CreateRequirementAttrsSchema = z
   .object({
+    key: f.key.optional(),
     patternType: f.patternType,
     systemName: f.systemName,
     systemResponse: f.systemResponse,
@@ -369,6 +467,7 @@ export const CreateRequirementAttrsSchema = z
     priority: f.priority.optional(),
     status: f.status.optional(),
     verificationMethod: f.verificationMethod.optional(),
+    verificationNote: f.verificationNote.optional(),
   })
   .describe(
     lines(
@@ -386,6 +485,7 @@ export const CreateRequirementAttrsSchema = z
 // ---------------------------------------------------------------------------
 
 export const RequirementCreateInputShape = {
+  key: f.key.optional(),
   patternType: f.patternType,
   systemName: f.systemName,
   systemResponse: f.systemResponse,
@@ -395,6 +495,7 @@ export const RequirementCreateInputShape = {
   priority: f.priority.optional(),
   status: f.status.optional(),
   verificationMethod: f.verificationMethod.optional(),
+  verificationNote: f.verificationNote.optional(),
 }
 
 export const RequirementUpdateInputShape = {
@@ -564,10 +665,18 @@ export type GlossaryEntry = {
   aliases: string[]
 }
 
+/**
+ * One reviewed finding waiver. Derived from {@link WaiverSchema} (like
+ * {@link Requirement} from its schema) so the optional `requirementId` carries
+ * the exact `string | undefined` shape the load-time parse produces.
+ */
+export type Waiver = z.infer<typeof WaiverSchema>
+
 export type RequirementsDoc = {
   schemaVersion: number
   requirements: Record<string, Requirement>
   glossary: GlossaryEntry[]
+  waivers: Waiver[]
 }
 
 export const SCHEMA_VERSION = 2

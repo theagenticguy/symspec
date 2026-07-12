@@ -120,6 +120,11 @@ export function applyChange(doc: RequirementsDoc, raw: unknown): RequirementsDoc
       if (attrs.trigger !== undefined) partial.trigger = attrs.trigger
       if (attrs.verificationMethod !== undefined)
         partial.verificationMethod = attrs.verificationMethod
+      if (attrs.verificationNote !== undefined) partial.verificationNote = attrs.verificationNote
+      // Stable human key (optional, immutable). Uniqueness is enforced at the
+      // command layer (ERR_DUPLICATE_KEY) before the Change is built, so the
+      // create path just persists it when present.
+      if (attrs.key !== undefined) partial.key = attrs.key
       d.requirements[change.id] = partial
       break
     }

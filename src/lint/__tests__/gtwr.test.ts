@@ -200,3 +200,59 @@ describe('T-AC-3-2: enum reachability (AC-6-3 append-only guard)', () => {
     for (const code of produced) expect(GtwrCodes).toContain(code)
   })
 })
+
+describe('GtWR bare-number rules — standard-identifier allowlist (field-report fix)', () => {
+  // A number that is part of a standard's NAME ("RFC 9457", "HTTP 401") is an
+  // identifier, not a units-less quantity, so R6 (missing-units) and R33
+  // (missing-tolerance) must NOT fire on it. Includes the hyphenated
+  // "RFC-9457" form the field report explicitly hit.
+  const STANDARD_IDENTIFIER_SENTENCES: ReadonlyArray<string> = [
+    'the API shall return an RFC 9457 problem document',
+    'the API shall emit an RFC-9457 response',
+    'the client shall handle an HTTP 401 response',
+    'the service shall emit an ISO 8601 timestamp',
+    'the parser shall accept an IEEE 754 float',
+  ]
+
+  for (const sentence of STANDARD_IDENTIFIER_SENTENCES) {
+    it(`GTWR_R6_MISSING_UNITS does NOT fire on: "${sentence}"`, () => {
+      const findings = checkGtWRules(makeReq(sentence), sentence)
+      expect(findings.find((f) => f.code === 'GTWR_R6_MISSING_UNITS')).toBeUndefined()
+    })
+
+    it(`GTWR_R33_MISSING_TOLERANCE does NOT fire on: "${sentence}"`, () => {
+      const findings = checkGtWRules(makeReq(sentence), sentence)
+      expect(findings.find((f) => f.code === 'GTWR_R33_MISSING_TOLERANCE')).toBeUndefined()
+    })
+  }
+
+  // REGRESSION: the allowlist must not over-suppress genuine bare quantities.
+  const GENUINE_BARE_SENTENCES: ReadonlyArray<string> = [
+    'the system shall store 42 records',
+    'the buffer shall retain 128 blocks',
+  ]
+
+  for (const sentence of GENUINE_BARE_SENTENCES) {
+    it(`GTWR_R6_MISSING_UNITS STILL fires on genuine bare quantity: "${sentence}"`, () => {
+      const findings = checkGtWRules(makeReq(sentence), sentence)
+      const r6 = findings.find((f) => f.code === 'GTWR_R6_MISSING_UNITS')
+      expect(r6, `R6 should fire on "${sentence}"`).toBeDefined()
+      if (!r6) return
+      expect(r6.severity).toBe('error')
+      assertSpanValid(r6, sentence)
+    })
+  }
+
+  it('a mixed sentence flags the real bare number but not the standard id', () => {
+    // "HTTP 401" is a standard id (suppressed); the trailing "5" is a genuine
+    // bare quantity that must still be flagged by R6.
+    const sentence = 'the auth service shall return HTTP 401 within 5'
+    const findings = checkGtWRules(makeReq(sentence), sentence)
+    const r6 = findings.filter((f) => f.code === 'GTWR_R6_MISSING_UNITS')
+    // Exactly one R6 finding, and it points at the bare "5" — not the 401.
+    expect(r6).toHaveLength(1)
+    const finding = r6[0]!
+    assertSpanValid(finding, sentence)
+    expect(sentence.slice(finding.span[0], finding.span[1])).toBe('5')
+  })
+})

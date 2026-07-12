@@ -73,6 +73,12 @@ export const EnvelopeTypeSchema = z.enum([
   'glossary',
   // Semantic-tier model pre-fetch (appended — AC-9-4 pre-warm).
   'download-model',
+  // Batch mutation from a JSONL op stream (appended — wishlist #1).
+  'apply',
+  // Reviewed finding-waiver management (appended — wishlist #3).
+  'waive',
+  // Agent-host skill installation (appended — `install`).
+  'install',
 ])
 
 /** A single envelope `type` discriminant. */

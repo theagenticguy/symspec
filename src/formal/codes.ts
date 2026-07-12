@@ -88,6 +88,11 @@ export const FndCodeSchema = z.enum([
   'FND_AMBIGUITY_NEEDS_JUDGMENT',
   // Bounded temporal tier (AC-33-2) — sound-for-UNSAT verdict over a trace bound
   'FND_TEMPORAL_CONTRADICTION',
+  // Formal-coverage disclosure (appended) — the formal tier evaluated ZERO
+  // pairs (no two requirements shared an atom), so `check` performed no
+  // cross-requirement conflict analysis. An info finding so silence that looks
+  // like a pass is loud instead.
+  'FND_NO_PAIRS_CHECKED',
 ])
 
 export type FndCode = z.infer<typeof FndCodeSchema>
@@ -207,6 +212,11 @@ export const FndCodeMeta = {
     .literal('FND_TEMPORAL_CONTRADICTION')
     .describe(
       'error — a set of requirements is temporally inconsistent under bounded LTL→SMT (no trace of length ≤ k satisfies them jointly); sound-for-UNSAT, evidence carries {bound,complete:false}. Opt-in via `check --temporal`.',
+    ),
+  FND_NO_PAIRS_CHECKED: z
+    .literal('FND_NO_PAIRS_CHECKED')
+    .describe(
+      'info — the formal tier evaluated 0 candidate pairs (no two requirements shared an atom), so no cross-requirement conflict/subsumption analysis actually ran. Silence here is not a consistency certificate; consider glossary entries to align vocabulary so related requirements share atoms.',
     ),
 } satisfies Record<FndCode, z.ZodLiteral<FndCode>>
 
