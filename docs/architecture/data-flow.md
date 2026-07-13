@@ -76,7 +76,7 @@ sequenceDiagram
 
 The semantic tier separates a fuzzy proposal from a deterministic verdict. Embeddings PROPOSE that two differently-worded responses mean the same thing; the committed glossary DECIDEs by canonicalizing them to one atom; the SMT tier then PROVES any contradiction the shared atom exposes. The embedding backend never decides a conflict — its only durable effect is a suggested glossary entry (`src/formal/embed.ts:1-17`, ~240 LOC).
 
-`findSimilarSemantic` (`src/formal/semantic.ts:76`, ~132 LOC) is opt-in (`check --semantic`); the CLI lazily loads the embedder only then (`src/cli/index.ts:356-373`), so the default `check` never touches the model. `loadEmbedder` (`src/formal/embed.ts:205`) resolves the pinned `Xenova/bge-base-en-v1.5` assets through `ensureModelAssets` (`src/formal/model-cache.ts:177`, ~237 LOC), which sha256-verifies every cached file and throws `ERR_EMBED_MODEL_MISSING` on a miss (`src/formal/embed.ts:46`). For each same-system pair that did NOT already unify via `atomize`, it embeds both responses (CLS-pooled, L2-normalized so dot product is cosine — `cosine` at `src/formal/embed.ts:231`) and, above threshold 0.82 (`src/formal/semantic.ts:45`), emits an info `FND_SIMILAR_SEMANTIC` suggesting `symspec glossary add`. Only after the agent commits that entry does the glossary index (`src/formal/atomize.ts:96`) feed it back into `atomize`, collapsing the paraphrases onto one atom so Flow 2 can prove the conflict.
+`findSimilarSemantic` (`src/formal/semantic.ts:76`, ~132 LOC) is opt-in (`check --semantic`); the CLI lazily loads the embedder only then (`src/cli/index.ts:356-373`), so the default `check` never touches the model. `loadEmbedder` (`src/formal/embed.ts:205`) resolves the pinned `Xenova/bge-base-en-v1.5` assets through `ensureModelAssets` (`src/formal/model-cache.ts:177`, ~237 LOC), which sha256-verifies every cached file and throws `ERR_EMBED_MODEL_MISSING` on a miss (`src/formal/embed.ts:46`). For each same-system pair that did NOT already unify via `atomize`, it embeds both responses (CLS-pooled, L2-normalized so dot product is cosine — `cosine` at `src/formal/embed.ts:231`) and, above threshold 0.72 (`src/formal/semantic.ts:45`), emits an info `FND_SIMILAR_SEMANTIC` suggesting `symspec glossary add`. Only after the agent commits that entry does the glossary index (`src/formal/atomize.ts:96`) feed it back into `atomize`, collapsing the paraphrases onto one atom so Flow 2 can prove the conflict.
 
 ```mermaid
 sequenceDiagram
@@ -95,7 +95,7 @@ sequenceDiagram
     Sem->>Sem: skip pairs already unified by atomize
     Sem->>Emb: embed(response texts)
     Emb-->>Sem: L2-normalized vectors
-    Sem->>Sem: cosine ≥ 0.82 ?
+    Sem->>Sem: cosine ≥ 0.72 ?
     Sem-->>Agent: FND_SIMILAR_SEMANTIC (PROPOSE glossary add)
     Agent->>Atom: symspec glossary add (DECIDE, commit)
     Atom->>SMT: re-run check — paraphrases share one atom

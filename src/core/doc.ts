@@ -31,6 +31,7 @@ export function emptyDoc(): Doc {
     requirements: {},
     glossary: [],
     waivers: [],
+    antonyms: [],
   }
 }
 

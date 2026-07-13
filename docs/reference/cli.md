@@ -105,11 +105,17 @@ symspec check [file] [--solver <backend>] [--semantic] [--temporal] [--emit-smt2
 - `--solver <backend>` — formal backend: `z3-wasm` (default, in-process WASM) | `z3-bin` | `cvc5` (external binary cross-check). An unknown value is an `ERR_USAGE`; a missing binary is `ERR_SOLVER_MISSING` surfaced before any check runs, carrying the backend's mise-install suggestion (`src/cli/index.ts:301-304`, `src/cli/index.ts:342-352`, `src/cli/index.ts:396-409`, `src/cli/index.ts:419-424`).
 - `--solver-path <path>` — explicit path to an external z3/cvc5 binary (implies the binary backend) (`src/cli/index.ts:305`, `src/cli/index.ts:342-343`).
 - `--semantic` — opt-in: embed responses with the local BGE-ONNX model to PROPOSE glossary merges for paraphrased conflicts (`FND_SIMILAR_SEMANTIC`) plus the embedding similarity graph proposals (`FND_MISSING_TRACE_LINK`, `FND_DUPLICATE_CLUSTER`). The model loads lazily and only under this flag; an unloadable model surfaces `ERR_EMBED_MODEL_MISSING` before the run (`src/cli/index.ts:306-309`, `src/cli/index.ts:360-373`).
-- `--semantic-threshold <n>` — cosine threshold for `--semantic` (default 0.82) (`src/cli/index.ts:310`).
+- `--semantic-threshold <n>` — cosine threshold for `--semantic` (default 0.72; propose-only tier tuned to favor recall against the model's real paraphrase cosine band — see `DEFAULT_SEMANTIC_THRESHOLD` in `src/formal/semantic.ts` for the rationale) (`src/cli/index.ts:310`).
 - `--temporal` — opt-in: bounded LTL→SMT temporal-ordering conflict detection (`FND_TEMPORAL_CONTRADICTION`). Pure Z3-WASM, no model. Sound-for-UNSAT: a conflict is reported only when no trace of length ≤ k satisfies the requirements jointly; a `sat` result at the bound is not a consistency certificate (`src/cli/index.ts:311-314`, `src/cli/index.ts:377-380`).
 - `--temporal-bound <k>` — trace bound k for `--temporal` (default 10) (`src/cli/index.ts:315`).
+- `--strict` — opt-in coverage gate: fail with exit `3` when the run is INCONCLUSIVE — ≥2 requirements but nothing was verified across them (`data.verified` is `false`). The machine-readable form of "silence is not a consistency certificate"; off by default so the base contract is unchanged.
+- `--fail-on-unmatched <n>` — opt-in coverage gate: fail with exit `3` when `residualRisk.unmatchedAtoms` exceeds `<n>` (atoms owned by exactly one requirement, never cross-compared). `0` fails on any unmatched atom. Independent of `--strict` — either gate tripping fails the run.
 
-Wires all tiers into one pass: Tier-0 structural checks, INCOSE GtWR + free-tier lint rules, the always-on deterministic ambiguity family, and the in-process SMT formal tier (contradiction / subsumption / vacuity / completeness / similarity / needs-review over the gate-included subset, plus the numeric/arithmetic conflict tier over ALL requirements) (`src/cli/index.ts:382-383`, `src/pipeline/check.ts:311`). Sound modulo atomization: every reported conflict is real, but silence is not a consistency certificate. Read-only. Exit `0` = no error finding, `1` = pass/fail gate failed on findings, `2` = operational error. The success payload may also carry `emittedSmt2` and `binaryCrossCheck` (`src/cli/index.ts:411-418`).
+When `--semantic` is set, the pass also PROPOSES opposition candidates (`FND_OPPOSITION_CANDIDATE`, info-tier): same-system responses that share an object but differ on the leading verb (e.g. "open the valve" vs "shut the valve") and are not already unified as antonyms, suggesting a concrete `symspec antonym add`. Propose-only — cosine is only a topical-relatedness floor, the shared-object/different-verb structure is the signal.
+
+Wires all tiers into one pass: Tier-0 structural checks, INCOSE GtWR + free-tier lint rules, the always-on deterministic ambiguity family, and the in-process SMT formal tier (contradiction / subsumption / vacuity / completeness / similarity / needs-review over the gate-included subset, plus the numeric/arithmetic conflict tier over ALL requirements). The contradiction tier also computes a guard-implication closure: a bridge requirement that establishes a state ("while authenticated, be verified") links a rule guarded on `authenticated` to one guarded on `verified`, so a transitive conflict becomes provable with the bridge named in the core. Sound modulo atomization: every reported conflict is real, but silence is not a consistency certificate.
+
+The success payload carries a first-class `data.verified` boolean — `false` when ≥2 requirements produced no cross-requirement comparison (inconclusive), distinguishing "verified clean" from "nothing could be checked" — plus a `residualRisk` summary, and may also carry `emittedSmt2` and `binaryCrossCheck`. Read-only. Exit `0` = no error finding (and, if a strict gate was requested, it passed), `1` = pass/fail gate failed on an error-severity finding, `2` = operational error, `3` = a requested strict coverage gate tripped on an otherwise error-free run.
 
 Envelope `type`: `check`.
 
@@ -232,7 +238,24 @@ symspec glossary list [--file <path>]
 - `list` — list the committed synonym groups (read-only) (`src/cli/index.ts:661-670`).
 - `--file <path>` — document path override on each subcommand (`src/cli/index.ts:634`, `src/cli/index.ts:650`, `src/cli/index.ts:664`).
 
-The formal tier canonicalizes response atoms through this glossary, so agent-confirmed synonyms collide on one atom and a paraphrased contradiction becomes provable by `check`. This is the DECIDE half of the semantic tier: `check --semantic` only PROPOSES entries (`FND_SIMILAR_SEMANTIC`); confirming them here changes a verdict. Mutating ops re-save the document (`src/cli/descriptions.ts:160-166`).
+The formal tier canonicalizes response atoms through this glossary, so agent-confirmed synonyms collide on one atom and a paraphrased contradiction becomes provable by `check`. This is the DECIDE half of the semantic tier: `check --semantic` only PROPOSES entries (`FND_SIMILAR_SEMANTIC`); confirming them here changes a verdict. The glossary doubles as a quantity-alias map for the numeric tier — canonicalizing a quantity label ("keep valid for" ≡ "expire after") makes two phrasings of one physical quantity share a Real variable so a same-quantity numeric contradiction becomes provable. Mutating ops re-save the document (`src/cli/descriptions.ts:160-166`).
+
+## antonym (add / remove / list)
+
+```
+symspec antonym add <a> <b> [--file <path>]
+symspec antonym remove <a> <b> [--file <path>]
+symspec antonym list [--file <path>]
+```
+
+- `add <a> <b>` — assert two response verb-heads are polar opposites (idempotent; matches either order). Rejects a self-pair or a pair that would make the antonym classes inconsistent (`ERR_USAGE`).
+- `remove <a> <b>` — retract an antonym pair (no-op if absent).
+- `list` — list the committed antonym pairs (read-only).
+- `--file <path>` — document path override on each subcommand.
+
+The opposition analogue of `glossary`. An `antonym add open shut` asserts the two verb-heads are polar opposites, so "open the valve" and "shut the valve" atomize to the SAME atom with OPPOSITE polarity and `check` proves the contradiction the built-in seed antonym table (grant/revoke, allow/deny, …) missed. The DECIDE half for opposition; `check --semantic` PROPOSES candidates (`FND_OPPOSITION_CANDIDATE`). Mutating ops re-save the document.
+
+Envelope `type`: `antonym`.
 
 ## download-model
 

@@ -3,6 +3,7 @@ import pkg from '../../../package.json' with { type: 'json' }
 import { ErrCodeMeta, ErrCodeSchema } from '../../core/codes.js'
 import { f } from '../../core/schema.js'
 import { FndCodeMeta, FndCodeSchema } from '../../formal/codes.js'
+import { DEFAULT_SEMANTIC_THRESHOLD } from '../../formal/semantic.js'
 import { GtwrCodeMeta, GtwrCodeSchema } from '../../lint/codes.js'
 import { buildManifest, ManifestSchema } from '../manifest.js'
 
@@ -95,6 +96,43 @@ describe('manifest (AC-6-1)', () => {
       properties: Record<string, { description?: string }>
     }
     expect(showArgs.properties.id?.description).toBe(f.id.description)
+  })
+
+  it("apply's doc path documents the `--doc` option, not the shared `--file`", () => {
+    // The flagship bug: apply's real commander option is `--doc <path>` (its
+    // positional [file] is the JSONL op stream), so the manifest must tell an
+    // agent to use --doc. A regression to the shared docFileOpt would document
+    // --file and mislead the agent into an ERR_USAGE.
+    const apply = buildManifest().commands.find((c) => c.name === 'apply')
+    const args = apply?.arguments as { properties: Record<string, { description?: string }> }
+    const doc = args.properties.doc?.description ?? ''
+    expect(doc).toContain('`--doc <path>`')
+    expect(doc).not.toContain('`--file <path>`')
+    expect(doc).toContain('Example: --doc ./requirements.json')
+  })
+
+  it('surfaces the semantic tier flags with the code-sourced default threshold', () => {
+    // AC-9-5: an agent discovering the manifest must see --semantic and
+    // --semantic-threshold; the documented default is the ONE constant from
+    // formal/semantic.ts so it cannot drift from the code.
+    const check = buildManifest().commands.find((c) => c.name === 'check')
+    const props = (check?.arguments as { properties: Record<string, { description?: string }> })
+      .properties
+    expect(props.semantic?.description).toContain('`--semantic`')
+    expect(props.semantic?.description).toContain('FND_SIMILAR_SEMANTIC')
+    const st = props['semantic-threshold']?.description ?? ''
+    expect(st).toContain('`--semantic-threshold <n>`')
+    expect(st).toContain(String(DEFAULT_SEMANTIC_THRESHOLD))
+  })
+
+  it('states the doc-path convention once at the top level (positional / --file / --doc)', () => {
+    // Item 7: an agent driving from the manifest can tell, per command group,
+    // how to pass the requirements-document path without reverse-engineering
+    // each field. The convention prose is a single top-level field.
+    const conventions = buildManifest().conventions
+    expect(conventions.docPath).toContain('Positional [file]')
+    expect(conventions.docPath).toContain('--file <path> option')
+    expect(conventions.docPath).toContain('--doc <path> option (apply)')
   })
 
   it('the error-code table derives from the exported ErrCodeSchema enum', () => {

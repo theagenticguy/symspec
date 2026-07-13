@@ -59,7 +59,7 @@ The SMT + neural tiers: atomization, guarded-implication encoding, Z3 backends, 
 - `finding.ts` — pure `evidence`-field enrichment mapping detector requirement ids to the audited atom table (`attachEvidence` `src/formal/finding.ts:175`, `attachEvidenceToAll` `:193`). (~171 LOC)
 - `subsumption.ts` — per-pair `FND_SUBSUMPTION` (one direction valid) / `FND_REDUNDANCY` (both) over pairwise candidates (`checkSubsumption` `src/formal/subsumption.ts:150`). (~164 LOC)
 - `antonyms.ts` — curated 15-pair seed antonym table unifying polar-opposite verbs onto one atom with opposite polarity (`SEED_ANTONYM_PAIRS` `src/formal/antonyms.ts:40`, `ANTONYM_INDEX` `:136`). (~137 LOC)
-- `semantic.ts` — paraphrase finder: cosine ≥ threshold (default 0.82) → info `FND_SIMILAR_SEMANTIC` suggesting a `glossary add`; never a verdict (`findSimilarSemantic` `src/formal/semantic.ts:76`). (~132 LOC)
+- `semantic.ts` — paraphrase finder: cosine ≥ threshold (default 0.72, recall-favoring — see `DEFAULT_SEMANTIC_THRESHOLD`) → info `FND_SIMILAR_SEMANTIC` suggesting a `glossary add`; never a verdict (`findSimilarSemantic` `src/formal/semantic.ts:76`). (~132 LOC)
 - `similar.ts` — `FND_SIMILAR_UNUNIFIED` review prompt for near-synonyms outside the seed table, via Jaccard (`findSimilarUnunified` `src/formal/similar.ts:86`). (~132 LOC)
 - `vacuity.ts` — relational vacuity: guard unsatisfiable given the rest of the spec = dead requirement (`checkVacuity` `src/formal/vacuity.ts:108`). (~118 LOC)
 - `backend.ts` — in-process WASM Z3 backend; memoizes the ~110 ms one-time `init()` and hands back a fresh named `Context` per session (`getContext` `src/formal/backend.ts:58`, `probeBackend` `:70`). (~79 LOC)

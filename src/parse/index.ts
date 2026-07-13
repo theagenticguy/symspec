@@ -23,6 +23,7 @@ export {
 } from './tier1.js'
 export type {
   EscalationTrigger,
+  ProposedSplit,
   Tier2Loader,
   Tier2Miss,
   Tier2Ok,
@@ -39,4 +40,5 @@ export {
   MAX_TIER1_TOKENS,
   repairWithWink,
   runTier2,
+  splitCompound,
 } from './tier2.js'

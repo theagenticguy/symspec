@@ -38,7 +38,7 @@ Failure:
 ```
 
 - `type` is a closed discriminant set (see the manifest `types` array):
-  `manifest`, `init`, `add`, `update`, `parse`, `check`, `certify`, `list`, `show`, `derive`, `satisfy`, `remove-edge`, `delete`, `export`, `error`, `glossary`, `download-model`, `apply`, `waive`, `install`.
+  `manifest`, `init`, `add`, `update`, `parse`, `check`, `certify`, `list`, `show`, `derive`, `satisfy`, `remove-edge`, `delete`, `export`, `error`, `glossary`, `download-model`, `apply`, `waive`, `install`, `antonym`.
 - Exit codes: **0** clean (warn/info findings do not fail), **1** at least one
   error-severity finding (success envelope still on stdout), **2** an
   `ERR_*` operational failure (error envelope on stdout).
@@ -69,6 +69,7 @@ Failure:
 | `symspec apply` | Apply a batch of mutation ops from JSONL (a file, or --stdin) in one process and one save. |
 | `symspec waive` | Record a reviewed, reasoned waiver that suppresses a finding code in `symspec check`. |
 | `symspec install` | Install the symspec skill into your coding agent so it discovers and drives symspec automatically. |
+| `symspec antonym` | Manage the document's committed antonym pairs: `antonym add <a> <b>`, `antonym remove <a> <b>`, `antonym list`. |
 
 ## Recommended workflow
 
@@ -193,3 +194,4 @@ Failure:
 | `FND_AMBIGUITY_NEEDS_JUDGMENT` | info — pragmatic/contextual ambiguity was not assessed deterministically; a structured prompt to hand the requirement to an LLM/agent review. Never a verdict, never in the reproducibility hash. |
 | `FND_TEMPORAL_CONTRADICTION` | error — a set of requirements is temporally inconsistent under bounded LTL→SMT (no trace of length ≤ k satisfies them jointly); sound-for-UNSAT, evidence carries {bound,complete:false}. Opt-in via `check --temporal`. |
 | `FND_NO_PAIRS_CHECKED` | info — the formal tier evaluated 0 candidate pairs (no two requirements shared an atom), so no cross-requirement conflict/subsumption analysis actually ran. Silence here is not a consistency certificate; consider glossary entries to align vocabulary so related requirements share atoms. |
+| `FND_OPPOSITION_CANDIDATE` | info — two same-system responses share an object phrase but differ on the leading verb (e.g. "open the valve" vs "shut the valve"), a LIKELY antonym pair the seed/committed antonym tables have not unified. Propose-only: if the verbs are truly opposite, run `symspec antonym add <verbA> <verbB>` so the formal tier collapses them to one atom at opposite polarity and can prove any conflict. Never a verdict. |

@@ -86,6 +86,7 @@ const docOf = (...reqs: Requirement[]): RequirementsDoc => ({
   requirements: Object.fromEntries(reqs.map((r) => [r.id, r])),
   glossary: [],
   waivers: [],
+  antonyms: [],
 })
 const view = (id: string, systemResponse: string): ReqView => ({
   id,
@@ -216,6 +217,7 @@ describe('FND_* reachability (AC-6-3 — every documented code is reachable)', (
       'FND_AMBIGUITY_NEEDS_JUDGMENT',
       'FND_TEMPORAL_CONTRADICTION',
       'FND_NO_PAIRS_CHECKED',
+      'FND_OPPOSITION_CANDIDATE',
     ] as const) {
       expect(sources.includes(`code: '${code}'`), `no emit literal for ${code}`).toBe(true)
       reached.add(code)

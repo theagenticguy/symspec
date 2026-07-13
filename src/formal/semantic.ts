@@ -17,7 +17,8 @@
  * be unsound. Pairs already unified by atomize are skipped (nothing to bridge).
  */
 
-import { type Atom, atomize } from './atomize.js'
+import { ANTONYM_INDEX, type AntonymEntry } from './antonyms.js'
+import { type Atom, atomize, normalize } from './atomize.js'
 import type { Embedder } from './embed.js'
 
 /** An info-severity semantic-similarity finding (Appendix B `FND_SIMILAR_SEMANTIC`). */
@@ -42,13 +43,61 @@ export interface SemanticRequirement {
 
 /** Options for {@link findSimilarSemantic}. */
 export interface FindSimilarSemanticOptions {
-  /** Cosine threshold to fire a finding (default 0.82, `--semantic-threshold`). */
+  /**
+   * Cosine threshold to fire a finding (default {@link DEFAULT_SEMANTIC_THRESHOLD},
+   * overridable via `--semantic-threshold`).
+   */
   threshold?: number
   /** Glossary index (AC-9-2): pairs that already unify through it are skipped. */
   glossary?: ReadonlyMap<string, string>
 }
 
-const DEFAULT_THRESHOLD = 0.82
+/**
+ * Default cosine similarity above which a same-system, un-unified response pair
+ * is proposed as a glossary merge (`FND_SIMILAR_SEMANTIC`).
+ *
+ * ## What the number measures
+ *
+ * A cosine over CLS-pooled, L2-normalized `Xenova/bge-base-en-v1.5` embeddings
+ * (see {@link Embedder} / `embed.ts`). The pair's raw response phrasings are
+ * embedded with NO instruction prefix — BGE was trained with a retrieval query
+ * prefix ("Represent this sentence for searching relevant passages:"), so
+ * symmetric raw-text pairs score MORE COMPRESSED than the numbers quoted from
+ * BGE retrieval benchmarks. Do not calibrate this threshold against those
+ * benchmark figures; calibrate it against the real same-model, same-pooling,
+ * no-prefix band below.
+ *
+ * ## Measured separation band (this model + CLS pooling + no prefix)
+ *
+ * Measured over generic requirement-response pairs with the repo's own embedder
+ * (`loadEmbedder`), cosines cluster into two clearly separated bands:
+ *   - Unrelated same-domain pairs (different intent): ~0.44–0.58 — the noise
+ *     floor.
+ *   - Divergent-wording paraphrases (same intent, different head nouns/verbs):
+ *     ~0.75–0.79, e.g. "issue a session token" vs "issue a login credential"
+ *     ≈ 0.75, "reject the connection" vs "deny the request" ≈ 0.77.
+ *   - Near-identical paraphrases: ~0.87–0.89.
+ *
+ * The old default of 0.82 sat ABOVE the divergent-paraphrase band, so every
+ * genuine same-intent pair with different word choice was silently missed and
+ * only near-verbatim restatements ever fired.
+ *
+ * ## Why 0.72
+ *
+ * 0.72 sits below the divergent-paraphrase band (capturing the ~0.75 pairs, with
+ * a little headroom for slight wording variants) while keeping a ~0.14 margin
+ * above the ~0.58 unrelated-same-domain noise floor. This tier is PROPOSE-only:
+ * a `FND_SIMILAR_SEMANTIC` finding is an info-tier suggestion to add a glossary
+ * entry — it NEVER decides a verdict. A false suggestion costs the agent one
+ * ignored glossary line; a MISS hides a real paraphrased conflict the SMT tier
+ * could then prove. That asymmetry means recall is worth far more than precision
+ * here, so we tune to the recall-favoring edge of the safe gap rather than the
+ * middle.
+ *
+ * Overridable per-run via `--semantic-threshold` (mapped to
+ * {@link FindSimilarSemanticOptions.threshold}).
+ */
+export const DEFAULT_SEMANTIC_THRESHOLD = 0.72
 
 /** The scoped RESPONSE atom for a requirement, consulting the glossary (AC-9-2). */
 function responseAtom(req: SemanticRequirement, glossary?: ReadonlyMap<string, string>): Atom {
@@ -78,7 +127,7 @@ export async function findSimilarSemantic(
   embedder: Embedder,
   options: FindSimilarSemanticOptions = {},
 ): Promise<SimilarSemanticFinding[]> {
-  const threshold = options.threshold ?? DEFAULT_THRESHOLD
+  const threshold = options.threshold ?? DEFAULT_SEMANTIC_THRESHOLD
   if (reqs.length < 2) return []
 
   const { cosine } = await import('./embed.js')
@@ -124,6 +173,135 @@ export async function findSimilarSemantic(
           `the same thing, run \`symspec glossary add "${a.systemResponse}" "${b.systemResponse}"\` ` +
           'so the formal tier treats them as one atom, then re-run `symspec check` to surface any ' +
           'conflict the shared atom exposes. This is a suggestion, not a verdict.',
+      })
+    }
+  }
+
+  return findings
+}
+
+/** An info-severity opposition-candidate finding (Appendix B `FND_OPPOSITION_CANDIDATE`). */
+export interface OppositionCandidateFinding {
+  readonly code: 'FND_OPPOSITION_CANDIDATE'
+  readonly severity: 'info'
+  /** Both requirement ids, lexicographically ordered for stability. */
+  readonly requirementIds: [string, string]
+  /** The two differing verb heads, ordered `[a, b]` as they should be committed. */
+  readonly verbs: [string, string]
+  /** The cosine similarity that confirmed topical relatedness, rounded to 3 dp. */
+  readonly cosine: number
+  readonly message: string
+}
+
+/**
+ * Default cosine FLOOR above which two same-object/different-verb responses are
+ * topically related enough to propose as an opposition candidate (#6).
+ *
+ * ## Why a FLOOR, and why cosine is only a confirmation here
+ *
+ * Cosine CANNOT distinguish antonymy from synonymy — antonyms embed CLOSE
+ * (shared context/topic), not far. So low cosine does NOT signal opposition; it
+ * signals unrelatedness. The load-bearing opposition signal is DETERMINISTIC:
+ * two same-system responses that share an object remainder but differ on the
+ * leading verb and did not already unify through the antonym/glossary tables.
+ * Cosine is used only as a topical-relatedness FLOOR — to drop pairs whose
+ * shared object is coincidental noise — never as the primary signal. The floor
+ * is deliberately generous (below the synonym band) because the deterministic
+ * structural match already carries the precision.
+ */
+export const DEFAULT_OPPOSITION_COSINE_FLOOR = 0.5
+
+/** Split a normalized response body into `[head, rest]` (rest keeps no leading `_`). */
+function headAndRest(body: string): [string, string] {
+  const sep = body.indexOf('_')
+  if (sep === -1) return [body, '']
+  return [body.slice(0, sep), body.slice(sep + 1)]
+}
+
+/**
+ * Propose opposition candidates (#6): same-system response pairs that share an
+ * object remainder but differ on the leading verb and are NOT already unified as
+ * antonyms. Propose-only (info-tier) — it suggests `symspec antonym add`, which
+ * is what actually changes a verdict, mirroring how `FND_SIMILAR_SEMANTIC`
+ * suggests `glossary add`. Reuses the SAME embedder as the paraphrase pass; the
+ * cosine is only a topical-relatedness floor (see {@link DEFAULT_OPPOSITION_COSINE_FLOOR}).
+ *
+ * The `antonyms` index (default {@link ANTONYM_INDEX}, or a doc-augmented one) is
+ * consulted so a pair the antonym tables ALREADY unify is skipped — that pair is
+ * a proven-or-provable conflict, not a candidate needing confirmation.
+ */
+export async function findOppositionCandidates(
+  reqs: readonly SemanticRequirement[],
+  embedder: Embedder,
+  options: {
+    cosineFloor?: number
+    glossary?: ReadonlyMap<string, string>
+    antonyms?: ReadonlyMap<string, AntonymEntry>
+  } = {},
+): Promise<OppositionCandidateFinding[]> {
+  const floor = options.cosineFloor ?? DEFAULT_OPPOSITION_COSINE_FLOOR
+  const antonyms = options.antonyms ?? ANTONYM_INDEX
+  if (reqs.length < 2) return []
+
+  const { cosine } = await import('./embed.js')
+  const vectors = await embedder(reqs.map((r) => r.systemResponse))
+
+  const findings: OppositionCandidateFinding[] = []
+  const seen = new Set<string>()
+
+  for (let i = 0; i < reqs.length; i++) {
+    for (let j = i + 1; j < reqs.length; j++) {
+      const a = reqs[i] as SemanticRequirement
+      const b = reqs[j] as SemanticRequirement
+      if (a.systemName !== b.systemName) continue
+
+      // Already unified (glossary/antonym/identical) ⇒ not a candidate.
+      const atomA = responseAtom(a, options.glossary)
+      const atomB = responseAtom(b, options.glossary)
+      if (atomA.name === atomB.name) continue
+
+      // Structural opposition shape: same object remainder, different verb head.
+      const [headA, restA] = headAndRest(normalize(a.systemResponse))
+      const [headB, restB] = headAndRest(normalize(b.systemResponse))
+      if (restA === '' || restA !== restB) continue
+      if (headA === headB) continue
+
+      // Skip pairs the antonym tables ALREADY relate — those unify (handled
+      // above) or are a real conflict, not a candidate to propose.
+      const entryA = antonyms.get(headA)
+      const entryB = antonyms.get(headB)
+      if (entryA !== undefined && entryB !== undefined && entryA.canonical === entryB.canonical) {
+        continue
+      }
+
+      const key = pairKey(a.id, b.id)
+      if (seen.has(key)) continue
+
+      const va = vectors[i]
+      const vb = vectors[j]
+      if (va === undefined || vb === undefined) continue
+      // Cosine is a topical-relatedness FLOOR only (antonyms embed close), not
+      // the opposition signal — the shared-object/different-verb structure is.
+      const score = cosine(va, vb)
+      if (score < floor) continue
+
+      seen.add(key)
+      const [lo, hi] = a.id < b.id ? [a.id, b.id] : [b.id, a.id]
+      findings.push({
+        code: 'FND_OPPOSITION_CANDIDATE',
+        severity: 'info',
+        requirementIds: [lo, hi],
+        verbs: [headA, headB],
+        cosine: round3(score),
+        message:
+          `${lo} and ${hi} respond under the same system with the same object but different ` +
+          `leading verbs ("${headA}" vs "${headB}"). These verbs differ, but embeddings CANNOT ` +
+          'tell opposites (open/shut) from synonyms (delete/remove) — decide which these are: ' +
+          `if they are polar OPPOSITES, run \`symspec antonym add ${headA} ${headB}\` (the formal ` +
+          'tier will then collapse them to one atom at opposite polarity and can prove a conflict); ' +
+          `if they are SYNONYMS, run \`symspec glossary add "${a.systemResponse}" "${b.systemResponse}"\` ` +
+          'instead. Committing the WRONG one manufactures a false contradiction, so confirm the ' +
+          'direction before applying. This is a suggestion, not a verdict.',
       })
     }
   }

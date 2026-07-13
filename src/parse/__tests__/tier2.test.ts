@@ -5,6 +5,7 @@ import {
   MAX_TIER1_TOKENS,
   repairWithWink,
   runTier2,
+  splitCompound,
   type WinkAnalyzer,
   type WinkToken,
 } from '../tier2.js'
@@ -246,6 +247,126 @@ describe('AC-2-6: the default loader is lazy (wink-nlp not statically imported)'
 })
 
 // ---------------------------------------------------------------------------
+// Compound splitter (wishlist #6): propose the two split single requirements.
+//
+// A UPOS analyzer that additionally tags a small verb vocabulary as VERB and
+// coordinators as CCONJ — the signal the splitter's soundness guard needs. A
+// verb OPENING a clause after "and" (with a non-verb to its left) is a genuine
+// clause boundary; a verb-and-verb pair sharing one object is not.
+// ---------------------------------------------------------------------------
+const SPLIT_VERBS = new Set([
+  'validate',
+  'issue',
+  'log',
+  'authenticate',
+  'lock',
+  'provide',
+  'read',
+  'write',
+  'redirect',
+])
+
+function splitTag(word: string): string {
+  const w = word.toLowerCase()
+  if (w === 'and' || w === 'or') return 'CCONJ'
+  if (SPLIT_VERBS.has(w)) return 'VERB'
+  return fakeTag(word)
+}
+
+const splitAnalyzer: WinkAnalyzer = (text) =>
+  tokenize(text).map((value): WinkToken => {
+    const lower = value.toLowerCase()
+    return { value, pos: splitTag(value), lemma: lower, negationFlag: false }
+  })
+
+describe('wishlist #6: splitCompound proposes the split requirements', () => {
+  it('"shall <A> and <B>" splits into two single requirements sharing the subject', () => {
+    const splits = splitCompound(
+      'the auth service shall validate the token and issue a session',
+      splitAnalyzer,
+    )
+    expect(splits).toHaveLength(2)
+    expect(splits[0]).toMatchObject({
+      patternType: 'ubiquitous',
+      systemName: 'auth service',
+      systemResponse: 'validate the token',
+      negated: false,
+    })
+    expect(splits[1]).toMatchObject({
+      systemName: 'auth service',
+      systemResponse: 'issue a session',
+    })
+  })
+
+  it('carries a shared leading trigger across both event-driven halves', () => {
+    const splits = splitCompound(
+      'when the user logs in, the auth service shall validate the token and issue a session',
+      splitAnalyzer,
+    )
+    expect(splits).toHaveLength(2)
+    for (const s of splits) {
+      expect(s.patternType).toBe('event-driven')
+      expect(s.trigger).toBe('the user logs in')
+      expect(s.systemName).toBe('auth service')
+    }
+    expect(splits.map((s) => s.systemResponse)).toEqual(['validate the token', 'issue a session'])
+  })
+
+  it('does NOT split a shared-object coordination ("read and write access")', () => {
+    // "provide read and write access": VERB `and` VERB sharing one object → the
+    // guard must reject rather than propose two broken halves.
+    expect(
+      splitCompound('the database shall provide read and write access', splitAnalyzer),
+    ).toEqual([])
+  })
+
+  it('does NOT split a coordinated noun phrase ("the request and the response")', () => {
+    // "and" followed by a determiner is a coordinated NP, not a new clause.
+    expect(
+      splitCompound('the gateway shall log the request and the response', splitAnalyzer),
+    ).toEqual([])
+  })
+
+  it('splits an explicit second modal ("shall <A> and shall <B>")', () => {
+    const splits = splitCompound(
+      'the auth service shall authenticate the user and shall log the attempt',
+      splitAnalyzer,
+    )
+    expect(splits).toHaveLength(2)
+    expect(splits.map((s) => s.systemResponse)).toEqual([
+      'authenticate the user',
+      'log the attempt',
+    ])
+  })
+
+  it('returns [] when there is no modal to pivot on', () => {
+    expect(splitCompound('fast responses and low latency', splitAnalyzer)).toEqual([])
+  })
+
+  it('is deterministic — identical tokens yield byte-identical splits', () => {
+    const text = 'the auth service shall validate the token and issue a session'
+    const a = splitCompound(text, splitAnalyzer)
+    const b = splitCompound(text, splitAnalyzer)
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b))
+  })
+
+  it('runTier2 attaches proposedSplits on a confident compound, omits it otherwise', async () => {
+    const good = await runTier2('the auth service shall validate the token and issue a session', {
+      load: async () => splitAnalyzer,
+    })
+    expect(good.proposedSplits).toBeDefined()
+    expect(good.proposedSplits).toHaveLength(2)
+
+    const shared = await runTier2('the database shall provide read and write access', {
+      load: async () => splitAnalyzer,
+    })
+    // Still a compound trigger, but the splitter's guard rejected → no proposal.
+    expect(shared.triggers).toContain('compound-conjunction')
+    expect(shared.proposedSplits).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Real-model contract test (validate-parse-lint.md finding 4).
 //
 // The unit tests above use a UPOS fake. This block loads the ACTUAL
@@ -298,5 +419,17 @@ describe('AC-2-6: real wink-eng-lite-web-model integration (tagset + repair)', (
       expect(nested.slots.systemName).toBe('editor')
       expect(nested.slots.systemResponse).toMatch(/persist/)
     }
+
+    // (e) compound split through the real model: a genuine two-clause compound
+    // splits into two clean halves, while a shared-object coordination does not.
+    const genuine = splitCompound(
+      'the auth service shall validate the token and issue a session',
+      analyze,
+    )
+    expect(genuine).toHaveLength(2)
+    expect(genuine.map((s) => s.systemResponse)).toEqual(['validate the token', 'issue a session'])
+    expect(
+      splitCompound('the database shall provide read and write access to users', analyze),
+    ).toEqual([])
   })
 })

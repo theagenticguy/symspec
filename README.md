@@ -158,7 +158,7 @@ not a heuristic guess:
 | **Writing-quality lint** | broken cross-references, circular links, missing pieces, and 24 industry-standard writing rules | plain text rules from the *Guide to Writing Requirements* by INCOSE (the International Council on Systems Engineering); each flag includes the offending text span and a fix |
 | **Logic checker** *(the core)* | two requirements that can't both be true; one that makes another redundant; a rule that can never actually fire | an automated theorem prover (**Z3**) running in-process — nothing to install — that shows the minimal reason for each verdict |
 | **Numbers checker** | conflicting limits, like "under 2 seconds" vs "over 3 seconds" on the same measurement | the same prover, reasoning about arithmetic |
-| **Timing checker** *(opt-in)* | ordering and timing clashes, like "must eventually open" vs "must never open" | translates timing rules into logic the prover can test over a bounded timeline |
+| **Timing checker** *(opt-in)* | ordering and timing clashes, like "on overheat, open the relief valve" vs "the controller shall not open the relief valve" (phrased without absolute words like *never*, so the lint gate lets both reach the prover) | translates timing rules into logic the prover can test over a bounded timeline |
 | **Ambiguity checker** | vague words, "and/or" that could be read two ways, pronouns with no clear referent | fixed detectors; genuinely judgment-call ambiguity is *flagged for a human/agent*, never silently guessed |
 | **Meaning-similarity layer** *(opt-in)* | conflicts hidden behind different wording ("issue a token" vs "grant a credential") | a small language model running **locally on your machine** (no internet, no external service) that *suggests* treating two phrasings as synonyms — you confirm, then the logic checker proves the conflict |
 | **Formal certificate** *(opt-in)* | a re-checkable proof artifact for the whole spec | the **Lean 4** proof assistant; keeps a file anyone can independently verify later |
@@ -256,7 +256,15 @@ package — **no external binary is required for a working `symspec check`**.
 - **Findings** — contradiction (`contradiction.ts`) runs per-context-group
   reachability over the *whole* spec and, on `unsat`, extracts the **minimal**
   unsat core, filters context assertions, and emits `FND_CONTRADICTION` with
-  exactly the responsible `REQ-*` ids. Subsumption/redundancy
+  exactly the responsible `REQ-*` ids. It also computes a **guard-implication
+  closure** (`guard-implication.ts`): a bridge requirement that establishes a
+  state ("while authenticated, be verified") is re-encoded as
+  `bridge ⇒ (authenticated ⇒ verified)` and added to the conjunction, so the
+  solver links a rule guarded on `authenticated` to one guarded on `verified` and
+  a *transitive* conflict becomes provable — with the bridge named in the core.
+  Sound: it only re-expresses an implication the spec already asserts, and an
+  established state that matches no other rule's guard is dropped as inert.
+  Subsumption/redundancy
   (`subsumption.ts`) decide directional implication over pairwise candidates;
   vacuity (`vacuity.ts`) is relational across the whole spec; a completeness
   heuristic (`incomplete.ts`) emits `FND_INCOMPLETE` (info); a Jaccard pass
@@ -313,10 +321,16 @@ everything fuzzier is `info` and proposes, never decides.**
 - **Temporal/ordering (`src/formal/temporal.ts`, opt-in `--temporal`).** EARS
   patterns map to LTL (Dwyer/SPS via FRET semantics) and lower to a bounded
   finite-trace SMT encoding on the in-process Z3-WASM; temporally-unsatisfiable
-  sets (e.g. "eventually open the valve" vs "never open the valve") surface as
-  `FND_TEMPORAL_CONTRADICTION`. **Sound-for-UNSAT**: a reported conflict is real;
-  a `sat`-at-bound-`k` result is not a consistency certificate (`{bound, complete:
-  false}` in the evidence).
+  sets — e.g. an event-driven *"When the sensor reports overheat, the controller
+  shall open the relief valve"* against a ubiquitous *"The controller shall not
+  open the relief valve"* — surface as `FND_TEMPORAL_CONTRADICTION`. Note the
+  phrasing avoids absolute words (*never/always*): a bare *"never"* would trip the
+  `GTWR_R26_ABSOLUTE` error-severity lint and get the requirement *excluded* by
+  the forced-pipeline gate before it ever reached this tier, so the marquee
+  example uses *"shall not"* (only a `warn`) to stay verifiable. **Sound-for-UNSAT**:
+  a reported conflict is real; a `sat`-at-bound-`k` result is not a consistency
+  certificate (`{bound, complete: false}` in the evidence). See the runnable demo
+  below.
 - **Requirement similarity graph + DAG (`src/formal/graph.ts`, opt-in with
   `--semantic`).** A deterministic kNN graph (batch-invariant embedder, cosine
   quantized before threshold, id tie-breaks, union-find clustering) proposes
@@ -331,6 +345,58 @@ localization, escalating difficulty with a gap report — a standing regression
 gate that the deterministic tiers catch 100% of, and 20/20 across four tiers with
 the real embedding model.
 
+#### The temporal tier in action
+
+Add an event-driven obligation and an unconditional prohibition on the *same*
+response, then check with `--temporal`:
+
+```console
+$ symspec init reqs.symspec.json
+$ symspec add reqs.symspec.json --pattern event-driven --system "controller" \
+    --response "open the relief valve" --trigger "the sensor reports overheat"
+$ symspec add reqs.symspec.json --pattern ubiquitous --system "controller" \
+    --response "open the relief valve" --negated
+
+$ symspec check reqs.symspec.json --temporal
+```
+
+Rendered, the two requirements read *"When the sensor reports overheat, the
+controller shall open the relief valve."* and *"The controller shall not open
+the relief valve."* — the second is a global obligation to keep the valve shut,
+so on the step where the trigger fires there is no consistent trace. Because both
+sentences avoid absolute words (`shall not` is only a `warn`, not the
+`GTWR_R26_ABSOLUTE` error that `never` would raise), neither is excluded by the
+gate, and the temporal tier proves the clash:
+
+```jsonc
+{
+  "apiVersion": 1,
+  "type": "check",
+  "data": {
+    "findings": [
+      {
+        "code": "FND_TEMPORAL_CONTRADICTION",
+        "severity": "error",
+        "tier": "formal",
+        "requirementIds": ["056e554e-…", "8301fa27-…"],
+        "message": "Requirements 056e554e-…, 8301fa27-… are temporally inconsistent: no trace of length ≤ 10 satisfies them jointly (bounded LTL→SMT). A sound contradiction; not bound-dependent to refute.",
+        "evidence": { "atomTable": [], "temporal": { "bound": 10, "complete": false } }
+      }
+      // …here the propositional tier ALSO fires an FND_CONTRADICTION (same
+      // response atom, opposite polarity — hence "error": 2), plus a WARN-level
+      // GTWR_R16_NEGATION on "shall not" (not gated), never a GTWR_R26_ABSOLUTE.
+    ],
+    "excluded": [],
+    "counts": { "error": 2, "warn": 3, "info": 0 }
+  }
+}
+# exits 1 — an error-severity finding is present
+```
+
+The `{ bound: 10, complete: false }` evidence is the sound-for-UNSAT honesty
+marker: the conflict was proven within a 10-step trace, and a clean run at some
+bound is never read as a full consistency certificate.
+
 ### 4. Semantic — optional paraphrase bridging (local ONNX embeddings)
 
 `src/formal/embed.ts`, `model-cache.ts`, `semantic.ts`. Opt-in with
@@ -342,9 +408,15 @@ breaking determinism**, by splitting PROPOSE from DECIDE:
 
 - **PROPOSE (fuzzy).** For each unmerged same-system response pair, symspec
   embeds both phrasings and, when their cosine similarity clears a threshold
-  (default `0.82`, `--semantic-threshold`), emits an info-tier
+  (default `0.72`, `--semantic-threshold`), emits an info-tier
   `FND_SIMILAR_SEMANTIC` finding suggesting a concrete `symspec glossary add`.
-  Never a verdict. The embeddings run on the pinned `bge-base-en-v1.5` model via
+  Never a verdict. The `0.72` default is tuned to this model's *real* cosine band
+  (CLS-pooled, L2-normalized, no instruction prefix): divergent-wording
+  paraphrases land at ~0.75–0.79 and unrelated same-domain pairs at ~0.44–0.58,
+  so the old `0.82` sat above the paraphrase band and silently missed real
+  matches. Because this tier only *proposes* — a miss hides a provable conflict
+  while a false suggestion costs one ignored glossary line — it favors recall;
+  override per-run with `--semantic-threshold`. The embeddings run on the pinned `bge-base-en-v1.5` model via
   **`onnxruntime-web` (WASM execution provider, single-threaded) with a pure-JS
   tokenizer** — no native `onnxruntime-node` binary, no `@huggingface/transformers`.
   Vectors are CLS-pooled and L2-normalized (how BGE was trained), so cosine is a
@@ -354,6 +426,18 @@ breaking determinism**, by splitting PROPOSE from DECIDE:
   canonicalizes through it *before* the antonym step, so agent-confirmed
   synonyms collide on one atom and the existing SMT contradiction check proves
   the conflict. The verdict path reads the committed glossary, never the model.
+
+The **opposition** counterpart works the same way. Cosine cannot tell antonymy
+from synonymy — opposite words embed *close*, not far — so the opposition
+proposal is a *deterministic* structural signal (same object, different leading
+verb, not already unified), surfaced as an info-tier `FND_OPPOSITION_CANDIDATE`
+under `--semantic` that suggests `symspec antonym add <a> <b>`. Committing that
+pair is the DECIDE half: `atomize` folds it into the seed antonym table's signed
+union-find, so `open the valve` / `shut the valve` collapse to one atom at
+opposite polarity and `check` proves the contradiction the 15-pair seed table
+missed. `symspec antonym add/remove/list` manages the committed pairs; a pair
+that would make the antonym classes inconsistent is rejected at write time so
+`check` stays throw-free.
 
 The model (~110 MB) is fetched on first use into an OS cache dir and verified
 against a pinned sha256, so runs are reproducible after the first fetch and
@@ -408,8 +492,16 @@ prose.
   round-trips.
 - **Exit codes** — `0` clean (or warn/info only), `1` an `error`-severity
   finding is present (success envelope still on stdout), `2` an `ERR_*`
-  operational failure (error envelope on stdout). Output flags never change the
-  exit code.
+  operational failure (error envelope on stdout), `3` a requested strict coverage
+  gate tripped on an otherwise error-free run. Output flags never change the exit
+  code.
+- **Verified vs inconclusive** — `check`'s payload carries a first-class
+  `data.verified` boolean: `false` when ≥2 requirements produced no
+  cross-requirement comparison, so an agent can tell "verified clean" from
+  "nothing could be checked" without parsing `residualRisk`. Opt into gating that
+  with `check --strict` (fail an inconclusive run → exit `3`) or
+  `--fail-on-unmatched <n>` (fail when too many atoms went uncompared) — the
+  machine-readable form of "silence is not a consistency certificate".
 - **Output modes** — the JSON envelope is the zero-flag default. `--json` is a
   no-op compatibility alias; `--pretty` (alias `--human`) opts into prose. An
   agent never needs a flag to get parseable output.
@@ -421,6 +513,26 @@ prose.
   `.describe()` corpus that drives the `manifest`, so it stays in lockstep with
   the real command surface. Point your agent at `AGENTS.md` (and `symspec
   manifest`) as the source of truth for the command contract.
+
+### Which argument is the requirements document?
+
+How a command receives the requirements file depends on whether it already needs
+a required positional argument of its own (a UUID, key, or relation):
+
+- **Positional `[file]`** — commands with no other required positional take the
+  document as their first positional: `init`, `add`, `check`, `certify`, `list`,
+  `export`.
+- **`--file <path>` option** — commands whose positional is a requirement
+  reference (UUID/key/relation) take the document via the option instead, so the
+  positional stays unambiguous: `update`, `show`, `derive`, `satisfy`,
+  `remove-edge`, `delete`, `glossary`, `waive`.
+- **`--doc <path>` option** — `apply` is the exception: its positional is the
+  JSONL op stream, so the target document is the separate `--doc` flag.
+
+For every command the resolution precedence is the same (`src/cli/resolve-doc.ts`):
+explicit path/flag → the `SYMSPEC_DOC` environment variable → the default
+`./requirements.json`. An empty or whitespace-only value at any source is treated
+as absent and falls through to the next.
 
 ---
 

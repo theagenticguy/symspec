@@ -16,9 +16,10 @@
 
 import { describe, expect, it } from 'vitest'
 import { emptyDoc } from '../../core/doc.js'
-import type { RequirementsDoc } from '../../core/schema.js'
+import { CreateRequirementAttrsSchema, type RequirementsDoc } from '../../core/schema.js'
 import type { WinkAnalyzer, WinkToken } from '../../parse/tier2.js'
 import { ADD_USAGE, type AddArgs, type AddSlots, runAdd } from '../add.js'
+import { runApply } from '../apply.js'
 import { ErrorEnvelopeSchema, SuccessEnvelopeSchema } from '../envelope.js'
 
 // ---------------------------------------------------------------------------
@@ -49,6 +50,29 @@ const makeNoModalAnalyzer = (): WinkAnalyzer => (text: string) =>
 
 /** Options that inject the fake analyzer so no wink-nlp model is required. */
 const noModalOpts = () => ({ load: async () => makeNoModalAnalyzer() })
+
+/**
+ * A UPOS analyzer that tags a small verb set as VERB and coordinators as CCONJ,
+ * so the compound splitter's soundness guard fires — no wink-nlp model needed.
+ */
+const SPLIT_VERBS = new Set(['validate', 'issue', 'provide', 'read', 'write', 'log'])
+const makeSplitAnalyzer = (): WinkAnalyzer => (text: string) =>
+  text.split(/\s+/).map((value): WinkToken => {
+    const w = value.toLowerCase().replace(/,$/, '')
+    const pos =
+      w === 'and' || w === 'or'
+        ? 'CCONJ'
+        : w === 'shall'
+          ? 'AUX'
+          : w === 'the' || w === 'a'
+            ? 'DET'
+            : SPLIT_VERBS.has(w)
+              ? 'VERB'
+              : 'NOUN'
+    return { value, pos, lemma: w, negationFlag: false }
+  })
+
+const splitOpts = () => ({ load: async () => makeSplitAnalyzer() })
 
 function docWithA(): RequirementsDoc {
   const doc = emptyDoc()
@@ -227,6 +251,9 @@ describe('AC-2-10: add --from-parse parses prose then creates', () => {
     expect(res.envelope.suggestions.length).toBeGreaterThan(0)
     // Recovered partial skeleton forwarded from the Tier-3 result.
     expect(res.envelope.partial).toBeDefined()
+    // With the no-modal fake there is no VERB/CCONJ signal, so the splitter's
+    // soundness guard proposes nothing — the envelope must still validate.
+    expect(res.envelope.proposedOps).toBeUndefined()
     expect(() => ErrorEnvelopeSchema.parse(res.envelope)).not.toThrow()
   })
 
@@ -271,5 +298,83 @@ describe('AC-2-10: slots and --from-parse are mutually exclusive', () => {
     if (res.envelope.type === 'error') {
       expect(() => ErrorEnvelopeSchema.parse(res.envelope)).not.toThrow()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// wishlist #6: compound-splitter auto-fix — proposedOps on ERR_PARSE_COMPOUND
+// ---------------------------------------------------------------------------
+
+describe('wishlist #6: ERR_PARSE_COMPOUND carries ready-to-apply proposedOps', () => {
+  it('a genuine two-clause compound proposes two split `add` ops sharing the subject', async () => {
+    const res = await runAdd(
+      emptyDoc(),
+      { fromParse: 'the auth service shall validate the token and issue a session' },
+      splitOpts(),
+    )
+    expect('next' in res).toBe(false)
+    expect(res.envelope.type).toBe('error')
+    if (res.envelope.type !== 'error') return
+    expect(res.envelope.code).toBe('ERR_PARSE_COMPOUND')
+    expect(res.envelope.proposedOps).toBeDefined()
+    expect(res.envelope.proposedOps).toHaveLength(2)
+    expect(res.envelope.proposedOps?.[0]).toEqual({
+      op: 'add',
+      patternType: 'ubiquitous',
+      systemName: 'auth service',
+      systemResponse: 'validate the token',
+    })
+    expect(res.envelope.proposedOps?.[1]).toEqual({
+      op: 'add',
+      patternType: 'ubiquitous',
+      systemName: 'auth service',
+      systemResponse: 'issue a session',
+    })
+    // The op omits `id` so apply mints a fresh UUID per op (determinism).
+    expect(res.envelope.proposedOps?.every((o) => !('id' in o))).toBe(true)
+    expect(() => ErrorEnvelopeSchema.parse(res.envelope)).not.toThrow()
+  })
+
+  it('a shared-object coordination ("read and write access") proposes NO ops', async () => {
+    const res = await runAdd(
+      emptyDoc(),
+      { fromParse: 'the database shall provide read and write access' },
+      splitOpts(),
+    )
+    expect(res.envelope.type).toBe('error')
+    if (res.envelope.type !== 'error') return
+    expect(res.envelope.code).toBe('ERR_PARSE_COMPOUND')
+    expect(res.envelope.proposedOps).toBeUndefined()
+    expect(() => ErrorEnvelopeSchema.parse(res.envelope)).not.toThrow()
+  })
+
+  it('proposedOps are deterministic — identical input yields byte-identical ops', async () => {
+    const text = 'the auth service shall validate the token and issue a session'
+    const a = await runAdd(emptyDoc(), { fromParse: text }, splitOpts())
+    const b = await runAdd(emptyDoc(), { fromParse: text }, splitOpts())
+    if (a.envelope.type !== 'error' || b.envelope.type !== 'error') throw new Error('unexpected')
+    expect(JSON.stringify(a.envelope.proposedOps)).toBe(JSON.stringify(b.envelope.proposedOps))
+  })
+
+  it('each proposed op is a valid create payload and applies cleanly via `apply`', async () => {
+    const res = await runAdd(
+      emptyDoc(),
+      { fromParse: 'the auth service shall validate the token and issue a session' },
+      splitOpts(),
+    )
+    if (res.envelope.type !== 'error') throw new Error('expected error')
+    const ops = res.envelope.proposedOps ?? []
+    // Each op's create attrs (everything but the `op` discriminant) satisfy the
+    // create-attrs schema.
+    for (const { op: _op, ...attrs } of ops) {
+      expect(CreateRequirementAttrsSchema.safeParse(attrs).success).toBe(true)
+    }
+    // Fed as a JSONL stream through the real apply op parser, they both apply.
+    const jsonl = ops.map((o) => JSON.stringify(o)).join('\n')
+    const applied = runApply(emptyDoc(), jsonl)
+    expect(applied.envelope.type).toBe('apply')
+    if (applied.envelope.type === 'error') return
+    expect(applied.envelope.data.summary).toEqual({ total: 2, ok: 2, failed: 0 })
+    expect('next' in applied).toBe(true)
   })
 })

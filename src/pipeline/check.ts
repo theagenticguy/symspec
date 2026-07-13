@@ -59,7 +59,8 @@ import { listRequirements } from '../core/doc.js'
 import { renderSentence } from '../core/render.js'
 import type { Requirement, Waiver } from '../core/schema.js'
 import { detectAmbiguity } from '../formal/ambiguity.js'
-import { glossaryIndex, atomize as realAtomize } from '../formal/atomize.js'
+import { type AntonymEntry, buildAntonymIndexWithDoc } from '../formal/antonyms.js'
+import { glossaryIndex, normalize, atomize as realAtomize } from '../formal/atomize.js'
 import { getContext } from '../formal/backend.js'
 import { type FndCode, structuralKindToFndCode } from '../formal/codes.js'
 import { findContradictions } from '../formal/contradiction.js'
@@ -77,7 +78,7 @@ import { checkCompleteness } from '../formal/incomplete.js'
 import { findNeedsReview } from '../formal/needs-review.js'
 import { extractNumericPredicates } from '../formal/numeric.js'
 import { findNumericContradictions } from '../formal/numeric-contradiction.js'
-import { findSimilarSemantic } from '../formal/semantic.js'
+import { findOppositionCandidates, findSimilarSemantic } from '../formal/semantic.js'
 import { findSimilarUnunified } from '../formal/similar.js'
 import { checkSubsumption } from '../formal/subsumption.js'
 import { findTemporalContradictions } from '../formal/temporal.js'
@@ -131,7 +132,7 @@ export interface CheckOptions {
    */
   semantic?: {
     embedder: Embedder
-    /** Cosine threshold (default 0.82, `--semantic-threshold`). */
+    /** Cosine threshold (default `DEFAULT_SEMANTIC_THRESHOLD`, `--semantic-threshold`). */
     threshold?: number
   }
   /**
@@ -145,6 +146,77 @@ export interface CheckOptions {
     /** Trace bound k for the bounded encoding (default 10). */
     bound?: number
   }
+  /**
+   * Strict coverage gate (wishlist #4, `--strict`). When true, an INCONCLUSIVE
+   * run — one where the formal tier compared nothing across requirements
+   * ({@link CheckReport.verified} is `false`) — escalates from a silent clean
+   * exit to a gate failure ({@link CheckReport.strictGate} `'fail'` →
+   * `EXIT_INCONCLUSIVE`). Off by default so the base contract is unchanged: an
+   * agent must OPT IN to "I couldn't verify this is a build failure." Encodes the
+   * manifest doctrine that silence is not a consistency certificate.
+   */
+  strict?: boolean
+  /**
+   * Strict unmatched-atom gate (wishlist #4, `--fail-on-unmatched <n>`). When
+   * set, a run whose {@link ResidualRisk.unmatchedAtoms} strictly EXCEEDS this
+   * threshold fails the gate ({@link CheckReport.strictGate} `'fail'`). An
+   * unmatched atom (owned by exactly one requirement) can never form a candidate
+   * pair, so it went uncompared; a high count means broad coverage holes.
+   * Independent of {@link strict} — either gate tripping fails the run. `0` fails
+   * on ANY unmatched atom.
+   */
+  failOnUnmatched?: number
+}
+
+/**
+ * Rolled-up residual-risk summary (wishlist #5b): the one-glance surface of what
+ * `check` did NOT verify. The tool's honest scope is "silence is not a
+ * consistency certificate", and the residual risk lives in the info-tier
+ * findings + counters that a careless reader skims past. This object hoists those
+ * numbers to the top level so over-trusting silence is harder: when every count
+ * is zero AND `pairsChecked > 0`, the run is genuinely clean; any nonzero count
+ * (or `noPairsChecked`) names an axis the formal tier could not close.
+ *
+ * All counts are derived from the SAME kept (post-waiver) finding set the report
+ * publishes, so a waived residual-risk finding correctly drops out of the summary
+ * too — a reviewed baseline reads as lower residual risk, not silent neglect.
+ */
+export interface ResidualRisk {
+  /**
+   * Count of kept `FND_SIMILAR_UNUNIFIED` findings — response pairs that read as
+   * near-synonyms but stayed on distinct atoms, so a real conflict between them
+   * could hide (AC-4-12). Each is an unverified paraphrase pair.
+   */
+  similarUnunifiedPairs: number
+  /**
+   * Count of kept `FND_SIMILAR_SEMANTIC` findings — high-cosine paraphrase merge
+   * proposals from the opt-in `--semantic` pass. 0 when `--semantic` is off.
+   */
+  semanticSuggestions: number
+  /**
+   * How many candidate pairs the formal tier evaluated (mirrors
+   * {@link CheckReport.pairsChecked} for one-glance reading).
+   */
+  pairsChecked: number
+  /**
+   * True when {@link pairsChecked} is 0 — the formal tier compared nothing across
+   * requirements. The boolean form so a reader does not have to interpret the
+   * counter. Pairs with the `FND_NO_PAIRS_CHECKED` info finding.
+   */
+  noPairsChecked: boolean
+  /**
+   * How many requirements the AC-3-7 gate excluded, so the formal tier never saw
+   * them (mirrors `excluded.length`). Their blocking findings appear in the lint
+   * tier; this counter surfaces the coverage hole the exclusion left behind.
+   */
+  excludedRequirements: number
+  /**
+   * How many atoms appear in exactly ONE of the gate-included requirements — an
+   * atom with no cross-requirement partner can never form a candidate pair, so it
+   * went uncompared. Computed over the same encoded (included) atom roster the
+   * formal tier built, so it costs nothing beyond a tally.
+   */
+  unmatchedAtoms: number
 }
 
 /** The complete `check` result the CLI wraps in its envelope (AC-6-2). */
@@ -164,7 +236,75 @@ export interface CheckReport {
   waived: number
   /** Findings tallied by severity — the exit-code contract's input. */
   counts: { error: number; warn: number; info: number }
+  /** Rolled-up residual-risk summary (wishlist #5b) — what was NOT verified. */
+  residualRisk: ResidualRisk
+  /**
+   * First-class "did the formal tier actually verify anything across
+   * requirements?" flag (wishlist #5). Distinguishes the two states an exit `0`
+   * used to conflate: a genuinely CLEAN run (something was compared and no
+   * conflict was found) from an INCONCLUSIVE one (nothing cross-requirement was
+   * compared, so silence is not a certificate).
+   *
+   * `false` exactly when there are ≥2 requirements, the pairwise tier checked
+   * zero pairs, AND no cross-requirement finding fired — the SAME union-of-tiers
+   * predicate that governs the `FND_NO_PAIRS_CHECKED` disclosure, so the boolean
+   * and the finding never disagree. `true` otherwise (including the trivial
+   * 0/1-requirement case, where there is nothing to cross-check and the run is
+   * vacuously conclusive). An agent consuming the envelope can branch on this
+   * without parsing `residualRisk`.
+   */
+  verified: boolean
+  /**
+   * Outcome of the opt-in strict coverage gate (wishlist #4). `undefined` when
+   * neither {@link CheckOptions.strict} nor {@link CheckOptions.failOnUnmatched}
+   * was requested (the gate did not run). `'pass'` when a requested gate ran and
+   * held; `'fail'` when it tripped (inconclusive under `--strict`, or
+   * `unmatchedAtoms` over the `--fail-on-unmatched` threshold). The exit-code
+   * mapping reads this to return `EXIT_INCONCLUSIVE` for a `'fail'` with no
+   * error-severity finding.
+   */
+  strictGate?: 'pass' | 'fail'
 }
+
+/**
+ * The formal-tier finding codes whose analysis inherently spans ≥2 requirements
+ * — the "cross-requirement conflict" family. Grounded in `formal/codes.ts`
+ * (Appendix B): the contradiction/subsumption/redundancy propositional checks,
+ * the numeric and bounded-temporal conflict tiers, and the two similar-pair
+ * reporters. Used to suppress the contradictory `FND_NO_PAIRS_CHECKED` info
+ * finding (see {@link runCheck}). Every genuine cross-requirement finding also
+ * names ≥2 ids, so the id-count predicate is the primary signal; this set is the
+ * belt-and-suspenders guard for a degenerate core that minimized to one id.
+ */
+const CROSS_REQUIREMENT_FND_CODES: ReadonlySet<string> = new Set<FndCode>([
+  'FND_CONTRADICTION',
+  'FND_SUBSUMPTION',
+  'FND_REDUNDANCY',
+  'FND_NUMERIC_CONTRADICTION',
+  'FND_TEMPORAL_CONTRADICTION',
+  'FND_SIMILAR_UNUNIFIED',
+  'FND_SIMILAR_SEMANTIC',
+])
+
+/**
+ * Propose-only info codes: they SPAN two requirements (so they suppress the
+ * `FND_NO_PAIRS_CHECKED` "nothing was compared" disclaimer — a comparison DID
+ * happen) but they are NOT verdicts — each is an agent-confirmable SUGGESTION,
+ * not a proven consistency result. So they must NOT count toward
+ * {@link CheckReport.verified} (#5): a fuzzy cosine proposal is the opposite of
+ * a verification, and letting one flip `verified` to `true` would quiet the
+ * "silence is not a consistency certificate" signal that the `--strict` gate
+ * (#4) rests on. This is the distinction the adversarial review surfaced:
+ * "compared" (disclaimer) and "verified" (the boolean/gate) are different
+ * claims, and only a DECIDE-tier finding establishes the latter.
+ */
+const PROPOSE_ONLY_FND_CODES: ReadonlySet<string> = new Set<FndCode>([
+  'FND_SIMILAR_UNUNIFIED',
+  'FND_SIMILAR_SEMANTIC',
+  'FND_OPPOSITION_CANDIDATE',
+  'FND_MISSING_TRACE_LINK',
+  'FND_DUPLICATE_CLUSTER',
+])
 
 /**
  * True when finding `f` is suppressed by waiver `w` (wishlist #3): the codes
@@ -233,10 +373,14 @@ export interface CheckResult {
 /**
  * Build the encoder's positional `atomize` adapter (AC-4-2a → encoder), closing
  * over an optional glossary index (AC-9-2) so agent-confirmed synonyms
- * canonicalize to one atom. With no glossary the behavior is byte-identical to
- * a glossary-free run.
+ * canonicalize to one atom, and an optional doc-augmented antonym index (#1) so
+ * agent-confirmed opposites collapse to one atom at opposite polarity. With
+ * neither, behavior is byte-identical to the pre-feature run.
  */
-function makeAtomize(glossary?: ReadonlyMap<string, string>): Atomize {
+function makeAtomize(
+  glossary?: ReadonlyMap<string, string>,
+  antonyms?: ReadonlyMap<string, AntonymEntry>,
+): Atomize {
   return (kind, slotText, systemName, negated) => {
     const a = realAtomize({
       kind,
@@ -244,8 +388,31 @@ function makeAtomize(glossary?: ReadonlyMap<string, string>): Atomize {
       systemName,
       negated,
       ...(glossary !== undefined ? { glossary } : {}),
+      ...(antonyms !== undefined ? { antonyms } : {}),
     })
     return { atom: a.name, negated: a.negated }
+  }
+}
+
+/**
+ * Resolve the antonym index a check run consults from the document's committed
+ * pairs (#1). Normalizes both heads (so a pair authored as "Open"/"Shut" matches
+ * the normalized leading verb the atomizer keys on) and folds them into the seed
+ * table via the signed union-find. Defensive: if the committed pairs contain an
+ * inconsistent polarity cycle (which the CLI rejects at write time, but a
+ * hand-edited doc could still carry), fall back to the seed-only index rather
+ * than throwing mid-check — a malformed antonym set must not take down the whole
+ * linter. Returns `undefined` when there are no doc pairs so `makeAtomize` omits
+ * the arg entirely and the default seed path runs unchanged.
+ */
+function docAntonymIndex(doc: Doc): ReadonlyMap<string, AntonymEntry> | undefined {
+  const pairs = doc.antonyms ?? []
+  if (pairs.length === 0) return undefined
+  const normalized = pairs.map((p) => [normalize(p.a), normalize(p.b)] as const)
+  try {
+    return buildAntonymIndexWithDoc(normalized)
+  } catch {
+    return undefined
   }
 }
 
@@ -285,7 +452,7 @@ export function toEncodable(view: ReqView): EncodableRequirement {
 export function encodeIncluded(doc: Doc): EncodedRequirement[] {
   const requirements = listRequirements(doc)
   const excluded = excludedIds(gateRequirements(requirements))
-  const atomize = makeAtomize(glossaryIndex(doc.glossary))
+  const atomize = makeAtomize(glossaryIndex(doc.glossary), docAntonymIndex(doc))
   return requirements
     .map(asView)
     .filter((r) => !excluded.has(r.id))
@@ -402,6 +569,13 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
   // projection and the rich findings below.
   const formal: CheckFinding[] = []
 
+  // Wishlist #5b: count atoms that appear in exactly ONE gate-included
+  // requirement. Such an atom has no cross-requirement partner, so it can never
+  // form a candidate pair and went uncompared — a residual-risk axis. Captured
+  // from the SAME encoded roster the formal tier builds (so it is free), inside
+  // the closure where `encoded` is in scope.
+  let unmatchedAtoms = 0
+
   const report = await runSolvers(doc, {
     ...(options.similarityThreshold !== undefined
       ? { similarityThreshold: options.similarityThreshold }
@@ -415,7 +589,10 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       // AC-9-3: canonicalize atoms through the committed glossary so
       // agent-confirmed paraphrases collide and paraphrased contradictions
       // become provable. Empty glossary ⇒ identical to a glossary-free run.
-      const atomize = makeAtomize(glossaryIndex(doc.glossary))
+      // #1: fold the committed antonym pairs into the seed table so
+      // agent-confirmed opposites (open/shut) collapse to one atom at opposite
+      // polarity — the shape the contradiction tier proves. Empty ⇒ seed-only.
+      const atomize = makeAtomize(glossaryIndex(doc.glossary), docAntonymIndex(doc))
       const contradictionOpts = { atomize, timeoutMs }
 
       // Whole-spec checks (contradiction / vacuity / completeness / review)
@@ -425,6 +602,26 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       const encodedById: ReadonlyMap<string, EncodedRequirement> = new Map(
         encoded.map((e) => [e.id, e]),
       )
+
+      // Wishlist #5b: tally the spec-wide atom roster and count singletons —
+      // atoms that appear in exactly one included requirement. An atom counts
+      // once per requirement (a requirement that repeats an atom across slots
+      // does not make it "matched"); an atom is "matched" only when ≥2 distinct
+      // requirements reference it. Deterministic, no solver contact.
+      const atomOwners = new Map<string, Set<string>>()
+      for (const e of encoded) {
+        for (const row of e.atoms) {
+          let owners = atomOwners.get(row.atom)
+          if (owners === undefined) {
+            owners = new Set<string>()
+            atomOwners.set(row.atom, owners)
+          }
+          owners.add(e.id)
+        }
+      }
+      for (const owners of atomOwners.values()) {
+        if (owners.size === 1) unmatchedAtoms += 1
+      }
 
       const includedPairs = pairs.filter((p) => includedIdSet.has(p.a) && includedIdSet.has(p.b))
 
@@ -452,13 +649,20 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       // soundness the AC-3-7 gate protects, so a lint-blocking finding (e.g. a
       // missing-units warning on a bare number) must not hide a real numeric
       // contradiction. Reuses the shared context.
+      // #3: reuse the committed synonym glossary as a quantity-alias map so two
+      // phrasings of one physical quantity ("keep valid for" vs "expire after")
+      // key to a single quantity and the LIA/LRA solver compares them. Empty
+      // glossary ⇒ identical to the pre-feature numeric path.
+      const quantityAliases = glossaryIndex(doc.glossary)
       const numericReqPreds = reqs.map((r) => ({
         id: r.id,
         predicates: [
-          ...extractNumericPredicates(r.systemResponse, r.systemName),
-          ...(r.trigger !== undefined ? extractNumericPredicates(r.trigger, r.systemName) : []),
+          ...extractNumericPredicates(r.systemResponse, r.systemName, quantityAliases),
+          ...(r.trigger !== undefined
+            ? extractNumericPredicates(r.trigger, r.systemName, quantityAliases)
+            : []),
           ...(r.preCondition !== undefined
-            ? extractNumericPredicates(r.preCondition, r.systemName)
+            ? extractNumericPredicates(r.preCondition, r.systemName, quantityAliases)
             : []),
         ],
       }))
@@ -487,6 +691,21 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
               glossary: glossaryIndex(doc.glossary),
               ...(options.semantic.threshold !== undefined
                 ? { threshold: options.semantic.threshold }
+                : {}),
+            })
+          : []
+
+      // #6: opt-in opposition-candidate proposals. Same embedder, propose-only —
+      // emits FND_OPPOSITION_CANDIDATE for same-system responses that share an
+      // object but differ on the leading verb and are not already unified as
+      // antonyms, suggesting `symspec antonym add`. Cosine is only a
+      // topical-relatedness floor; the structure is the signal. Never a verdict.
+      const opposition =
+        options.semantic !== undefined
+          ? await findOppositionCandidates(included, options.semantic.embedder, {
+              glossary: glossaryIndex(doc.glossary),
+              ...(docAntonymIndex(doc) !== undefined
+                ? { antonyms: docAntonymIndex(doc) as ReadonlyMap<string, AntonymEntry> }
                 : {}),
             })
           : []
@@ -528,7 +747,14 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
           evidence: f.evidence,
         })
       }
-      for (const f of [...incompletes, ...similar, ...review, ...semantic, ...graph]) {
+      for (const f of [
+        ...incompletes,
+        ...similar,
+        ...review,
+        ...semantic,
+        ...graph,
+        ...opposition,
+      ]) {
         formal.push({
           code: f.code,
           severity: f.severity,
@@ -584,11 +810,43 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
 
   findings.push(...formal)
 
-  // Wishlist #6: a formal tier that compared zero pairs proved nothing ACROSS
-  // requirements. Emit a loud info finding (only when there were ≥2
-  // requirements that COULD have been related) so the coverage gap is visible
-  // in findings[] rather than only in the numeric pairsChecked field.
-  if (report.pairsChecked === 0 && requirements.length >= 2) {
+  // Wishlist #6: a formal tier that compared zero PAIRS proved nothing via the
+  // pairwise (subsumption/redundancy) route. Emit a loud info finding (only when
+  // there were ≥2 requirements that COULD have been related) so the coverage
+  // gap is visible in findings[] rather than only in the numeric pairsChecked
+  // field.
+  //
+  // BUT suppress it when a genuine cross-requirement finding already fired
+  // (item 4): `pairsChecked` counts ONLY the pairwise tier's candidate pairs,
+  // while the contradiction / numeric / temporal / similar tiers reason across
+  // ALL requirements independent of that pair filter. So a `--temporal` (or
+  // numeric, or contradiction) run can prove an error across two requirements
+  // while `pairsChecked === 0` — and emitting "no two requirements were compared
+  // across requirements" alongside a proven cross-requirement error is a
+  // contradictory signal. The disclaimer is only truthful when NOTHING
+  // cross-requirement fired.
+  //
+  // Condition: suppress when any accumulated formal finding either names ≥2
+  // requirement ids (the primary signal — every genuine cross-requirement
+  // finding names the ≥2 ids its analysis spanned) OR carries one of the known
+  // cross-requirement conflict codes (a backstop for a degenerate unsat core
+  // that minimized down to a single id). Single-requirement findings
+  // (ambiguity, GtWR lint, a lone vacuity/needs-review naming one id) do NOT
+  // suppress it, so the disclosure still fires when truly nothing was compared
+  // across requirements.
+  // A cross-requirement finding of ANY kind (verdict OR propose-only proposal)
+  // means a comparison DID happen, so the "nothing was compared" disclaimer must
+  // not fire alongside it (coverage-disclaimer lesson).
+  const crossRequirementFired = formal.some(
+    (f) => f.requirementIds.length >= 2 || CROSS_REQUIREMENT_FND_CODES.has(f.code),
+  )
+  // Wishlist #6 disclaimer: emit the FND_NO_PAIRS_CHECKED info finding when the
+  // pairwise tier checked nothing AND no cross-requirement finding (of any kind)
+  // fired. A single-requirement finding (ambiguity, lint, lone vacuity) does not
+  // suppress it, so the disclosure still fires when truly nothing was compared.
+  const noPairsChecked =
+    report.pairsChecked === 0 && requirements.length >= 2 && !crossRequirementFired
+  if (noPairsChecked) {
     const coverage = noPairsCheckedFinding(requirements.map((r) => r.id))
     findings.push({
       code: coverage.code,
@@ -598,6 +856,27 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       message: coverage.message,
     })
   }
+
+  // Wishlist #5: `verified` is a STRICTER claim than "something was compared" —
+  // it is "a DECIDE-tier check actually verified consistency across ≥2
+  // requirements". A propose-only info proposal (FND_SIMILAR_SEMANTIC,
+  // FND_OPPOSITION_CANDIDATE, …) spans two ids and suppresses the disclaimer
+  // above, but it is a fuzzy SUGGESTION, not a verdict, so it must NOT flip
+  // `verified` to true (adversarial-review finding): letting an embedding cosine
+  // quiet the "inconclusive" signal would let a fuzzy score soften the `--strict`
+  // gate, violating the propose/decide split the whole tool rests on. So the run
+  // is INCONCLUSIVE unless a non-propose-only finding spanning ≥2 requirements
+  // fired. A spec with <2 requirements is vacuously conclusive.
+  // A checked pair (pairsChecked > 0) IS a decide-tier verification: the
+  // subsumption/redundancy tier ran over it and a clean result is a genuine
+  // "verified, no conflict". So the run is inconclusive only when the pairwise
+  // tier checked NOTHING and no decide-tier cross-requirement finding fired.
+  const decideTierCrossReqFired = formal.some(
+    (f) => f.requirementIds.length >= 2 && !PROPOSE_ONLY_FND_CODES.has(f.code),
+  )
+  const inconclusive =
+    report.pairsChecked === 0 && requirements.length >= 2 && !decideTierCrossReqFired
+  const verified = !inconclusive
 
   // Wishlist #3: drop findings suppressed by a committed waiver BEFORE tallying,
   // so the exit-code gate honors the waiver too. Count what was dropped so the
@@ -616,11 +895,42 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
   const counts = { error: 0, warn: 0, info: 0 }
   for (const f of kept) counts[f.severity] += 1
 
+  // Wishlist #5b: roll the residual-risk axes up from the KEPT (post-waiver)
+  // finding set, so a waived residual-risk finding drops out of the summary too.
+  const residualRisk: ResidualRisk = {
+    similarUnunifiedPairs: kept.filter((f) => f.code === 'FND_SIMILAR_UNUNIFIED').length,
+    semanticSuggestions: kept.filter((f) => f.code === 'FND_SIMILAR_SEMANTIC').length,
+    pairsChecked: report.pairsChecked,
+    noPairsChecked: report.pairsChecked === 0,
+    excludedRequirements: gateResult.excluded.length,
+    unmatchedAtoms,
+  }
+
+  // Wishlist #4: resolve the opt-in strict coverage gate. It runs only when a
+  // gate was requested; when it runs it fails if the run is inconclusive (under
+  // `--strict`) OR the unmatched-atom count exceeds the `--fail-on-unmatched`
+  // threshold. A tripped gate maps to EXIT_INCONCLUSIVE unless an error-severity
+  // finding already claims the stronger EXIT_FINDINGS_FAILURE (resolved in
+  // exit.ts). Left undefined when no gate was requested so a default run's
+  // contract is untouched.
+  const gateRequested = options.strict === true || options.failOnUnmatched !== undefined
+  const gateTripped =
+    (options.strict === true && inconclusive) ||
+    (options.failOnUnmatched !== undefined && unmatchedAtoms > options.failOnUnmatched)
+  const strictGate: 'pass' | 'fail' | undefined = gateRequested
+    ? gateTripped
+      ? 'fail'
+      : 'pass'
+    : undefined
+
   return {
     findings: kept,
     excluded: gateResult.excluded,
     pairsChecked: report.pairsChecked,
     waived,
     counts,
+    residualRisk,
+    verified,
+    ...(strictGate !== undefined ? { strictGate } : {}),
   }
 }

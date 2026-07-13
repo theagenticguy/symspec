@@ -66,7 +66,10 @@ export type GraphFinding = MissingTraceLinkFinding | DuplicateClusterFinding
 
 /** Options for {@link buildSimilarityGraph}. */
 export interface GraphOptions {
-  /** Cosine ≥ this (after quantization) makes an edge (default 0.82). */
+  /**
+   * Cosine ≥ this (after quantization) makes an edge (default
+   * {@link DEFAULT_GRAPH_THRESHOLD}).
+   */
   threshold?: number
   /** Max neighbors kept per node in the kNN graph (default 5). */
   k?: number
@@ -74,7 +77,41 @@ export interface GraphOptions {
   quantizePrecision?: number
 }
 
-const DEFAULT_THRESHOLD = 0.82
+/**
+ * Default cosine above which two requirements get a similarity edge in the kNN
+ * graph — the basis for a missing-trace-link proposal (`FND_MISSING_TRACE_LINK`)
+ * or a near-duplicate cluster (`FND_DUPLICATE_CLUSTER`).
+ *
+ * ## Deliberately NOT the semantic-paraphrase threshold
+ *
+ * This is a DIFFERENT judgment from `semantic.ts`'s `DEFAULT_SEMANTIC_THRESHOLD`,
+ * so it is a separate constant on purpose:
+ *   - The paraphrase tier asks "do these two RESPONSE phrasings mean the same
+ *     thing?" — synonymy — and embeds just the response phrase. It favors recall
+ *     (a miss hides a provable conflict), so it uses a lower bar (0.72).
+ *   - This graph tier asks "are these two whole requirements near-duplicates or
+ *     plausibly in a refines/derives relationship?" — topical relatedness — and
+ *     embeds the FULL rendered sentence (trigger + system + response). A
+ *     trace-link/duplication proposal wants pairs that are strongly similar as
+ *     whole statements, not merely pairs sharing a synonymous verb phrase, so it
+ *     holds a higher bar.
+ *
+ * ## Why 0.82
+ *
+ * Over the same CLS-pooled, L2-normalized, no-prefix BGE-base-en-v1.5 embeddings
+ * (scores compressed vs BGE retrieval benchmarks — see `DEFAULT_SEMANTIC_THRESHOLD`),
+ * full-sentence pairs that are true near-duplicates land high (≈0.87+), while
+ * merely same-topic-different-intent requirements sit well below. 0.82 keeps
+ * this tier's proposals tight: the trace-link-recovery literature is clear that
+ * embedding link suggestions have low precision, so — even though this tier is
+ * also PROPOSE-only (info-tier, agent-confirmed) — it errs toward precision to
+ * avoid drowning the agent in weak edge suggestions, the opposite balance from
+ * the paraphrase tier. Additional structural guards (top-k pruning, cosine
+ * quantization, id-based tie-breaks) keep the graph deterministic.
+ *
+ * Overridable per-run via the `threshold` option.
+ */
+export const DEFAULT_GRAPH_THRESHOLD = 0.82
 const DEFAULT_K = 5
 const DEFAULT_QUANTIZE = 4
 
@@ -104,7 +141,7 @@ export async function buildSimilarityGraph(
   embedder: Embedder,
   options: GraphOptions = {},
 ): Promise<GraphFinding[]> {
-  const threshold = options.threshold ?? DEFAULT_THRESHOLD
+  const threshold = options.threshold ?? DEFAULT_GRAPH_THRESHOLD
   const k = options.k ?? DEFAULT_K
   const precision = options.quantizePrecision ?? DEFAULT_QUANTIZE
   if (reqs.length < 2) return []

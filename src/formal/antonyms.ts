@@ -135,3 +135,24 @@ export function buildAntonymIndex(
  */
 export const ANTONYM_INDEX: ReadonlyMap<string, AntonymEntry> =
   buildAntonymIndex(SEED_ANTONYM_PAIRS)
+
+/**
+ * Build the resolved antonym index the atomizer consults from the code-committed
+ * seed pairs PLUS a document's agent-confirmed pairs (#1). The two sources are
+ * concatenated and handed to {@link buildAntonymIndex}, so a doc pair that
+ * bridges two seed classes (or that shares a member with one) is resolved into
+ * the same signed union-find as the seeds — the correct, deterministic
+ * semantics, not a naive overlay.
+ *
+ * Returns {@link ANTONYM_INDEX} unchanged when there are no doc pairs, so the
+ * default path pays nothing. Throws (via `buildAntonymIndex`) if a doc pair
+ * introduces an inconsistent polarity cycle; callers that cannot tolerate a
+ * throw at check time should validate the pair set at write time (the CLI does)
+ * and fall back to the seed-only index.
+ */
+export function buildAntonymIndexWithDoc(
+  docPairs: ReadonlyArray<readonly [string, string]>,
+): ReadonlyMap<string, AntonymEntry> {
+  if (docPairs.length === 0) return ANTONYM_INDEX
+  return buildAntonymIndex([...SEED_ANTONYM_PAIRS, ...docPairs])
+}

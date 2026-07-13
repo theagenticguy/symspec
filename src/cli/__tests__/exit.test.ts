@@ -3,9 +3,11 @@ import { failure, success } from '../envelope.js'
 import {
   EXIT_CLEAN,
   EXIT_FINDINGS_FAILURE,
+  EXIT_INCONCLUSIVE,
   EXIT_OPERATIONAL_ERROR,
   exitCodeForEnvelope,
   hasErrorSeverityFinding,
+  hasFailedStrictGate,
 } from '../exit.js'
 
 /**
@@ -108,9 +110,63 @@ describe('exitCodeForEnvelope — operational ERR_* failure (AC-6-2b)', () => {
   })
 })
 
-describe('exitCodeForEnvelope — the three codes are distinct (AC-6-2b)', () => {
-  it('0, 1, 2 are pairwise distinct', () => {
-    expect(new Set([EXIT_CLEAN, EXIT_FINDINGS_FAILURE, EXIT_OPERATIONAL_ERROR]).size).toBe(3)
+describe('exitCodeForEnvelope — inconclusive strict-gate failure (#4/#5)', () => {
+  it('a tripped strict gate with no error finding exits 3', () => {
+    const env = success('check', {
+      findings: [infoFinding('FND_NO_PAIRS_CHECKED')],
+      verified: false,
+      strictGate: 'fail',
+    })
+    expect(exitCodeForEnvelope(env)).toBe(EXIT_INCONCLUSIVE)
+    expect(EXIT_INCONCLUSIVE).toBe(3)
+    // Still a valid success envelope — the finding is the data.
+    expect(env.type).toBe('check')
+  })
+
+  it('an error-severity finding OUTRANKS a tripped strict gate (→ 1, not 3)', () => {
+    const env = success('check', {
+      findings: [errorFinding('GTWR_R1_PATTERN')],
+      verified: false,
+      strictGate: 'fail',
+    })
+    expect(exitCodeForEnvelope(env)).toBe(EXIT_FINDINGS_FAILURE)
+  })
+
+  it('a passing strict gate is clean (exit 0)', () => {
+    const env = success('check', { findings: [], verified: true, strictGate: 'pass' })
+    expect(exitCodeForEnvelope(env)).toBe(EXIT_CLEAN)
+  })
+
+  it('an inconclusive run WITHOUT a requested gate stays clean (default contract unchanged)', () => {
+    // verified:false but no strictGate — the caller did not opt in, so exit 0.
+    const env = success('check', {
+      findings: [infoFinding('FND_NO_PAIRS_CHECKED')],
+      verified: false,
+    })
+    expect(exitCodeForEnvelope(env)).toBe(EXIT_CLEAN)
+  })
+})
+
+describe('exitCodeForEnvelope — the four codes are distinct (AC-6-2b, #4)', () => {
+  it('0, 1, 2, 3 are pairwise distinct', () => {
+    expect(
+      new Set([EXIT_CLEAN, EXIT_FINDINGS_FAILURE, EXIT_OPERATIONAL_ERROR, EXIT_INCONCLUSIVE]).size,
+    ).toBe(4)
+  })
+})
+
+describe('hasFailedStrictGate predicate (#4)', () => {
+  it('is true only when data.strictGate is exactly "fail"', () => {
+    expect(hasFailedStrictGate({ strictGate: 'fail' })).toBe(true)
+    expect(hasFailedStrictGate({ strictGate: 'pass' })).toBe(false)
+    expect(hasFailedStrictGate({})).toBe(false)
+  })
+
+  it('is defensive against a non-object / missing payload', () => {
+    expect(hasFailedStrictGate(undefined)).toBe(false)
+    expect(hasFailedStrictGate(null)).toBe(false)
+    expect(hasFailedStrictGate('nope')).toBe(false)
+    expect(hasFailedStrictGate({ strictGate: true })).toBe(false)
   })
 })
 

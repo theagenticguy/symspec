@@ -93,6 +93,11 @@ export const FndCodeSchema = z.enum([
   // cross-requirement conflict analysis. An info finding so silence that looks
   // like a pass is loud instead.
   'FND_NO_PAIRS_CHECKED',
+  // Opposition-candidate proposal (appended — #6) — two same-system responses
+  // that share an object but differ on the leading verb, a likely antonym pair
+  // the seed/committed antonym tables did not unify. Propose-only, info-tier:
+  // it suggests `symspec antonym add`, never a verdict.
+  'FND_OPPOSITION_CANDIDATE',
 ])
 
 export type FndCode = z.infer<typeof FndCodeSchema>
@@ -217,6 +222,11 @@ export const FndCodeMeta = {
     .literal('FND_NO_PAIRS_CHECKED')
     .describe(
       'info — the formal tier evaluated 0 candidate pairs (no two requirements shared an atom), so no cross-requirement conflict/subsumption analysis actually ran. Silence here is not a consistency certificate; consider glossary entries to align vocabulary so related requirements share atoms.',
+    ),
+  FND_OPPOSITION_CANDIDATE: z
+    .literal('FND_OPPOSITION_CANDIDATE')
+    .describe(
+      'info — two same-system responses share an object phrase but differ on the leading verb (e.g. "open the valve" vs "shut the valve"), a LIKELY antonym pair the seed/committed antonym tables have not unified. Propose-only: if the verbs are truly opposite, run `symspec antonym add <verbA> <verbB>` so the formal tier collapses them to one atom at opposite polarity and can prove any conflict. Never a verdict.',
     ),
 } satisfies Record<FndCode, z.ZodLiteral<FndCode>>
 

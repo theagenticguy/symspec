@@ -7,7 +7,7 @@
  * process exit code, so every command path (and every test) computes the code
  * the same way.
  *
- * ## The three codes
+ * ## The four codes
  *
  *   - **`0` (clean)** — the pipeline completed and NO `error`-severity finding
  *     is present. A run with only `warn`/`info` findings still exits `0`: those
@@ -26,6 +26,18 @@
  *     to stdout. This is DISTINCT from `1`: a findings-failure means the tool
  *     worked and the spec failed; an operational failure means the tool itself
  *     could not complete.
+ *   - **`3` (inconclusive gate failure)** — the pipeline completed, no
+ *     `error`-severity finding is present, but the OPT-IN strict coverage gate
+ *     (wishlist #4, `--strict` / `--fail-on-unmatched`) tripped: the run could
+ *     not actually verify the spec across requirements (`data.verified` is
+ *     `false`), or too many atoms went uncompared. A valid SUCCESS envelope is
+ *     still on stdout. This is the machine-readable encoding of the manifest
+ *     doctrine that silence is not a consistency certificate — DISTINCT from `0`
+ *     (which now means "verified clean" only when the gate was requested) and
+ *     from `1` (a proven defect). Only reachable when the caller opted into a
+ *     strict gate; a default run never returns `3`. An `error`-severity finding
+ *     always outranks the strict gate (→ `1`), since a proven conflict is
+ *     stronger news than "couldn't check".
  *
  * ## Invariants
  *
@@ -73,11 +85,23 @@ export const EXIT_FINDINGS_FAILURE = 1
  */
 export const EXIT_OPERATIONAL_ERROR = 2
 
+/**
+ * The opt-in strict coverage gate (wishlist #4) tripped on a run with no
+ * error-severity finding: the spec could not be verified across requirements
+ * (`data.verified === false`) or `unmatchedAtoms` exceeded the requested
+ * threshold. A valid success envelope is still on stdout. Only reachable when
+ * the caller passed `--strict` / `--fail-on-unmatched`; distinct from
+ * {@link EXIT_CLEAN} (verified clean) and {@link EXIT_FINDINGS_FAILURE} (proven
+ * defect, which outranks it).
+ */
+export const EXIT_INCONCLUSIVE = 3
+
 /** The closed set of exit codes symspec's `check` loop returns. */
 export type ExitCode =
   | typeof EXIT_CLEAN
   | typeof EXIT_FINDINGS_FAILURE
   | typeof EXIT_OPERATIONAL_ERROR
+  | typeof EXIT_INCONCLUSIVE
 
 // ---------------------------------------------------------------------------
 // Finding-severity predicate
@@ -129,6 +153,20 @@ export function hasErrorSeverityFinding(data: unknown): boolean {
   return findingsOf(data).some(isErrorSeverity)
 }
 
+/**
+ * True when a `check` success payload's opt-in strict coverage gate (wishlist
+ * #4) tripped — the condition that maps a completed, error-free run to
+ * {@link EXIT_INCONCLUSIVE}. Reads `data.strictGate` structurally: it is
+ * `'fail'` only when the caller requested a gate (`--strict` /
+ * `--fail-on-unmatched`) and it did not hold. A payload without the field (no
+ * gate requested, or not a `check` payload) returns `false`, so the default
+ * contract is unchanged. Never throws.
+ */
+export function hasFailedStrictGate(data: unknown): boolean {
+  if (typeof data !== 'object' || data === null) return false
+  return (data as { strictGate?: unknown }).strictGate === 'fail'
+}
+
 // ---------------------------------------------------------------------------
 // The mapping
 // ---------------------------------------------------------------------------
@@ -139,7 +177,11 @@ export function hasErrorSeverityFinding(data: unknown): boolean {
  *   - an ERROR envelope (`type === 'error'`, an `ERR_*` operational failure)
  *     → {@link EXIT_OPERATIONAL_ERROR} (`2`);
  *   - a SUCCESS envelope whose `data.findings` contains an `error`-severity
- *     finding → {@link EXIT_FINDINGS_FAILURE} (`1`);
+ *     finding → {@link EXIT_FINDINGS_FAILURE} (`1`) — a proven defect outranks
+ *     the strict gate;
+ *   - a SUCCESS envelope with no error finding but a tripped opt-in strict
+ *     coverage gate (`data.strictGate === 'fail'`) → {@link EXIT_INCONCLUSIVE}
+ *     (`3`);
  *   - any other SUCCESS envelope (clean, or warn/info-only) → {@link EXIT_CLEAN}
  *     (`0`).
  *
@@ -153,5 +195,7 @@ export function exitCodeForEnvelope(env: Envelope): ExitCode {
   // read `data` structurally. An error envelope has no `data` key, so this is
   // also correct were one to reach here.
   const data = (env as { data?: unknown }).data
-  return hasErrorSeverityFinding(data) ? EXIT_FINDINGS_FAILURE : EXIT_CLEAN
+  if (hasErrorSeverityFinding(data)) return EXIT_FINDINGS_FAILURE
+  if (hasFailedStrictGate(data)) return EXIT_INCONCLUSIVE
+  return EXIT_CLEAN
 }

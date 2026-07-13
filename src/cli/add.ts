@@ -55,8 +55,8 @@ import { newId, resolveRequirement } from '../core/doc.js'
 import type { CreateRequirementAttrsSchema, Requirement, RequirementsDoc } from '../core/schema.js'
 import { checkGtWRules } from '../lint/gtwr.js'
 import { parseLine } from '../parse/result.js'
-import type { Tier2Options } from '../parse/tier2.js'
-import type { Envelope } from './envelope.js'
+import type { ProposedSplit, Tier2Options } from '../parse/tier2.js'
+import type { Envelope, ProposedAddOp } from './envelope.js'
 import { failure, success } from './envelope.js'
 import { toErrorEnvelope, usageError } from './errors.js'
 
@@ -142,6 +142,27 @@ export type AddResult =
   | { readonly envelope: Envelope<AddData | AddDryRunData> }
 
 /**
+ * Map the parse layer's generic {@link ProposedSplit} slots onto the CLI's
+ * ready-to-apply {@link ProposedAddOp} shape (the `apply` JSONL `{"op":"add", …}`
+ * record). This is where the CLI op vocabulary is attached — `src/parse/` stays
+ * CLI-agnostic. `id` is deliberately OMITTED so `apply` mints a fresh UUID per
+ * op (apply.ts defaults `id` via `randomUUID`), keeping the proposal
+ * deterministic. Optional slots are conditionally spread (never `undefined`),
+ * and `negated` is carried only when true to keep each op minimal.
+ */
+function toProposedAddOp(split: ProposedSplit): ProposedAddOp {
+  return {
+    op: 'add',
+    patternType: split.patternType,
+    systemName: split.systemName,
+    systemResponse: split.systemResponse,
+    ...(split.negated ? { negated: true } : {}),
+    ...(split.preCondition !== undefined ? { preCondition: split.preCondition } : {}),
+    ...(split.trigger !== undefined ? { trigger: split.trigger } : {}),
+  }
+}
+
+/**
  * Execute an `add` against a loaded document. Pure: returns a new document (via
  * `applyChange`'s structuredClone) and never mutates the input, never throws,
  * never touches the filesystem.
@@ -183,13 +204,19 @@ export async function runAdd(
     const result = await parseLine(args.fromParse as string, opts)
     if (result.outcome === 'error') {
       // Surface the Tier-3 punt verbatim: stable ERR_PARSE_* code, the recovered
-      // `partial` skeleton, and mechanical rewrite suggestions (AC-2-7).
+      // `partial` skeleton, and mechanical rewrite suggestions (AC-2-7). For a
+      // confidently-split ERR_PARSE_COMPOUND, ALSO attach the machine-actionable
+      // `add` ops so an agent can pipe them straight into `symspec apply`
+      // instead of hand-rewriting the compound sentence (wishlist #6).
+      const proposedOps: ProposedAddOp[] | undefined =
+        result.proposedSplits !== undefined ? result.proposedSplits.map(toProposedAddOp) : undefined
       return {
         envelope: failure({
           error: result.error,
           code: result.code,
           suggestions: result.suggestions,
           ...(result.partial !== undefined ? { partial: result.partial } : {}),
+          ...(proposedOps !== undefined ? { proposedOps } : {}),
         }),
       }
     }
