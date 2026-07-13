@@ -49,6 +49,7 @@ export type CommandName =
   | 'apply'
   | 'waive'
   | 'install'
+  | 'antonym'
 
 /**
  * Full what / when / returns / idempotency help text per command. Wired into
@@ -119,8 +120,12 @@ export const COMMAND_DESCRIPTIONS: Record<CommandName, string> = {
     'that coverage gap is visible instead of a silent pairsChecked:0. Waived findings (see `symspec waive`) are',
     'dropped from findings[] and the exit gate and tallied under `waived`. Narrow the output for a fix loop with',
     '--min-severity error (drop warn/info) and/or --findings-only (drop everything but findings) — these shape',
-    'output only and never change the exit code. Exit code 0 means no error-severity finding, 1 means the',
-    'pass/fail gate failed on findings, 2 means an operational error. Read-only.',
+    'output only and never change the exit code. The run also reports a first-class data.verified boolean: false',
+    'when ≥2 requirements produced no cross-requirement comparison (inconclusive — silence is not a certificate).',
+    'Opt into gating that with --strict (fail an inconclusive run) or --fail-on-unmatched <n> (fail when more than',
+    '<n> atoms went uncompared). Exit code 0 means no error-severity finding (and, if a strict gate was requested,',
+    'it passed), 1 means the pass/fail gate failed on findings, 2 means an operational error, 3 means a requested',
+    'strict coverage gate tripped on an otherwise error-free run. Read-only.',
   ),
   certify: lines(
     'Emit and kernel-check an optional Lean 4 proof artifact for the document.',
@@ -216,6 +221,16 @@ export const COMMAND_DESCRIPTIONS: Record<CommandName, string> = {
     'cannot drift. --target auto|all|<id,id> chooses hosts; --check reports what would be written; --print <id> shows',
     'one host’s file; --uninstall removes them. Idempotent: an unchanged file is left untouched. Hosts whose only',
     'always-on surface is a root doc (opencode, Gemini CLI) are reported as skipped rather than edited.',
+  ),
+  antonym: lines(
+    "Manage the document's committed antonym pairs: `antonym add <a> <b>`, `antonym remove <a> <b>`, `antonym list`.",
+    'The opposition analogue of `glossary`. An `antonym add open shut` asserts the two response verb-heads are polar',
+    'opposites, so "open the valve" and "shut the valve" atomize to the SAME atom with OPPOSITE polarity and the formal',
+    'tier proves the contradiction the seed antonym table missed. This extends the built-in seed antonyms (grant/revoke,',
+    'allow/deny, …) with agent-confirmed pairs — the DECIDE half for opposition, mirroring how `glossary` decides synonymy;',
+    '`check --semantic` is what PROPOSES opposition candidates. Both heads are normalized and matched in either order;',
+    'add is idempotent and rejects a self-pair or a pair that would make the antonym classes inconsistent; remove of an',
+    'absent pair is a no-op; list is read-only. Mutating ops re-save the document.',
   ),
 }
 

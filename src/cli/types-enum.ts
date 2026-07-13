@@ -79,6 +79,9 @@ export const EnvelopeTypeSchema = z.enum([
   'waive',
   // Agent-host skill installation (appended — `install`).
   'install',
+  // Committed antonym-pair management (appended — #1, the opposition analogue
+  // of `glossary`).
+  'antonym',
 ])
 
 /** A single envelope `type` discriminant. */

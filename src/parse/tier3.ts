@@ -57,7 +57,7 @@
  */
 
 import type { EarsPattern } from '../core/schema.js'
-import type { EscalationTrigger, Tier2Outcome } from './tier2.js'
+import type { EscalationTrigger, ProposedSplit, Tier2Outcome } from './tier2.js'
 
 // ---------------------------------------------------------------------------
 // ERR_PARSE_* code subset (strict sub-type of ErrCode for parse failures)
@@ -124,6 +124,15 @@ export interface Tier3Envelope {
    * diagnostics if needed.
    */
   readonly notes: readonly string[]
+  /**
+   * For `ERR_PARSE_COMPOUND` only: the confidently-split single requirements the
+   * compound splitter recovered (≥2 halves that each re-parse cleanly), so an
+   * agent gets machine-actionable ops rather than only a prose "split it"
+   * suggestion. Absent (not `undefined`) when the split was not confident or the
+   * code is not COMPOUND, per `exactOptionalPropertyTypes`. Generic slot shape —
+   * the CLI layer maps these to ready-to-apply `add` ops.
+   */
+  readonly proposedSplits?: readonly ProposedSplit[]
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +159,7 @@ function suggestionsFor(code: ParseErrorCode, partial: PartialSlots): readonly s
       return [
         'Split into separate requirements at each "and" or "or" conjunction.',
         'Each requirement must contain exactly one "shall" clause (one system, one response).',
+        'When the split is unambiguous, `proposedOps` carries the ready-to-apply `add` ops — pipe them straight into `symspec apply`.',
         partial.systemName
           ? `Example split: "the ${partial.systemName} shall <first response>." / "the ${partial.systemName} shall <second response>."`
           : 'Example: "the <system> shall <first response>." / "the <system> shall <second response>."',
@@ -176,6 +186,7 @@ function extractFromOutcome(outcome: Tier2Outcome): {
   allNotes: Set<string>
   triggers: Set<EscalationTrigger>
   partial: PartialSlots
+  proposedSplits: readonly ProposedSplit[]
 } {
   const allNotes = new Set<string>()
   const triggers = new Set<EscalationTrigger>()
@@ -211,7 +222,7 @@ function extractFromOutcome(outcome: Tier2Outcome): {
     if (outcome.tier2.slots.trigger !== undefined) partial.trigger = outcome.tier2.slots.trigger
   }
 
-  return { allNotes, triggers, partial }
+  return { allNotes, triggers, partial, proposedSplits: outcome.proposedSplits ?? [] }
 }
 
 /**
@@ -281,9 +292,12 @@ function messageFor(code: ParseErrorCode, text: string): string {
  * }
  */
 export function makeTier3Envelope(text: string, outcome: Tier2Outcome): Tier3Envelope {
-  const { allNotes, triggers, partial } = extractFromOutcome(outcome)
+  const { allNotes, triggers, partial, proposedSplits } = extractFromOutcome(outcome)
   const code = assignCode(allNotes, triggers)
   const hasPartial = Object.keys(partial).length > 0
+  // proposedSplits are meaningful only for the COMPOUND code, and only when the
+  // splitter cleared its confidence guard (≥2 clean halves).
+  const hasSplits = code === 'ERR_PARSE_COMPOUND' && proposedSplits.length > 0
   return {
     tier: 3,
     code,
@@ -291,6 +305,7 @@ export function makeTier3Envelope(text: string, outcome: Tier2Outcome): Tier3Env
     ...(hasPartial ? { partial } : {}),
     suggestions: suggestionsFor(code, partial),
     notes: [...allNotes],
+    ...(hasSplits ? { proposedSplits } : {}),
   }
 }
 

@@ -200,6 +200,63 @@ describe('AC-2-7: partial slots forwarded from Tier 1', () => {
 })
 
 // ---------------------------------------------------------------------------
+// proposedSplits forwarding (wishlist #6): the compound splitter's output
+// rides on the Tier-3 envelope for ERR_PARSE_COMPOUND only.
+// ---------------------------------------------------------------------------
+
+describe('wishlist #6: makeTier3Envelope forwards proposedSplits on a confident compound', () => {
+  // A UPOS analyzer that tags a small verb set as VERB and coordinators CCONJ,
+  // so the splitter's soundness guard fires.
+  const SPLIT_VERBS = new Set(['validate', 'issue', 'provide', 'read', 'write'])
+  const splitAnalyzer: WinkAnalyzer = (text) =>
+    text.split(/\s+/).map((value): WinkToken => {
+      const w = value.toLowerCase()
+      const pos =
+        w === 'and' || w === 'or'
+          ? 'CCONJ'
+          : w === 'shall'
+            ? 'AUX'
+            : w === 'the' || w === 'a'
+              ? 'DET'
+              : SPLIT_VERBS.has(w)
+                ? 'VERB'
+                : 'NOUN'
+      return { value, pos, lemma: w, negationFlag: false }
+    })
+
+  it('a genuine two-clause compound carries proposedSplits (≥2) on the envelope', async () => {
+    const text = 'the auth service shall validate the token and issue a session'
+    const outcome = await getTier3Outcome(text, splitAnalyzer)
+    const env = makeTier3Envelope(text, outcome)
+    expect(env.code).toBe('ERR_PARSE_COMPOUND')
+    expect(env.proposedSplits).toBeDefined()
+    expect(env.proposedSplits).toHaveLength(2)
+    expect(env.proposedSplits?.map((s) => s.systemResponse)).toEqual([
+      'validate the token',
+      'issue a session',
+    ])
+    // The suggestion string references the machine-actionable ops.
+    expect(env.suggestions.join('\n').toLowerCase()).toMatch(/proposedops/)
+  })
+
+  it('a shared-object coordination carries NO proposedSplits (guard rejects)', async () => {
+    const text = 'the database shall provide read and write access'
+    const outcome = await getTier3Outcome(text, splitAnalyzer)
+    const env = makeTier3Envelope(text, outcome)
+    expect(env.code).toBe('ERR_PARSE_COMPOUND')
+    expect('proposedSplits' in env).toBe(false)
+  })
+
+  it('proposedSplits is never present on a non-compound code', () => {
+    const env = makeTier3EnvelopeFromNotes('When A while B then the system shall', [
+      'nested-clause-keyword',
+    ])
+    expect(env.code).toBe('ERR_PARSE_AMBIGUOUS_CLAUSES')
+    expect('proposedSplits' in env).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Suggestions are non-empty for every code (AC-2-7)
 // ---------------------------------------------------------------------------
 

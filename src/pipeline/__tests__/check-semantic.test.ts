@@ -14,6 +14,7 @@ import { emptyDoc } from '../../core/doc.js'
 import { renderSentence } from '../../core/render.js'
 import type { GlossaryEntry, Requirement, RequirementsDoc } from '../../core/schema.js'
 import type { Embedder } from '../../formal/embed.js'
+import { DEFAULT_SEMANTIC_THRESHOLD } from '../../formal/semantic.js'
 import { runCheck } from '../check.js'
 
 function req(partial: Partial<Requirement> & Pick<Requirement, 'id'>): Requirement {
@@ -93,7 +94,9 @@ describe('AC-9-5 — --semantic proposes the merge (propose-only)', () => {
 
   it('emits FND_SIMILAR_SEMANTIC for the unmerged paraphrase pair, not a verdict', async () => {
     const { doc, ids } = paraphrasedConflictDoc() // no glossary yet
-    const report = await runCheck(doc, { semantic: { embedder: fakeEmbedder, threshold: 0.82 } })
+    const report = await runCheck(doc, {
+      semantic: { embedder: fakeEmbedder, threshold: DEFAULT_SEMANTIC_THRESHOLD },
+    })
     const semantic = report.findings.filter((f) => f.code === 'FND_SIMILAR_SEMANTIC')
     expect(semantic).toHaveLength(1)
     expect(semantic[0]!.severity).toBe('info')
@@ -106,7 +109,9 @@ describe('AC-9-5 — --semantic proposes the merge (propose-only)', () => {
     const { doc } = paraphrasedConflictDoc([
       { canonical: 'issue a session token', aliases: ['issue a login credential'] },
     ])
-    const report = await runCheck(doc, { semantic: { embedder: fakeEmbedder, threshold: 0.82 } })
+    const report = await runCheck(doc, {
+      semantic: { embedder: fakeEmbedder, threshold: DEFAULT_SEMANTIC_THRESHOLD },
+    })
     expect(report.findings.map((f) => f.code)).not.toContain('FND_SIMILAR_SEMANTIC')
     expect(report.findings.map((f) => f.code)).toContain('FND_CONTRADICTION')
   })

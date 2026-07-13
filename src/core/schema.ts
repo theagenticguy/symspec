@@ -380,6 +380,28 @@ export const GlossaryEntrySchema = z
   .describe('A canonical phrase and its synonymous aliases (AC-9-1).')
 
 /**
+ * One committed antonym pair (#1): two response verb-heads asserted to be polar
+ * opposites, so `a X` and `b X` (same object remainder) resolve to the SAME
+ * scoped atom with OPPOSITE polarity — the exact shape the SMT contradiction
+ * tier already proves. This is the antonym analogue of {@link GlossaryEntrySchema}:
+ * where the glossary DECIDES synonymy (paraphrases collapse to one atom), this
+ * DECIDES opposition (opposite words collapse to one atom at opposite sign),
+ * extending the code-committed seed antonym table (`formal/antonyms.ts`) with
+ * doc-committed, agent-confirmed pairs. Both members are stored as normalized
+ * verb heads so they match the leading-verb key the atomizer looks up. The pair
+ * is unordered; the deterministic signed union-find canonicalizes it.
+ */
+export const AntonymPairSchema = z
+  .object({
+    a: z.string().min(1).describe('One response verb-head (normalized), e.g. "open".'),
+    b: z
+      .string()
+      .min(1)
+      .describe('The polar-opposite response verb-head (normalized), e.g. "shut".'),
+  })
+  .describe('A committed pair of polar-opposite response verb-heads (#1).')
+
+/**
  * One reviewed finding waiver. Records a deliberate decision to suppress a
  * specific finding code — optionally scoped to one requirement — with a reason,
  * so a heuristic false positive (e.g. GTWR_R6 on "RFC 9457") or a knowingly
@@ -442,6 +464,16 @@ export const RequirementsDocSchema = z
           'Reviewed finding waivers. Optional; defaults to []. `symspec check` drops any finding matching',
           'a waiver (by code, and by requirement when the waiver is scoped) from findings[] and the exit',
           'gate, reporting the count under `waived` so a suppressed-with-reason baseline stays visible.',
+        ),
+      ),
+    antonyms: z
+      .array(AntonymPairSchema)
+      .default([])
+      .describe(
+        lines(
+          'Agent-confirmed antonym pairs (#1). Optional; defaults to []. Extends the code-committed seed',
+          'antonym table so opposite response verbs (open/shut, grant/deny) collapse to one atom at opposite',
+          'polarity and the SMT tier can prove the contradiction. The antonym analogue of `glossary`.',
         ),
       ),
   })
@@ -665,6 +697,12 @@ export type GlossaryEntry = {
   aliases: string[]
 }
 
+/** One committed antonym pair (#1). See {@link AntonymPairSchema}. */
+export type AntonymPair = {
+  a: string
+  b: string
+}
+
 /**
  * One reviewed finding waiver. Derived from {@link WaiverSchema} (like
  * {@link Requirement} from its schema) so the optional `requirementId` carries
@@ -677,6 +715,7 @@ export type RequirementsDoc = {
   requirements: Record<string, Requirement>
   glossary: GlossaryEntry[]
   waivers: Waiver[]
+  antonyms: AntonymPair[]
 }
 
 export const SCHEMA_VERSION = 2

@@ -88,6 +88,40 @@ export const PartialSlotsSchema = z.object({
 })
 
 // ---------------------------------------------------------------------------
+// Proposed `add` ops (the compound-splitter auto-fix payload, wishlist #6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Zod schema for ONE ready-to-apply `add` op the compound splitter proposes for
+ * an `ERR_PARSE_COMPOUND` failure. It is the exact `apply` JSONL op shape
+ * (`{"op":"add", …}`) an agent pipes straight into `symspec apply`, so its
+ * fields mirror `CreateRequirementAttrsSchema`'s create attrs — with `id`
+ * deliberately OMITTED so `apply` mints a fresh UUID per op (no non-determinism
+ * leaks into the proposal). `.describe()` makes it self-documenting in the
+ * generated manifest/agent docs.
+ */
+export const ProposedAddOpSchema = z
+  .object({
+    op: z.literal('add').describe('The apply op discriminant — always "add" for a proposed split.'),
+    patternType: z.enum(EARS_PATTERNS),
+    systemName: z.string(),
+    systemResponse: z.string(),
+    negated: z.boolean().optional(),
+    preCondition: z.string().optional(),
+    trigger: z.string().optional(),
+  })
+  .describe(
+    'One ready-to-apply `add` op proposed by the compound splitter for an ERR_PARSE_COMPOUND ' +
+      'failure — the exact `symspec apply` JSONL op shape ({"op":"add", …}), with `id` omitted ' +
+      'so apply mints a fresh UUID. When the error envelope carries `proposedOps`, an agent can ' +
+      'write the ops to a .jsonl stream and run `symspec apply` to create the split requirements ' +
+      'directly, instead of hand-rewriting the compound sentence.',
+  )
+
+/** One ready-to-apply `add` op proposed for a compound-split auto-fix. */
+export type ProposedAddOp = z.infer<typeof ProposedAddOpSchema>
+
+// ---------------------------------------------------------------------------
 // Success envelope
 // ---------------------------------------------------------------------------
 
@@ -127,6 +161,7 @@ export const ErrorEnvelopeSchema = z.object({
   code: ErrCodeSchema,
   suggestions: z.array(z.string()),
   partial: PartialSlotsSchema.optional(),
+  proposedOps: z.array(ProposedAddOpSchema).min(2).optional(),
 })
 
 /** An error envelope. */
@@ -137,6 +172,12 @@ export interface ErrorEnvelope {
   readonly code: z.infer<typeof ErrCodeSchema>
   readonly suggestions: readonly string[]
   readonly partial?: PartialSlots
+  /**
+   * For `ERR_PARSE_COMPOUND` only: the machine-actionable `add` ops the compound
+   * splitter proposes (≥2), ready to pipe into `symspec apply`. Present only
+   * when the split was unambiguous; absent otherwise.
+   */
+  readonly proposedOps?: readonly ProposedAddOp[]
 }
 
 /**
@@ -160,21 +201,25 @@ export function success<T>(type: string, data: T): SuccessEnvelope<T> {
   return { apiVersion: API_VERSION, type, data }
 }
 
-/** Options for {@link failure}. `partial` is omitted when nothing was recovered. */
+/** Options for {@link failure}. `partial`/`proposedOps` are omitted when absent. */
 export interface FailureOptions {
   readonly error: string
   readonly code: z.infer<typeof ErrCodeSchema>
   readonly suggestions?: readonly string[]
   readonly partial?: PartialSlots
+  /** Machine-actionable `add` ops (≥2) for an ERR_PARSE_COMPOUND auto-fix. */
+  readonly proposedOps?: readonly ProposedAddOp[]
 }
 
 /**
  * Wrap a failure in the error envelope. `partial` is included only when the
- * caller supplies a non-empty skeleton — the key is OMITTED (not set to
- * `undefined`/`null`) otherwise, per `exactOptionalPropertyTypes`.
+ * caller supplies a non-empty skeleton, and `proposedOps` only when the caller
+ * supplies at least two ops — each key is OMITTED (not set to `undefined`/`null`)
+ * otherwise, per `exactOptionalPropertyTypes`, mirroring how `partial` is handled.
  */
 export function failure(opts: FailureOptions): ErrorEnvelope {
   const hasPartial = opts.partial !== undefined && Object.keys(opts.partial).length > 0
+  const hasOps = opts.proposedOps !== undefined && opts.proposedOps.length > 0
   return {
     apiVersion: API_VERSION,
     type: 'error',
@@ -182,6 +227,7 @@ export function failure(opts: FailureOptions): ErrorEnvelope {
     code: opts.code,
     suggestions: opts.suggestions ?? [],
     ...(hasPartial ? { partial: opts.partial as PartialSlots } : {}),
+    ...(hasOps ? { proposedOps: opts.proposedOps as readonly ProposedAddOp[] } : {}),
   }
 }
 

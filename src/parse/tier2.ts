@@ -104,6 +104,22 @@ export interface Tier2Miss {
 export type Tier2Result = Tier2Ok | Tier2Miss
 
 /**
+ * One confidently-recovered single requirement proposed from a COMPOUND input
+ * (the two halves of "the <system> shall <A> and <B>"). Generic slot shape —
+ * this carries NO CLI op vocabulary, so `src/parse/` stays CLI-agnostic; the CLI
+ * layer (`cli/add.ts`) maps each `ProposedSplit` to a ready-to-apply `add` op.
+ * `negated` is per-half so "shall not <A> and <B>" splits its polarity correctly.
+ */
+export interface ProposedSplit {
+  patternType: EarsPattern
+  systemName: string
+  systemResponse: string
+  preCondition?: string
+  trigger?: string
+  negated: boolean
+}
+
+/**
  * Outcome of {@link runTier2}. Always carries the Tier-1 result and the fired
  * escalation triggers; carries a `tier2` result ONLY when escalation warranted
  * it and the model loaded. `escalated: false` means the loader was never
@@ -122,6 +138,14 @@ export interface Tier2Outcome {
    * exactOptionalPropertyTypes).
    */
   tier2?: Tier2Result
+  /**
+   * Confidently-split single requirements recovered from a COMPOUND input
+   * (`compound-conjunction` trigger). Present ONLY when the splitter cleared its
+   * soundness guard and produced ≥2 halves that each re-parse to a valid single
+   * requirement; omitted (not `undefined`) otherwise, so an ambiguous compound
+   * carries no bogus proposal. Populated by {@link splitCompound}.
+   */
+  proposedSplits?: readonly ProposedSplit[]
 }
 
 /** Options for {@link runTier2}. */
@@ -492,6 +516,121 @@ export function repairWithWink(
 }
 
 // ---------------------------------------------------------------------------
+// Compound splitter (proposes the two split requirements — feeds `proposedOps`)
+// ---------------------------------------------------------------------------
+
+/**
+ * UPOS coordinating-conjunction tag (`and`, `or`, `and/or`), plus a surface
+ * fallback so a fake analyzer that does not emit `CCONJ` still splits.
+ */
+const isCoordinator = (t: WinkToken): boolean =>
+  t.pos === 'CCONJ' || t.value.toLowerCase() === 'and' || t.value.toLowerCase() === 'or'
+
+/**
+ * UPOS tags that open a fresh verb phrase to the RIGHT of a coordinator — the
+ * signal that "… and <here> …" begins a SECOND response clause rather than
+ * continuing the first. A modal (recognized by lemma via {@link isModal}) or a
+ * bare `VERB` qualifies; a determiner / noun / adjective does NOT (that is a
+ * coordinated object, e.g. "the request and the response").
+ */
+const opensResponseClause = (t: WinkToken): boolean => isModal(t) || t.pos === 'VERB'
+
+/**
+ * Split a COMPOUND requirement into its constituent single requirements, or
+ * return an empty array when the split is not CONFIDENT (soundness guard).
+ *
+ * The detector ({@link escalationTriggers} `compound-conjunction`) is a naive
+ * `\b(and|or)\b` regex and deliberately over-flags — that is a lint decision.
+ * This splitter is strictly MORE conservative: it only proposes a split it can
+ * prove sound, and otherwise proposes NOTHING (leaving the human-readable
+ * suggestion as the only recovery). The guard has three gates:
+ *
+ *   1. **Structural** — POS-driven. Pivot on the first modal; only a coordinator
+ *      that (a) sits to the right of the modal's response span and (b) is
+ *      followed by a token that {@link opensResponseClause} (another modal or a
+ *      `VERB`) and (c) is NOT preceded by a `VERB` counts as a clause boundary.
+ *      This rejects "read and write access" (VERB `and` VERB → shared object)
+ *      and "the request and the response" (DET after `and` → coordinated NP).
+ *
+ *   2. **Reconstruction** — each response fragment is recombined with the SHARED
+ *      prefix (everything up to and including the modal: any leading
+ *      trigger/precondition + "the <system> shall") into a full candidate
+ *      requirement string. The shared subject/pattern/trigger carry across all
+ *      halves — the common "shall X and Y" case.
+ *
+ *   3. **Re-parse** — every candidate is re-parsed through the zero-dependency
+ *      {@link classifyTier1} cascade. A half is accepted ONLY if it re-parses to
+ *      a confident single requirement (`ok`, and NOT itself compound). If ANY
+ *      half fails to yield a clean single requirement, the whole split is
+ *      rejected (return `[]`) — we never emit a half-baked op.
+ *
+ * Deterministic and pure over its inputs (same tokens → same splits, in order).
+ */
+export function splitCompound(input: string, analyze: WinkAnalyzer): ProposedSplit[] {
+  const text = preprocess(input)
+  const tokens = analyze(text)
+
+  const modalIdx = tokens.findIndex(isModal)
+  if (modalIdx < 0) return []
+
+  // Clause-boundary coordinators strictly inside the response span. A boundary
+  // needs a real token on each side, an opener to its right, and a non-verb to
+  // its left (so coordinated verbs sharing one object do not split).
+  const boundaries: number[] = []
+  for (let i = modalIdx + 2; i < tokens.length - 1; i += 1) {
+    const tok = tokens[i]!
+    if (!isCoordinator(tok)) continue
+    const prev = tokens[i - 1]!
+    const next = tokens[i + 1]!
+    if (prev.pos === 'VERB' && !isModal(next)) continue
+    if (!opensResponseClause(next)) continue
+    boundaries.push(i)
+  }
+  if (boundaries.length === 0) return []
+
+  // The shared prefix is every token up to AND INCLUDING the modal ("When X, the
+  // auth service shall"); each response fragment sits between consecutive
+  // boundaries. A fragment that itself leads with a modal ("… and shall Y")
+  // drops that redundant modal — the prefix already supplies one.
+  const prefixTokens = tokens.slice(0, modalIdx + 1)
+  const prefix = joinTokens(prefixTokens)
+
+  const cutStarts = [modalIdx + 1, ...boundaries.map((b) => b + 1)]
+  const cutEnds = [...boundaries, tokens.length]
+
+  const proposals: ProposedSplit[] = []
+  for (let h = 0; h < cutStarts.length; h += 1) {
+    let fragTokens = tokens.slice(cutStarts[h]!, cutEnds[h]!)
+    if (fragTokens.length > 0 && isModal(fragTokens[0]!)) fragTokens = fragTokens.slice(1)
+    const fragment = joinTokens(fragTokens)
+    if (fragment === '') return []
+
+    // Re-parse the reconstructed candidate through the zero-dependency cascade.
+    // A half is accepted ONLY when it re-parses to a confident single
+    // requirement with a non-empty response; anything less means the split was
+    // not sound and the whole proposal is dropped.
+    const candidate = `${prefix} ${fragment}`.replace(/\s+/g, ' ').trim()
+    const reparse = classifyTier1(candidate)
+    if (!reparse.ok || reparse.slots.systemResponse.trim() === '') return []
+
+    proposals.push({
+      patternType: reparse.slots.patternType,
+      systemName: reparse.slots.systemName,
+      systemResponse: reparse.slots.systemResponse,
+      negated: reparse.negated,
+      ...(reparse.slots.preCondition !== undefined
+        ? { preCondition: reparse.slots.preCondition }
+        : {}),
+      ...(reparse.slots.trigger !== undefined ? { trigger: reparse.slots.trigger } : {}),
+    })
+  }
+
+  // A confident split needs at least two clean halves; one half means the
+  // coordinator was not a genuine clause boundary after all.
+  return proposals.length >= 2 ? proposals : []
+}
+
+// ---------------------------------------------------------------------------
 // The gated driver
 // ---------------------------------------------------------------------------
 
@@ -532,5 +671,16 @@ export async function runTier2(input: string, opts: Tier2Options = {}): Promise<
   }
 
   const tier2 = repairWithWink(input, analyze, triggers)
-  return { escalated: true, triggers, tier1, tier2 }
+  // On a compound input the analyzer is already loaded, so attempt the split
+  // here (its POS guard + re-parse decide whether a confident proposal exists).
+  const proposedSplits = triggers.includes('compound-conjunction')
+    ? splitCompound(input, analyze)
+    : []
+  return {
+    escalated: true,
+    triggers,
+    tier1,
+    tier2,
+    ...(proposedSplits.length > 0 ? { proposedSplits } : {}),
+  }
 }

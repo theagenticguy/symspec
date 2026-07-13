@@ -16,6 +16,7 @@ import {
   ParseOkResultSchema,
   ParseResultSchema,
   ParseSkippedResultSchema,
+  ProposedSplitSchema,
   parseLine,
   resolveParseResult,
 } from '../result.js'
@@ -229,6 +230,101 @@ describe('AC-2-8: compound-conjunction forces error even over a nominal parse', 
     expect(result.partial?.systemName).toBe('service')
     expect(result.suggestions.join('\n').toLowerCase()).toMatch(/split/)
     expect(ParseResultSchema.parse(result).outcome).toBe('error')
+  })
+
+  it('the no-modal fake never proposes splits (guard needs VERB/CCONJ signal)', async () => {
+    // With the bare-NN analyzer there is no VERB/CCONJ signal, so the splitter's
+    // soundness guard produces nothing — a compound stays a plain error.
+    const result = await parseLine(
+      'The service shall authenticate users and issue tokens',
+      noModalOpts(),
+    )
+    if (result.outcome !== 'error') throw new Error('expected error')
+    expect(result.proposedSplits).toBeUndefined()
+    expect(ParseErrorResultSchema.safeParse(result).success).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// wishlist #6: proposedSplits ride on the error result and re-parse cleanly
+// ---------------------------------------------------------------------------
+
+describe('wishlist #6: a confident compound carries create-schema-valid proposedSplits', () => {
+  const SPLIT_VERBS = new Set(['validate', 'issue', 'provide', 'read', 'write'])
+  const splitAnalyzer: WinkAnalyzer = (text) =>
+    text.split(/\s+/).map((value): WinkToken => {
+      const w = value.toLowerCase()
+      const pos =
+        w === 'and' || w === 'or'
+          ? 'CCONJ'
+          : w === 'shall'
+            ? 'AUX'
+            : w === 'the' || w === 'a'
+              ? 'DET'
+              : SPLIT_VERBS.has(w)
+                ? 'VERB'
+                : 'NOUN'
+      return { value, pos, lemma: w, negationFlag: false }
+    })
+
+  it('each proposed split is accepted by CreateRequirementAttrsSchema', async () => {
+    const result = await parseLine(
+      'the auth service shall validate the token and issue a session',
+      {
+        load: async () => splitAnalyzer,
+      },
+    )
+    expect(result.outcome).toBe('error')
+    if (result.outcome !== 'error') return
+    expect(result.code).toBe('ERR_PARSE_COMPOUND')
+    expect(result.proposedSplits).toBeDefined()
+    expect(result.proposedSplits).toHaveLength(2)
+    // The error result (with proposedSplits) still validates against the schema.
+    expect(ParseErrorResultSchema.safeParse(result).success).toBe(true)
+    // Every proposed split's slots satisfy the create-attrs schema — i.e. an
+    // `add` op built from it would apply cleanly.
+    for (const split of result.proposedSplits ?? []) {
+      const { negated: _negated, ...slots } = split
+      expect(CreateRequirementAttrsSchema.safeParse(slots).success).toBe(true)
+    }
+  })
+
+  it('ProposedSplitSchema requires the negated flag and the core slots', () => {
+    expect(
+      ProposedSplitSchema.safeParse({
+        patternType: 'ubiquitous',
+        systemName: 'auth service',
+        systemResponse: 'issue a session',
+        negated: false,
+      }).success,
+    ).toBe(true)
+    // Missing `negated` is rejected.
+    expect(
+      ProposedSplitSchema.safeParse({
+        patternType: 'ubiquitous',
+        systemName: 'auth service',
+        systemResponse: 'issue a session',
+      }).success,
+    ).toBe(false)
+  })
+
+  it('the ParseErrorResultSchema rejects a single-element proposedSplits (needs ≥2)', () => {
+    expect(
+      ParseErrorResultSchema.safeParse({
+        outcome: 'error',
+        code: 'ERR_PARSE_COMPOUND',
+        error: 'compound',
+        suggestions: ['split it'],
+        proposedSplits: [
+          {
+            patternType: 'ubiquitous',
+            systemName: 'x',
+            systemResponse: 'y',
+            negated: false,
+          },
+        ],
+      }).success,
+    ).toBe(false)
   })
 })
 

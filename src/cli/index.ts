@@ -29,6 +29,7 @@
  */
 
 import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { Command } from 'commander'
 import type { z } from 'zod'
 import { discoverLeanToolchain } from '../certify/discover.js'
@@ -49,6 +50,7 @@ import {
 import { emitSmt2 } from '../formal/emit-smt2.js'
 import { downloadModelAssets } from '../formal/model-cache.js'
 import { SolverBudgetExceededError } from '../formal/needs-review.js'
+import { DEFAULT_SEMANTIC_THRESHOLD } from '../formal/semantic.js'
 import { parseBatch } from '../parse/batch.js'
 import { type CheckSeverity, encodeIncluded, filterReport, runCheck } from '../pipeline/check.js'
 import { runAdd } from './add.js'
@@ -58,7 +60,14 @@ import { COMMAND_DESCRIPTIONS } from './descriptions.js'
 import { type Envelope, failure, success } from './envelope.js'
 import { parseRelation, requireRequirement, toErrorEnvelope, usageError } from './errors.js'
 import { exitCodeForEnvelope } from './exit.js'
-import { glossaryAdd, glossaryList, glossaryRemove } from './glossary.js'
+import {
+  antonymAdd,
+  antonymList,
+  antonymRemove,
+  glossaryAdd,
+  glossaryList,
+  glossaryRemove,
+} from './glossary.js'
 import { runInstall } from './install/run.js'
 import { buildManifestWithBackends } from './manifest.js'
 import { formatEnvelope, type OutputFlags } from './output.js'
@@ -128,7 +137,16 @@ async function loadResolved(
 // Program
 // ---------------------------------------------------------------------------
 
-const program = new Command()
+/**
+ * The commander program — every command's `.argument()`/`.option()`
+ * registration. Exported (not merely module-local) so the manifest round-trip
+ * test can introspect each command's accepted flags/args and assert they match
+ * what the manifest documents, catching a manifest/parser drift (e.g. the
+ * `apply --doc` vs `--file` bug) without spawning a process. Importing this
+ * module does NOT parse argv — {@link main} runs only when the module is the
+ * process entry (guarded below), so a test can import `program` side-effect-free.
+ */
+export const program = new Command()
 
 program
   .name('symspec')
@@ -386,7 +404,10 @@ program
     '--semantic',
     'opt-in: embed responses (local BGE-ONNX model) to PROPOSE glossary merges for paraphrased conflicts (AC-9-5)',
   )
-  .option('--semantic-threshold <n>', 'cosine threshold for --semantic (default 0.82)')
+  .option(
+    '--semantic-threshold <n>',
+    `cosine threshold for --semantic (default ${DEFAULT_SEMANTIC_THRESHOLD})`,
+  )
   .option(
     '--temporal',
     'opt-in: bounded LTL→SMT temporal-ordering conflict detection (FND_TEMPORAL_CONTRADICTION, AC-33-2)',
@@ -399,6 +420,14 @@ program
   .option(
     '--findings-only',
     'output filter: return only findings[], dropping the excluded table (#5)',
+  )
+  .option(
+    '--strict',
+    'gate: fail (exit 3) when the run is INCONCLUSIVE — nothing was verified across requirements (data.verified=false) (#4)',
+  )
+  .option(
+    '--fail-on-unmatched <n>',
+    'gate: fail (exit 3) when more than <n> atoms went uncompared (residualRisk.unmatchedAtoms); 0 fails on any (#4)',
   )
   .action(
     async (
@@ -416,6 +445,8 @@ program
         temporalBound?: string
         minSeverity?: string
         findingsOnly?: boolean
+        strict?: boolean
+        failOnUnmatched?: string
       },
       cmd: Command,
     ) => {
@@ -478,6 +509,25 @@ program
           ),
           flags,
         )
+      }
+
+      // Wishlist #4: opt-in strict coverage gate. --strict fails an inconclusive
+      // run; --fail-on-unmatched <n> fails when too many atoms went uncompared.
+      // Validate the threshold up front (a non-negative integer) so a typo is a
+      // clean usage error rather than a silently-disabled gate.
+      if (opts.strict === true) checkOpts.strict = true
+      if (opts.failOnUnmatched !== undefined) {
+        const n = Number(opts.failOnUnmatched)
+        if (!Number.isInteger(n) || n < 0) {
+          emit(
+            usageError(
+              `--fail-on-unmatched expects a non-negative integer, got "${opts.failOnUnmatched}"`,
+              'symspec check [file] --fail-on-unmatched <n>',
+            ),
+            flags,
+          )
+        }
+        checkOpts.failOnUnmatched = n
       }
 
       try {
@@ -900,6 +950,56 @@ waiveCmd
     emit(waiveList(loaded.doc).envelope, flags)
   })
 
+// --- antonym ---------------------------------------------------------------
+// #1: manage committed antonym pairs — the opposition analogue of `glossary`.
+// An `antonym add open shut` collapses open/shut onto one atom at opposite
+// polarity so the SMT contradiction tier can prove the conflict. The DECIDE
+// half for opposition, mirroring glossary's DECIDE half for synonymy.
+const antonymCmd = program.command('antonym').description(COMMAND_DESCRIPTIONS.antonym)
+
+antonymCmd
+  .command('add')
+  .description('Assert two response verb-heads are polar opposites (idempotent).')
+  .argument('<a>', 'one response verb-head, e.g. open')
+  .argument('<b>', 'the polar-opposite response verb-head, e.g. shut')
+  .option('--file <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
+  .action(async (a: string, b: string, opts: { file?: string }, cmd: Command) => {
+    const flags = globalFlags(cmd)
+    const loaded = await loadResolved(opts.file)
+    if ('envelope' in loaded) emit(loaded.envelope, flags)
+    const { doc, path } = loaded
+    const result = antonymAdd(doc, a, b)
+    if ('next' in result) await saveOrEmit(result.next, path, flags)
+    emit(result.envelope, flags)
+  })
+
+antonymCmd
+  .command('remove')
+  .description('Retract an antonym pair (no-op if absent; matches either order).')
+  .argument('<a>', 'one response verb-head of the pair to remove')
+  .argument('<b>', 'the other response verb-head of the pair to remove')
+  .option('--file <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
+  .action(async (a: string, b: string, opts: { file?: string }, cmd: Command) => {
+    const flags = globalFlags(cmd)
+    const loaded = await loadResolved(opts.file)
+    if ('envelope' in loaded) emit(loaded.envelope, flags)
+    const { doc, path } = loaded
+    const result = antonymRemove(doc, a, b)
+    if ('next' in result) await saveOrEmit(result.next, path, flags)
+    emit(result.envelope, flags)
+  })
+
+antonymCmd
+  .command('list')
+  .description('List the committed antonym pairs (read-only).')
+  .option('--file <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
+  .action(async (opts: { file?: string }, cmd: Command) => {
+    const flags = globalFlags(cmd)
+    const loaded = await loadResolved(opts.file)
+    if ('envelope' in loaded) emit(loaded.envelope, flags)
+    emit(antonymList(loaded.doc).envelope, flags)
+  })
+
 // --- install ---------------------------------------------------------------
 // Drop the symspec skill into each detected agent host's dedicated dir; never
 // edits a host's root instruction file.
@@ -1153,4 +1253,15 @@ async function main(): Promise<void> {
   }
 }
 
-void main()
+// Run the CLI only when this module IS the process — i.e. spawned as the binary
+// (`node dist/cli.mjs …`, `tsx src/cli/index.ts …`, or the `bin/symspec.mjs`
+// wrapper in production) — and never when a vitest unit test merely imports it
+// to introspect `program`. Production has no VITEST env, so `!underVitest` runs
+// main there; integration tests spawn the module AS the entry, so `isEntry`
+// runs it; only a unit-test dependency import (under vitest, not the entry
+// module) is suppressed, keeping `import { program }` side-effect-free.
+const isEntry = process.argv[1] === fileURLToPath(import.meta.url)
+const underVitest = process.env.VITEST !== undefined
+if (isEntry || !underVitest) {
+  void main()
+}

@@ -56,7 +56,7 @@
 import { z } from 'zod'
 import { CreateRequirementAttrsSchema, EARS_PATTERNS } from '../core/schema.js'
 import type { Confidence, Tier1Ok, Tier1Slots } from './tier1.js'
-import type { Tier2Ok, Tier2Options, Tier2Outcome } from './tier2.js'
+import type { ProposedSplit, Tier2Ok, Tier2Options, Tier2Outcome } from './tier2.js'
 import { runTier2 } from './tier2.js'
 import type { ParseErrorCode, Tier3Envelope } from './tier3.js'
 import { makeTier3Envelope, PARSE_ERROR_CODES } from './tier3.js'
@@ -116,6 +116,16 @@ export const ParsePartialSlotsSchema = z.object({
   trigger: z.string().optional(),
 })
 
+/**
+ * A single confidently-split requirement proposed for a compound (`and`/`or`)
+ * input. Generic slot shape (`.pick()` of the create attrs plus a `negated`
+ * flag) — carries NO CLI op vocabulary, so `src/parse/` stays CLI-agnostic. The
+ * CLI layer maps each proposal to a ready-to-apply `add` op.
+ */
+export const ProposedSplitSchema = ParseSlotsSchema.extend({
+  negated: z.boolean(),
+})
+
 /** Error: a Tier-3 failure (AC-2-7) with stable code, partial, and rewrites. */
 export const ParseErrorResultSchema = z.object({
   outcome: z.literal('error'),
@@ -123,6 +133,7 @@ export const ParseErrorResultSchema = z.object({
   error: z.string().min(1),
   partial: ParsePartialSlotsSchema.optional(),
   suggestions: z.array(z.string()).min(1),
+  proposedSplits: z.array(ProposedSplitSchema).min(2).optional(),
 })
 
 /** The full AC-2-8 union, discriminated on `outcome`. */
@@ -174,6 +185,13 @@ export interface ParseErrorResult {
   }
   /** Mechanical rewrite suggestions — always at least one. */
   readonly suggestions: readonly string[]
+  /**
+   * For `ERR_PARSE_COMPOUND` only: the confidently-split single requirements the
+   * compound splitter recovered (≥2 halves that each re-parse cleanly). Absent
+   * when the split was not confident or the code is not COMPOUND. Generic slot
+   * shape — the CLI layer maps these to ready-to-apply `add` ops.
+   */
+  readonly proposedSplits?: readonly ProposedSplit[]
 }
 
 export type ParseResult = ParseOkResult | ParseSkippedResult | ParseErrorResult
@@ -213,6 +231,7 @@ export function fromTier3(env: Tier3Envelope, text: string): ParseSkippedResult 
     error: env.error,
     ...(env.partial !== undefined ? { partial: env.partial } : {}),
     suggestions: env.suggestions,
+    ...(env.proposedSplits !== undefined ? { proposedSplits: env.proposedSplits } : {}),
   }
 }
 

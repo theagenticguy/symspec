@@ -27,6 +27,7 @@
  * a fabricated constraint.
  */
 
+import { normalize } from './atomize.js'
 import type { NumericComparator } from './encode.js'
 
 /** A numeric predicate extracted from one slot, normalized to a base unit. */
@@ -138,10 +139,31 @@ const NUMBER = String.raw`(\d[\d,]*(?:\.\d+)?)`
 /** Unit token: a short alphabetic run (ms, s, kb, retries handled as unitless). */
 const UNIT = '([a-zA-Z]+)?'
 
-/** Normalize a quantity label into a canonical, per-system atom-style key. */
-function quantityKey(systemName: string, label: string): string {
+/**
+ * Normalize a quantity label into a canonical, per-system atom-style key.
+ *
+ * #3 (same-quantity-two-ways): before keying, the label is optionally routed
+ * through a quantity-alias map — the committed synonym glossary, keyed by the
+ * label's normalized form. This is what lets two responses that constrain the
+ * SAME physical quantity through different phrasings ("token lifetime" via "keep
+ * valid for" vs "expire after") land on ONE quantity key so the existing LIA/LRA
+ * solver sees them together. Reuses the propose/decide discipline: the glossary
+ * is the agent-confirmed, committed artifact; nothing fuzzy touches the key. A
+ * no-op when no alias map is supplied or the label is not an alias, so the
+ * default numeric path is byte-identical to before.
+ */
+function quantityKey(
+  systemName: string,
+  label: string,
+  quantityAliases?: ReadonlyMap<string, string>,
+): string {
   const sys = systemName.trim().toLowerCase().replace(/\s+/g, '_')
-  const q = label
+  // Canonicalize the label through the alias map first (keyed on the same
+  // `normalize` form the glossary index uses), then fall through to the
+  // existing atom-style normalization so a non-aliased label keys exactly as
+  // before.
+  const canonicalLabel = quantityAliases?.get(normalize(label)) ?? label
+  const q = canonicalLabel
     .trim()
     .toLowerCase()
     .replace(/^the\s+/, '')
@@ -192,8 +214,17 @@ function labelBefore(text: string, comparatorStart: number): string | null {
 /**
  * Extract every numeric predicate in one slot text, scoped to `systemName`.
  * Returns `[]` when no numeric predicate is present. Deterministic.
+ *
+ * `quantityAliases` (#3): an optional NORMALIZED label → canonical-label map
+ * (built from the committed glossary, same shape as the atom glossary index) so
+ * two phrasings of one physical quantity collapse to a single quantity key and
+ * the arithmetic solver compares them. Omitted ⇒ unchanged behavior.
  */
-export function extractNumericPredicates(text: string, systemName: string): NumericPredicate[] {
+export function extractNumericPredicates(
+  text: string,
+  systemName: string,
+  quantityAliases?: ReadonlyMap<string, string>,
+): NumericPredicate[] {
   const out: NumericPredicate[] = []
   const lower = text.toLowerCase()
   // Character ranges already consumed by a matched comparator phrase, so a
@@ -230,7 +261,7 @@ export function extractNumericPredicates(text: string, systemName: string): Nume
       const baseUnit = resolved !== null ? resolved.base : ''
 
       out.push({
-        quantity: quantityKey(systemName, label),
+        quantity: quantityKey(systemName, label, quantityAliases),
         label,
         comparator,
         value,

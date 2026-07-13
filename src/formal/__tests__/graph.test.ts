@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { Embedder } from '../embed.js'
-import { buildSimilarityGraph, type GraphRequirement } from '../graph.js'
+import { buildSimilarityGraph, DEFAULT_GRAPH_THRESHOLD, type GraphRequirement } from '../graph.js'
 
 /** Fake embedder: maps each input text to a hand-chosen 2-D unit vector. */
 function fakeEmbedder(table: Record<string, [number, number]>): Embedder {
@@ -99,5 +99,24 @@ describe('buildSimilarityGraph (AC-32-4)', () => {
       quantizePrecision: 4,
     })
     expect(findings).toEqual([])
+  })
+
+  it('defaults the edge threshold to DEFAULT_GRAPH_THRESHOLD (relatedness, held higher than paraphrase)', async () => {
+    // The graph tier is a distinct judgment from paraphrase-synonymy and holds a
+    // higher, precision-favoring bar. Assert the exported value and that it is
+    // applied when no threshold option is passed.
+    expect(DEFAULT_GRAPH_THRESHOLD).toBe(0.82)
+
+    // cosine ≈ 0.79 sits ABOVE the paraphrase default (0.72) but BELOW the graph
+    // default (0.82): [1,0] · [0.79, sqrt(1-0.79^2)] = 0.79. No edge by default.
+    const y = Math.sqrt(1 - 0.79 * 0.79)
+    const embedder = fakeEmbedder({ a: [1, 0], b: [0.79, y] })
+    const noEdge = await buildSimilarityGraph([gr('A', 'a'), gr('B', 'b')], embedder)
+    expect(noEdge).toEqual([])
+
+    // A truly near-duplicate pair (cosine ≈ 0.999) clears the default bar.
+    const near = fakeEmbedder({ a: [1, 0.02], b: [1, 0.05] })
+    const edge = await buildSimilarityGraph([gr('A', 'a'), gr('B', 'b')], near)
+    expect(edge.filter((f) => f.code === 'FND_MISSING_TRACE_LINK')).toHaveLength(1)
   })
 })

@@ -56,6 +56,7 @@ import {
   RequirementUpdateInputShape,
 } from '../core/schema.js'
 import { FndCodeMeta, FndCodes } from '../formal/codes.js'
+import { DEFAULT_SEMANTIC_THRESHOLD } from '../formal/semantic.js'
 import { GtwrCodeMeta, GtwrCodes } from '../lint/codes.js'
 import { type BackendsReport, BackendsReportSchema, collectBackends } from './backends.js'
 import { COMMAND_SUMMARIES, type CommandName } from './descriptions.js'
@@ -102,6 +103,48 @@ const docFileOpt = z
     ),
   )
   .optional()
+
+/**
+ * The document-path option for `apply` ONLY (M2 exception). `apply`'s positional
+ * `[file]` is already the JSONL ops stream, so the doc path cannot also be
+ * positional and does NOT use the shared `--file` option (that would collide
+ * with the ops-file semantics an agent might expect). It takes `--doc <path>`
+ * instead. Same resolution precedence as {@link docFileOpt} but a distinct flag,
+ * so the manifest tells an agent to call `apply --doc`, never `apply --file`.
+ */
+const docApplyOpt = z
+  .string()
+  .min(1)
+  .describe(
+    lines(
+      'Path to the requirements document (JSON), supplied as the `--doc <path>` option.',
+      '(`apply` uses `--doc` — not `--file` — because its positional [file] is the JSONL op stream.)',
+      'Resolution precedence: this option, then the SYMSPEC_DOC environment',
+      'variable, then the ./requirements.json default.',
+      'Example: --doc ./requirements.json',
+    ),
+  )
+  .optional()
+
+/**
+ * The doc-path convention, stated once for the manifest's top-level
+ * `conventions.docPath` field so an agent driving from the manifest learns the
+ * per-command rule without reverse-engineering it from each field's
+ * `.describe()`. Mirrors the M2 split enforced by {@link docPathArg} /
+ * {@link docFileOpt} / {@link docApplyOpt}.
+ */
+const DOC_PATH_CONVENTION = lines(
+  'How each command receives the requirements-document path (resolution precedence is',
+  'always: the supplied path, then the SYMSPEC_DOC environment variable, then the',
+  './requirements.json default):',
+  '- Positional [file] (init, add, check, certify, list, export): pass the path as the',
+  '  leading positional argument.',
+  '- --file <path> option (update, show, derive, satisfy, remove-edge, delete, glossary,',
+  '  waive, antonym): these carry a required positional (UUID/key/relation), so the doc path moves',
+  '  to the --file option and commander never mistakes a required argument for the path.',
+  '- --doc <path> option (apply): apply’s positional [file] is the JSONL op stream, so its',
+  '  doc path is the separate --doc option.',
+)
 
 const idArg = f.id
 
@@ -165,6 +208,18 @@ const CheckOptionShape = {
     .string()
     .describe('`--solver-path <path>`: explicit path to an external z3/cvc5 binary (AC-4-9).')
     .optional(),
+  semantic: z
+    .boolean()
+    .describe(
+      '`--semantic`: opt-in info-tier paraphrase pass. Embeds responses with a local ONNX model to PROPOSE glossary merges for near-duplicate wording (FND_SIMILAR_SEMANTIC, AC-9-5). Propose-only — it never emits a conflict verdict; needs the model (see `download-model`) or yields ERR_EMBED_MODEL_MISSING.',
+    )
+    .optional(),
+  'semantic-threshold': z
+    .string()
+    .describe(
+      `\`--semantic-threshold <n>\`: cosine threshold for --semantic paraphrase detection (default ${DEFAULT_SEMANTIC_THRESHOLD}); higher is stricter.`,
+    )
+    .optional(),
   temporal: z
     .boolean()
     .describe(
@@ -174,6 +229,18 @@ const CheckOptionShape = {
   'temporal-bound': z
     .string()
     .describe('`--temporal-bound <k>`: trace bound k for --temporal (default 10).')
+    .optional(),
+  strict: z
+    .boolean()
+    .describe(
+      '`--strict`: opt-in coverage gate. Fails with exit 3 (EXIT_INCONCLUSIVE) when the run is INCONCLUSIVE — ≥2 requirements but nothing was verified across them (data.verified=false), the machine-readable form of "silence is not a consistency certificate" (#4).',
+    )
+    .optional(),
+  'fail-on-unmatched': z
+    .string()
+    .describe(
+      '`--fail-on-unmatched <n>`: opt-in coverage gate. Fails with exit 3 when residualRisk.unmatchedAtoms exceeds <n> (atoms owned by one requirement, never cross-compared); 0 fails on any unmatched atom (#4).',
+    )
     .optional(),
 }
 
@@ -219,13 +286,20 @@ interface CommandSpec {
   readonly args: z.ZodObject
 }
 
-// Commands split into two doc-path conventions (M2):
+// Commands split into three doc-path conventions (M2). The convention prose an
+// agent reads is single-sourced in {@link DOC_PATH_CONVENTION} below and each
+// field's own `.describe()` (docPathArg says "positional", docFileOpt says
+// "--file option", docApplyOpt says "--doc option"), so the manifest tells a
+// caller, per command, exactly how to pass the doc path:
 //   - single-positional `[file]` commands (init/add/check/certify/list/export)
 //     keep the doc path as the leading positional — unambiguous, no required
 //     args follow it.
 //   - commands with a required positional (update/show/derive/satisfy/
-//     remove-edge/delete) take the doc path as the `--file <path>` OPTION so
-//     commander never eats a required UUID as the file path.
+//     remove-edge/delete/glossary/waive) take the doc path as the `--file
+//     <path>` OPTION so commander never eats a required UUID/key/relation as
+//     the file path.
+//   - `apply` takes the doc path as the `--doc <path>` OPTION because its
+//     positional `[file]` is already the JSONL ops stream.
 const COMMAND_SPECS: readonly CommandSpec[] = [
   { name: 'manifest', args: z.object({}) },
   { name: 'init', args: z.object({ file: docPathArg }) },
@@ -292,7 +366,7 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
         .boolean()
         .describe('Read the JSONL op stream from stdin instead of a file.')
         .optional(),
-      doc: docFileOpt,
+      doc: docApplyOpt,
       'continue-on-error': z
         .boolean()
         .describe(
@@ -347,6 +421,20 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
         .string()
         .describe('Print one target host’s exact skill-file content and exit; write nothing.')
         .optional(),
+    }),
+  },
+  {
+    name: 'antonym',
+    args: z.object({
+      op: z
+        .enum(['add', 'remove', 'list'])
+        .describe('The antonym operation: add | remove | list (#1).'),
+      a: z.string().describe('One response verb-head, e.g. open (add/remove).').optional(),
+      b: z
+        .string()
+        .describe('The polar-opposite response verb-head, e.g. shut (add/remove).')
+        .optional(),
+      file: docFileOpt,
     }),
   },
 ]
@@ -423,6 +511,16 @@ export const ManifestSchema = z.object({
    */
   scope: ScopeSchema,
   /**
+   * Cross-command usage conventions an agent should read once before composing
+   * calls. `docPath` states the per-command rule for passing the requirements
+   * document (positional `[file]` vs `--file <path>` vs `apply`'s `--doc
+   * <path>`), single-sourced from {@link DOC_PATH_CONVENTION} so the manifest
+   * and the per-field `.describe()` corpus can never disagree.
+   */
+  conventions: z.object({
+    docPath: z.literal(DOC_PATH_CONVENTION),
+  }),
+  /**
    * Runtime backend availability report (AC-6-14). Optional and
    * forward-tolerant: `buildManifest()` (pure, byte-stable, environment-free)
    * omits it; `buildManifestWithBackends()` populates it from live probes so
@@ -479,6 +577,9 @@ export function buildManifest(): Manifest {
     // The formal tier's honest-scope claims (AC-4-11), single-sourced from
     // `cli/scope-text.ts` so the manifest and finding output can never disagree.
     scope: SCOPE,
+    // The cross-command doc-path convention (M2), single-sourced so an agent
+    // learns positional/--file/--doc per command from one readable field.
+    conventions: { docPath: DOC_PATH_CONVENTION },
     codes: {
       error: toManifestCodes(errCodeCatalog()),
       gtwr: toManifestCodes(buildCodeCatalog(GtwrCodes, GtwrCodeMeta)),

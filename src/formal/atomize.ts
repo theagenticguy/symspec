@@ -43,7 +43,7 @@
  *      than a false negative (spec AC-4-2a; research-smt.md §4.2).
  */
 
-import { ANTONYM_INDEX } from './antonyms.js'
+import { ANTONYM_INDEX, type AntonymEntry } from './antonyms.js'
 
 /** Which EARS slot an atom was derived from (research-smt.md §4.1). */
 export type AtomKind = 'trig' | 'pre' | 'resp'
@@ -85,6 +85,16 @@ export interface AtomizeArgs {
    * actually merges them.
    */
   glossary?: ReadonlyMap<string, string>
+  /**
+   * Optional antonym index (#1): the resolved signed equivalence classes the
+   * `resp` leading-verb unification consults. When omitted, the code-committed
+   * seed table ({@link ANTONYM_INDEX}) is used, so behavior is byte-identical to
+   * the pre-feature path. Callers that have doc-committed antonym pairs pass a
+   * merged index (built by `buildAntonymIndexWithDoc`) so an agent-confirmed
+   * pair like open/shut unifies exactly like a seed pair. Consulted only for
+   * `resp` slots, after the glossary rewrite.
+   */
+  antonyms?: ReadonlyMap<string, AntonymEntry>
 }
 
 /**
@@ -154,7 +164,11 @@ export function atomize(args: AtomizeArgs): Atom {
     const sep = body.indexOf('_')
     const head = sep === -1 ? body : body.slice(0, sep)
     const rest = sep === -1 ? '' : body.slice(sep) // keeps the leading '_'
-    const entry = ANTONYM_INDEX.get(head)
+    // Consult the doc-augmented antonym index when supplied (#1), else the
+    // code-committed seed table — same lookup shape, so an agent-confirmed pair
+    // (open/shut) unifies exactly like a seed pair (grant/revoke).
+    const index = args.antonyms ?? ANTONYM_INDEX
+    const entry = index.get(head)
     if (entry) {
       body = entry.canonical + rest
       negated = negated !== entry.negated // XOR: compose AC-2-4 negation with the antonym flip

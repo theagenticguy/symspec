@@ -41,3 +41,42 @@ fails. New codes appear in all tables automatically.
 
 Do not add a command or code with a hand-written row in any doc/table. Add it
 to the enum/COMMAND_SPECS with .describe(), regenerate, commit both.
+
+# The blind spot: text is single-sourced, but the FLAG NAME is not
+
+The single-source derivation guarantees the manifest's description PROSE matches
+the Zod `.describe()` — but it does NOT guarantee the flag the prose names is the
+flag the parser actually registers. These are two independent sources: the
+`.describe()` string lives in `manifest.ts`; the `.option()`/`.argument()`
+registration lives in `index.ts`. Nothing cross-checked them, so a command that
+reused a SHARED describe-field whose text hardcodes a flag (`docFileOpt` says
+"supplied as the `--file <path>` option") while registering a DIFFERENT flag
+(`apply` registers `--doc`, because its positional is already the JSONL op
+stream) drifted silently. The manifest told an agent to run `apply --file`,
+which returns ERR_USAGE — and the flagship "agent drives from the manifest"
+promise broke on the flagship command. Every text-vs-Zod test still passed.
+
+Two fixes, both needed:
+- Give the outlier command its OWN describe-field (`docApplyOpt` describing
+  `--doc`) instead of reusing a field whose text hardcodes another flag. Never
+  reuse a shared `.describe()` whose prose names a specific flag on a command
+  that registers a different one.
+- Add a MANIFEST ROUND-TRIP TEST that closes the gap: introspect the exported
+  commander `program` (`cmd.options[].long`, `cmd.registeredArguments`) and
+  assert every manifest-documented field maps to a real registration — a field
+  whose description embeds a literal `` `--flag` `` must have that exact option
+  registered. Prove it's not a tautology by reverting the fix and watching it
+  fail (the buggy `apply→docFileOpt` state failed 3/4 round-trip assertions).
+  Exporting `program` for introspection needs a guard so importing `index.ts`
+  in a unit test doesn't run `main()` — gate on
+  `process.argv[1] === fileURLToPath(import.meta.url)` (integration spawns) OR
+  absence of `process.env.VITEST` (prod; VITEST leaks to spawned children, so
+  the isEntry check is load-bearing for integration spawns).
+
+Cross-boundary drift needs a cross-boundary test. A regenerate-and-diff gate
+catches committed-file-vs-code drift (AGENTS.md); a round-trip parse-introspect
+test catches manifest-text-vs-parser-registration drift. Same failure class
+(two independent sources of one fact), two different gates.
+
+example_files_addendum:
+  - src/cli/__tests__/manifest-roundtrip.test.ts
