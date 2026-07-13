@@ -402,11 +402,11 @@ program
   .option('--solver-path <path>', 'explicit path to an external z3/cvc5 binary (AC-4-9)')
   .option(
     '--semantic',
-    'opt-in: embed responses (local BGE-ONNX model) to PROPOSE glossary merges for paraphrased conflicts (AC-9-5)',
+    'deprecated no-op: the semantic tier (local BGE-ONNX model) is always on — it PROPOSES glossary merges and opposition candidates on every check (AC-9-5)',
   )
   .option(
     '--semantic-threshold <n>',
-    `cosine threshold for --semantic (default ${DEFAULT_SEMANTIC_THRESHOLD})`,
+    `cosine threshold for the semantic paraphrase tier (default ${DEFAULT_SEMANTIC_THRESHOLD})`,
   )
   .option(
     '--temporal',
@@ -423,7 +423,7 @@ program
   )
   .option(
     '--strict',
-    'gate: fail (exit 3) when the run is INCONCLUSIVE — nothing was verified across requirements (data.verified=false) (#4)',
+    'gate: fail (exit 3) when data.verified=false — any uncovered requirement, untriaged opposition candidate, or absent decide-tier comparison; data.coverage.demotions lists the exact discharging ops (#4)',
   )
   .option(
     '--fail-on-unmatched <n>',
@@ -473,23 +473,27 @@ program
 
       const checkOpts = buildCheckOptions(opts)
 
-      // AC-9-5: opt-in semantic pass. Load the embedding model lazily and only
-      // when --semantic is set, so the default check never touches it. A
-      // missing/unloadable model surfaces as ERR_EMBED_MODEL_MISSING BEFORE the
-      // run rather than blocking the SMT/lint tiers.
-      if (opts.semantic === true) {
-        try {
-          const { loadEmbedder } = await import('../formal/embed.js')
-          const embedder = await loadEmbedder()
-          const threshold =
-            opts.semanticThreshold !== undefined ? Number(opts.semanticThreshold) : undefined
-          checkOpts.semantic = {
-            embedder,
-            ...(threshold !== undefined && Number.isFinite(threshold) ? { threshold } : {}),
-          }
-        } catch (e) {
-          emit(toErrorEnvelope(e, 'ERR_EMBED_MODEL_MISSING'), flags)
+      // The semantic tier is CORE (post-adversarial-eval hardening): every
+      // `check` loads the embedding model and runs the paraphrase/opposition/
+      // graph passes — their findings stay propose-only, but the opposition
+      // detector is part of the certification surface (an untriaged candidate
+      // demotes `verified`), so skipping it silently would make `--strict`
+      // gameable by omission. A missing/unloadable model fails the run CLOSED:
+      // ERR_EMBED_MODEL_MISSING (exit 2) BEFORE any tier runs. Pre-warm with
+      // `symspec download-model`; air-gapped hosts keep working offline once
+      // the sha256-pinned cache is provisioned. `--semantic` is retained as a
+      // deprecated no-op alias so existing agent scripts don't break.
+      try {
+        const { loadEmbedder } = await import('../formal/embed.js')
+        const embedder = await loadEmbedder()
+        const threshold =
+          opts.semanticThreshold !== undefined ? Number(opts.semanticThreshold) : undefined
+        checkOpts.semantic = {
+          embedder,
+          ...(threshold !== undefined && Number.isFinite(threshold) ? { threshold } : {}),
         }
+      } catch (e) {
+        emit(toErrorEnvelope(e, 'ERR_EMBED_MODEL_MISSING'), flags)
       }
 
       // AC-33-2: opt-in bounded temporal tier. No model — pure Z3-WASM — so it

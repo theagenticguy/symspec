@@ -69,8 +69,10 @@ describe('atomize — purity and determinism (AC-4-2a)', () => {
     expect(atomize({ kind: 'trig', text: 'user logs in', systemName: 'auth' }).name).toBe(
       'sys__auth__trig__user_logs_in',
     )
+    // Guard slots drop one copula token ("is") so copula/non-copula phrasings
+    // of the same condition name one guard state.
     expect(atomize({ kind: 'pre', text: 'maintenance is on', systemName: 'auth' }).name).toBe(
-      'sys__auth__pre__maintenance_is_on',
+      'sys__auth__pre__maintenance_on',
     )
     expect(atomize(resp('log the attempt', 'auth')).name).toBe('sys__auth__resp__log_the_attempt')
   })
@@ -154,17 +156,68 @@ describe('atomize — seed antonym table (AC-4-2a)', () => {
     expect(a.negated).toBe(false)
   })
 
-  it('does NOT stem the verb before antonym lookup — "grants" is not "grant"', () => {
+  it('de-inflects the leading 3sg verb — "grants access" unifies with "grant access"', () => {
     const grants = atomize(resp('grants access', 'auth service'))
-    // "grants" is not a table member, so no unification with the canonical
-    expect(grants.name).toBe('sys__auth_service__resp__grants_access')
-    expect(grants.negated).toBe(false)
+    const grant = atomize(resp('grant access', 'auth service'))
+    expect(grants.name).toBe(grant.name)
+    expect(grants.negated).toBe(grant.negated)
+    // …and it composes with the antonym flip: "revokes access" is ¬grant.
+    const revokes = atomize(resp('revokes access', 'auth service'))
+    expect(revokes.name).toBe(grant.name)
+    expect(revokes.negated).toBe(!grant.negated)
+  })
+
+  it('de-inflects the leading verb even outside any antonym class', () => {
+    const opens = atomize(resp('logs the attempt', 'auth service'))
+    const open = atomize(resp('log the attempt', 'auth service'))
+    expect(opens.name).toBe(open.name)
+  })
+
+  it('never de-inflects the remainder — only the head token', () => {
+    const a = atomize(resp('log the sessions', 'auth service'))
+    expect(a.name).toBe('sys__auth_service__resp__log_the_sessions')
+  })
+
+  it('protects -ss/-us/-is heads from de-inflection', () => {
+    expect(atomize(resp('pass the request', 'g')).name).toBe('sys__g__resp__pass_the_request')
+    expect(atomize(resp('passes the request', 'g')).name).toBe('sys__g__resp__pass_the_request')
+  })
+
+  it('drops one remainder preposition ONLY on an antonym hit (include-in/exclude-from)', () => {
+    const inc = atomize(resp('include that tile in the default gallery view', 'gallery'))
+    const exc = atomize(resp('exclude that tile from the default gallery view', 'gallery'))
+    expect(inc.name).toBe(exc.name)
+    expect(inc.negated).toBe(!exc.negated)
+  })
+
+  it('different landing sites still produce distinct atoms after the preposition drop', () => {
+    const a = atomize(resp('include the tile in gallery a', 'g'))
+    const b = atomize(resp('exclude the tile from gallery b', 'g'))
+    expect(a.name).not.toBe(b.name)
+  })
+
+  it('never touches prepositions outside an antonym hit — "move to"/"move from" stay distinct', () => {
+    const to = atomize(resp('move the file to archive', 'fs'))
+    const from = atomize(resp('move the file from archive', 'fs'))
+    expect(to.name).not.toBe(from.name)
+  })
+
+  it('strips one copula from guard slots so bridge states match guards', () => {
+    const guard = atomize({ kind: 'pre', text: 'the session is authenticated', systemName: 'gw' })
+    const state = atomize({ kind: 'pre', text: 'the session authenticated', systemName: 'gw' })
+    expect(guard.name).toBe(state.name)
+    expect(guard.name).toBe('sys__gw__pre__session_authenticated')
+  })
+
+  it('copula strip does not apply to responses', () => {
+    const a = atomize(resp('remains sealed', 'valve'))
+    expect(a.name).toBe('sys__valve__resp__remain_sealed')
   })
 })
 
 describe('antonym index — signed equivalence classes (shared members)', () => {
-  it('ships exactly the 15 seed pairs', () => {
-    expect(SEED_ANTONYM_PAIRS).toHaveLength(15)
+  it('ships the documented seed pairs (15 spec originals + the eval expansion)', () => {
+    expect(SEED_ANTONYM_PAIRS).toHaveLength(32)
   })
 
   it('collapses shared-member pairs (accept/reject/approve/decline) into one class', () => {
@@ -191,6 +244,69 @@ describe('antonym index — signed equivalence classes (shared members)', () => 
     const approve = atomize(resp('approve the request', 'sys'))
     expect(accept.name).toBe(approve.name)
     expect(accept.negated).toBe(approve.negated)
+  })
+
+  it('pins the full resolved class map — a seed edit that merges or re-canonicalizes classes fails here', () => {
+    const classes = new Map<string, { pos: string[]; neg: string[] }>()
+    for (const [verb, e] of ANTONYM_INDEX) {
+      let c = classes.get(e.canonical)
+      if (!c) {
+        c = { pos: [], neg: [] }
+        classes.set(e.canonical, c)
+      }
+      c[e.negated ? 'neg' : 'pos'].push(verb)
+    }
+    const rendered = [...classes]
+      .map(
+        ([canon, { pos, neg }]) =>
+          `${canon}: +[${pos.sort().join(',')}] -[${neg.sort().join(',')}]`,
+      )
+      .sort()
+    expect(rendered).toEqual([
+      'accept: +[accept,approve] -[decline,reject]',
+      'activate: +[activate] -[deactivate]',
+      'add: +[add] -[remove]',
+      'allow: +[allow,authorize,grant,permit] -[deny,forbid,revoke]',
+      'close: +[close] -[open]',
+      'commit: +[commit] -[roll_back,rollback]',
+      'conceal: +[conceal,seal] -[expose,unseal]',
+      'connect: +[connect] -[disconnect]',
+      'de_energize: +[de_energize] -[energize]',
+      'disable: +[disable] -[enable]',
+      'disengage: +[disengage] -[engage]',
+      'drain: +[drain] -[flood]',
+      'exclude: +[exclude] -[include]',
+      'extend: +[extend,publish] -[retract]',
+      'hide: +[hide] -[show]',
+      'insert: +[insert] -[withdraw]',
+      'lock: +[lock] -[unlock]',
+      'lower: +[lower] -[raise]',
+      'quarantine: +[quarantine] -[release]',
+      'resume: +[resume] -[suspend]',
+      'start: +[start] -[stop]',
+    ])
+  })
+
+  it('unifies the eval-confirmed blind-spot pairs end-to-end through atomize', () => {
+    const cases: Array<[string, string]> = [
+      ['grant access to the vault', 'deny access to the vault'],
+      ['commit the settlement', 'roll back the settlement'],
+      ['commits the settlement', 'rolls back the settlement'],
+      ['seal the record', 'expose the record'],
+      ['quarantine the artifact', 'release the artifact'],
+      ['publish the record', 'retract the record'],
+      ['suspend the data feed', 'resume the data feed'],
+      ['engages the safety lockout', 'disengages the safety lockout'],
+      ['raise the movable span', 'lower the movable span'],
+      ['flood the reactor core', 'drain the reactor core'],
+      ['energize the coolant loop', 'de-energize the coolant loop'],
+    ]
+    for (const [a, b] of cases) {
+      const atomA = atomize(resp(a, 'sys'))
+      const atomB = atomize(resp(b, 'sys'))
+      expect(atomA.name, `${a} vs ${b}`).toBe(atomB.name)
+      expect(atomA.negated, `${a} vs ${b} polarity`).toBe(!atomB.negated)
+    }
   })
 
   it('is pure/deterministic — rebuilding from the same pairs yields the same index', () => {

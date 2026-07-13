@@ -4,8 +4,18 @@
  * and the offline ERR_EMBED_MODEL_MISSING path), not the model's quality.
  */
 
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { cosine, EMBED_MODEL, EmbedModelMissingError, loadEmbedder } from '../embed.js'
+
+// The vitest config sets SYMSPEC_EMBED_STUB=1 globally (so spawned-CLI tests
+// don't need the real model). THESE tests exercise the real loadEmbedder wiring
+// — injected factories and the fail-closed path — so the stub must be off.
+beforeAll(() => {
+  delete process.env.SYMSPEC_EMBED_STUB
+})
+afterAll(() => {
+  process.env.SYMSPEC_EMBED_STUB = '1'
+})
 
 describe('loadEmbedder (AC-9-4)', () => {
   it('builds an embedder from an injected pipeline and returns one vector per text', async () => {

@@ -18,7 +18,7 @@
  */
 
 import { ANTONYM_INDEX, type AntonymEntry } from './antonyms.js'
-import { type Atom, atomize, normalize } from './atomize.js'
+import { type Atom, atomize, deInflectHead, normalize } from './atomize.js'
 import type { Embedder } from './embed.js'
 
 /** An info-severity semantic-similarity finding (Appendix B `FND_SIMILAR_SEMANTIC`). */
@@ -219,6 +219,44 @@ function headAndRest(body: string): [string, string] {
 }
 
 /**
+ * Split a normalized response body into a DE-INFLECTED head and rest, fusing a
+ * standalone negating-prefix token back onto the verb it modifies: normalize
+ * turns "de-energize the coil" into `de_energize_the_coil`, whose first token
+ * is just `de`; this reassembles the head as `de_energize` so it compares
+ * against "energizes the coil" (head `energize`) as a prefix pair.
+ */
+function fuseNegatingPrefix(body: string): [string, string] {
+  const tokens = body.split('_')
+  const first = tokens[0] ?? ''
+  if ((first === 'de' || first === 'un' || first === 'dis') && tokens.length >= 2) {
+    const head = `${first}_${deInflectHead(tokens[1] as string)}`
+    return [head, tokens.slice(2).join('_')]
+  }
+  const [head, rest] = headAndRest(body)
+  return [deInflectHead(head), rest]
+}
+
+/**
+ * True when two de-inflected verb heads relate by a negating prefix —
+ * `de-`/`un-`/`dis-` — i.e. one is exactly the other with the prefix attached
+ * (energize/de_energize → deenergize after normalize drops the hyphen? No:
+ * normalize turns "de-energize" into `de_energize`, whose HEAD token is `de`,
+ * so multiword-head handling upstream fuses it; here we compare the fused or
+ * plain heads: seal/unseal, engage/disengage, energize/deenergize). Purely
+ * structural and deterministic — no embedding involved — so a prefix pair is
+ * proposed as an opposition candidate even below the topical cosine floor.
+ */
+function isNegatingPrefixPair(a: string, b: string): boolean {
+  const plain = (s: string) => s.replace(/_/g, '')
+  const pa = plain(a)
+  const pb = plain(b)
+  for (const prefix of ['de', 'un', 'dis']) {
+    if (pa === prefix + pb || pb === prefix + pa) return true
+  }
+  return false
+}
+
+/**
  * Propose opposition candidates (#6): same-system response pairs that share an
  * object remainder but differ on the leading verb and are NOT already unified as
  * antonyms. Propose-only (info-tier) — it suggests `symspec antonym add`, which
@@ -261,8 +299,12 @@ export async function findOppositionCandidates(
       if (atomA.name === atomB.name) continue
 
       // Structural opposition shape: same object remainder, different verb head.
-      const [headA, restA] = headAndRest(normalize(a.systemResponse))
-      const [headB, restB] = headAndRest(normalize(b.systemResponse))
+      // Heads are de-inflected (opens/open) and a negating prefix token
+      // (de-/un-/dis-, split off by punctuation normalization: "de-energize" →
+      // `de_energize`) is fused back onto the verb so prefix opposites compare
+      // as one head against their base form.
+      const [headA, restA] = fuseNegatingPrefix(normalize(a.systemResponse))
+      const [headB, restB] = fuseNegatingPrefix(normalize(b.systemResponse))
       if (restA === '' || restA !== restB) continue
       if (headA === headB) continue
 
@@ -277,13 +319,16 @@ export async function findOppositionCandidates(
       const key = pairKey(a.id, b.id)
       if (seen.has(key)) continue
 
+      // A negating-prefix pair (seal/unseal, energize/de-energize) is opposition
+      // by MORPHOLOGY — deterministic structure, no embedding needed — so it is
+      // proposed regardless of the topical cosine floor.
+      const prefixPair = isNegatingPrefixPair(headA, headB)
       const va = vectors[i]
       const vb = vectors[j]
-      if (va === undefined || vb === undefined) continue
+      const score = va !== undefined && vb !== undefined ? cosine(va, vb) : 0
       // Cosine is a topical-relatedness FLOOR only (antonyms embed close), not
       // the opposition signal — the shared-object/different-verb structure is.
-      const score = cosine(va, vb)
-      if (score < floor) continue
+      if (!prefixPair && score < floor) continue
 
       seen.add(key)
       const [lo, hi] = a.id < b.id ? [a.id, b.id] : [b.id, a.id]

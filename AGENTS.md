@@ -132,7 +132,7 @@ Failure:
 | `ERR_SOLVER_INCONCLUSIVE` | A whole-run solver-init failure / the solver is unusable — never a per-group `unknown` (that is FND_NEEDS_REVIEW). Suggestion: verify the solver backend and raise the timeout. |
 | `ERR_LEAN_TOOLCHAIN_MISSING` | `certify` was requested but no Lean toolchain is discoverable. Suggestion: run `elan default stable`. This never blocks a prior SMT-tier result. |
 | `ERR_DOC_EXISTS` | `init` refused to overwrite an existing document at the resolved path. Suggestion: pass --force to recreate it, or choose a different path — the existing file is left intact. |
-| `ERR_EMBED_MODEL_MISSING` | The opt-in `--semantic` embedding model is not cached and remote loading is disabled. Suggestion: pre-download the model or set SYMSPEC_EMBED_ALLOW_REMOTE=1 once. Never blocks the SMT/lint tiers. |
+| `ERR_EMBED_MODEL_MISSING` | The embedding model (core to every `check`) is not cached and remote loading is disabled — the run fails closed rather than silently skipping the semantic/opposition tier. Suggestion: run `symspec download-model` once, or set SYMSPEC_EMBED_ALLOW_REMOTE=1 for this run. |
 | `ERR_DUPLICATE_KEY` | A create supplied a --key that another requirement already uses; keys must be unique. Suggestion: choose a different key, or omit --key to create the requirement without one. |
 
 ## Lint rule codes (`GTWR_*`)

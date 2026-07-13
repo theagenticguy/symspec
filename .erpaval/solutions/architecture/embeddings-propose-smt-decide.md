@@ -83,3 +83,22 @@ one (non-reproducible verdicts). Propose/decide keeps both.
 Never let a cosine threshold or an LLM judgment decide a conflict. The only
 durable output of the embedding pass is a SUGGESTED glossary entry; the SMT
 layer reads the committed glossary, never the model.
+
+# Update (2026-07-13): the tier became CORE; propose-only is unchanged
+
+A red-team eval (25/30 wins against `--strict`) proved that a certification
+gate whose opposition detector can be silently skipped is gameable by
+omission. Two halves of the original contract diverged:
+
+- **RETIRED: the lazy/opt-in half (AC-9-4 "default check pays zero cost").**
+  Every CLI `check` now loads the embedder and runs the semantic/opposition/
+  graph passes; a missing model FAILS CLOSED (`ERR_EMBED_MODEL_MISSING`,
+  exit 2) instead of degrading. `symspec download-model` pre-warms; air-gapped
+  hosts run offline from the sha256-pinned cache. `--semantic` is a deprecated
+  no-op. Tests use `SYMSPEC_EMBED_STUB=1` (deterministic hash embedder,
+  test-only, never a production fallback).
+- **UNCHANGED: the propose-only half.** Every embedding finding is still info
+  severity and in `PROPOSE_ONLY_FND_CODES`. What changed is the DEMOTION rule:
+  an untriaged `FND_OPPOSITION_CANDIDATE` now demotes `data.verified` (see
+  `verified-is-decide-tier-not-any-comparison.md`). Propose-only findings can
+  push `verified` toward abstention, never toward certification.

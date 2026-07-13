@@ -128,6 +128,38 @@ describe('CLI integration — init → add → check happy path (AC-6-2 / AC-6-2
   })
 })
 
+describe('CLI integration — semantic tier is core, fail closed', () => {
+  it('check without a model (stub off, empty cache, offline) → exit 2 ERR_EMBED_MODEL_MISSING', async () => {
+    await runCli(['init', docPath])
+    // Point the model cache at an empty dir, disable the test stub, forbid
+    // remote fetch: the run must fail CLOSED before any tier executes.
+    const emptyCache = join(dir, 'no-models-here')
+    const argv = USE_DIST ? [DIST_CLI, 'check', docPath] : ['tsx', SRC_CLI, 'check', docPath]
+    const bin = USE_DIST ? 'node' : 'pnpm'
+    const fullArgs = USE_DIST ? argv : ['exec', ...argv]
+    const result = await execFileAsync(bin, fullArgs, {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        SYMSPEC_EMBED_STUB: '',
+        SYMSPEC_MODEL_DIR: emptyCache,
+        SYMSPEC_EMBED_ALLOW_REMOTE: '',
+      },
+    }).then(
+      ({ stdout, stderr }) => ({ stdout, stderr, code: 0 }),
+      (e: { stdout?: string; stderr?: string; code?: number }) => ({
+        stdout: e.stdout ?? '',
+        stderr: e.stderr ?? '',
+        code: e.code ?? 1,
+      }),
+    )
+    expect(result.code).toBe(2)
+    const env = lastJson(result.stdout) as { type: string; code: string }
+    expect(env.type).toBe('error')
+    expect(env.code).toBe('ERR_EMBED_MODEL_MISSING')
+  })
+})
+
 describe('CLI integration — exit-code contract (AC-6-2b)', () => {
   it('a spec with an error-severity finding → exit 1, envelope still on stdout', async () => {
     await runCli(['init', docPath])

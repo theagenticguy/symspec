@@ -211,13 +211,13 @@ const CheckOptionShape = {
   semantic: z
     .boolean()
     .describe(
-      '`--semantic`: opt-in info-tier paraphrase pass. Embeds responses with a local ONNX model to PROPOSE glossary merges for near-duplicate wording (FND_SIMILAR_SEMANTIC, AC-9-5). Propose-only — it never emits a conflict verdict; needs the model (see `download-model`) or yields ERR_EMBED_MODEL_MISSING.',
+      '`--semantic`: DEPRECATED no-op — the semantic tier is always on. Every check embeds responses with the local ONNX model to PROPOSE glossary merges (FND_SIMILAR_SEMANTIC) and opposition candidates (FND_OPPOSITION_CANDIDATE). Propose-only — never a conflict verdict — but an untriaged opposition candidate demotes data.verified. A missing model fails the run closed (ERR_EMBED_MODEL_MISSING, exit 2); pre-warm with `download-model`.',
     )
     .optional(),
   'semantic-threshold': z
     .string()
     .describe(
-      `\`--semantic-threshold <n>\`: cosine threshold for --semantic paraphrase detection (default ${DEFAULT_SEMANTIC_THRESHOLD}); higher is stricter.`,
+      `\`--semantic-threshold <n>\`: cosine threshold for semantic paraphrase detection (default ${DEFAULT_SEMANTIC_THRESHOLD}); higher is stricter.`,
     )
     .optional(),
   temporal: z
@@ -233,7 +233,7 @@ const CheckOptionShape = {
   strict: z
     .boolean()
     .describe(
-      '`--strict`: opt-in coverage gate. Fails with exit 3 (EXIT_INCONCLUSIVE) when the run is INCONCLUSIVE — ≥2 requirements but nothing was verified across them (data.verified=false), the machine-readable form of "silence is not a consistency certificate" (#4).',
+      '`--strict`: opt-in coverage gate. Fails with exit 3 (EXIT_INCONCLUSIVE) when data.verified=false — any uncovered (vocabulary-disjoint) requirement, untriaged FND_OPPOSITION_CANDIDATE, or missing decide-tier comparison demotes it. data.coverage.demotions lists each reason with the exact discharging command (antonym add / glossary add / waive / rewrite), so the loop is: check --strict -> apply the listed ops -> re-check -> exit 0 (#4).',
     )
     .optional(),
   'fail-on-unmatched': z

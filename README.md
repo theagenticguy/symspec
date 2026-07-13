@@ -5,14 +5,17 @@
 **A tool that helps coding agents *write* good software requirements — not just
 grade them afterward.** You describe what a system should do in plain,
 structured sentences; symspec turns each sentence into a clean requirement,
-warns you the moment two of them disagree, and — when you ask — mathematically
-*proves* that a set of requirements can't all be true at once, pointing at the
-exact ones to blame.
+warns you the moment two of them disagree, and mathematically *proves* that a
+set of requirements can't all be true at once, pointing at the exact ones to
+blame.
 
 It is built for an AI coding agent to operate directly: every command answers
 with structured data (not paragraphs the agent has to re-read), so the agent
-always knows whether it succeeded and what to do next. Humans can read the same
-output in plain text.
+always knows whether it succeeded and what to do next. And when symspec *can't*
+prove a spec consistent, it says so honestly — `data.verified: false` — and
+hands the agent a work list of exactly which requirements to rewrite and which
+vocabulary decisions to commit, so the agent iterates until the spec genuinely
+certifies. Humans can read the same output in plain text.
 
 > "I authored a 25-requirement architecture spec in a single atomic `symspec
 > apply` batch — every requirement, every `derives` edge, stable human keys
@@ -40,6 +43,10 @@ there's a plain-language [glossary](#glossary) at the very bottom.)*
 git clone https://github.com/theagenticguy/symspec.git && cd symspec
 pnpm install && pnpm build && pnpm pack
 npm install -g ./symspec-*.tgz     # puts the `symspec` command on your PATH
+
+# One-time: fetch the local embedding model (~110 MB, sha256-pinned) that the
+# always-on semantic tier runs. Fully offline afterward.
+symspec download-model
 ```
 
 symspec writes requirements in the **EARS** style (Easy Approach to Requirements
@@ -87,8 +94,10 @@ requirements at fault and showing its work:
 **The exit status is the pass/fail signal**, so a script or continuous-
 integration (CI) pipeline can gate on it without reading anything: `0` = clean
 (or only warnings), `1` = a blocking problem was found, `2` = the command itself
-couldn't run (bad arguments, missing file). The full detail is always printed
-too — the problems *are* the output.
+couldn't run (bad arguments, missing file, missing embedding model), `3` = a
+requested `--strict` gate found the run *inconclusive* — nothing was proven
+wrong, but the spec couldn't be verified either, and the output says exactly
+why. The full detail is always printed too — the problems *are* the output.
 
 **Let your agent set it up for itself.** Run `symspec install` and it drops a
 small "skill" file into whichever AI coding assistant you have — Claude Code,
@@ -143,6 +152,86 @@ also available as an importable code library, not only a command-line tool.
 
 ---
 
+## The certification loop
+
+The core workflow symspec is built around: **an agent iterates on a spec until
+it genuinely certifies.** `check --strict` is the gate, `data.verified` is the
+claim, and `data.coverage.demotions` is the work list.
+
+`verified: true` is a deliberately *hard* claim. It does not mean "no conflict
+was found" — it means the decide tier actually verified the whole document:
+
+1. **Every requirement participates.** Each requirement shares vocabulary
+   (atoms) with at least one other, so the prover genuinely compared it against
+   its peers. A requirement written in its own private vocabulary is an island
+   the prover can't reason about — and an island is where a contradiction hides.
+2. **Every opposition candidate is triaged.** When two requirements act on the
+   same object with different verbs ("admit the request" / "block the request"),
+   symspec proposes the pair. Until the agent decides — opposites
+   (`antonym add`), synonyms (`glossary add`), or neither (`waive`) — the run
+   won't certify, because an untriaged pair is a possible conflict the prover
+   can't see.
+3. **A cross-requirement comparison actually happened**, and the semantic tier
+   ran.
+
+When any of these fail, `verified` is `false`, `--strict` exits `3`, and every
+reason appears in `data.coverage.demotions` **with the exact command that
+discharges it**:
+
+```jsonc
+"coverage": {
+  "demotions": [
+    {
+      "reason": "uncovered-requirement",
+      "requirementIds": ["45defae7-…"],
+      "action": "Rewrite 45defae7-… to share guard/response vocabulary with the requirements it relates to, or link its terms via `symspec glossary add`/`symspec antonym add` …"
+    },
+    {
+      "reason": "open-opposition-candidate",
+      "requirementIds": ["20aa64dc-…", "45defae7-…"],
+      "action": "Triage this opposition candidate: commit `symspec antonym add <a> <b>` if the verbs are opposites, `symspec glossary add …` if synonyms, or waive it …"
+    }
+  ]
+}
+```
+
+So the loop converges mechanically, no human in the middle:
+
+```
+check --strict          # exit 3 — verified: false
+  → read coverage.demotions
+  → apply the listed ops (antonym add / glossary add / waive)
+    or rewrite the named requirements to align vocabulary
+check --strict          # repeat…
+  → exit 0, verified: true — or exit 1 with a PROVEN contradiction
+    the vocabulary alignment just exposed
+```
+
+That last line is the point: aligning vocabulary is what *lets the prover see*.
+Committing `antonym add seal expose` doesn't just quiet a warning — it collapses
+"seal the record" and "expose the record" onto one logical atom at opposite
+polarity, and if both are required under the same reachable condition, the next
+`check` **proves the contradiction** and names the culprits.
+
+One principle governs all of it — **demotion-only**: fuzzy signals (embedding
+similarity, coverage statistics, untriaged proposals) can push `verified` toward
+`false` (raise the alarm), but only the deterministic proof tier can produce the
+all-clear. A cosine score can never certify your spec; it can only tell you what
+to look at.
+
+> **Why so strict?** Because the permissive version was beaten. A red-team eval
+> (frontier-model proposer, blind judge panel, z3 as the oracle) authored specs
+> with genuine, machine-provable contradictions that earlier symspec certified
+> as clean 25 times out of 30 — by hiding conflicts behind unshared vocabulary,
+> inflected verbs, and multi-hop state chains while a single trivially-similar
+> pair satisfied the old "something was compared" bar. Every one of those
+> winning rounds is now a regression fixture (`adversarial/eval-rounds.ts`):
+> the fixable ones are *proven* contradictions, and the ones no lexicon can
+> reach hit the abstention backstop — symspec refuses to certify rather than
+> certify a lie.
+
+---
+
 ## What's under the hood
 
 symspec pairs a fast, **fully repeatable** core with an optional "smart" layer
@@ -160,20 +249,23 @@ not a heuristic guess:
 | **Numbers checker** | conflicting limits, like "under 2 seconds" vs "over 3 seconds" on the same measurement | the same prover, reasoning about arithmetic |
 | **Timing checker** *(opt-in)* | ordering and timing clashes, like "on overheat, open the relief valve" vs "the controller shall not open the relief valve" (phrased without absolute words like *never*, so the lint gate lets both reach the prover) | translates timing rules into logic the prover can test over a bounded timeline |
 | **Ambiguity checker** | vague words, "and/or" that could be read two ways, pronouns with no clear referent | fixed detectors; genuinely judgment-call ambiguity is *flagged for a human/agent*, never silently guessed |
-| **Meaning-similarity layer** *(opt-in)* | conflicts hidden behind different wording ("issue a token" vs "grant a credential") | a small language model running **locally on your machine** (no internet, no external service) that *suggests* treating two phrasings as synonyms — you confirm, then the logic checker proves the conflict |
+| **Meaning-similarity layer** *(core, always-on)* | conflicts hidden behind different wording ("issue a token" vs "grant a credential") and possible opposites the prover can't yet see ("admit" vs "block") | a small language model running **locally on your machine** (no internet after a one-time download) that *suggests* — you confirm with `glossary add`/`antonym add`, then the logic checker proves the conflict. A missing model fails the run rather than silently skipping this layer |
+| **Coverage accountant** | requirements the prover never actually compared, and suggestions left untriaged — the places a conflict could hide | a deterministic per-requirement participation tally; anything uncovered demotes `data.verified` with an actionable fix in `data.coverage.demotions` |
 | **Formal certificate** *(opt-in)* | a re-checkable proof artifact for the whole spec | the **Lean 4** proof assistant; keeps a file anyone can independently verify later |
 
 The rule that holds it all together: **any result that can block your build must
 be perfectly reproducible from the document itself plus a couple of pinned,
-version-controlled inputs.** The one "smart" step — the meaning-similarity layer
-— runs once, gets reviewed by a person or agent, and its decision is saved into
-the project so it never varies again. Convenience never costs you repeatability.
+version-controlled inputs.** The one "smart" layer — meaning similarity — runs
+every check but can only *suggest*; its decisions get reviewed by a person or
+agent and saved into the project (`glossary`, `antonyms`, `waivers`) so they
+never vary again. And its dual: fuzzy signals can *demote* a verification
+verdict, never produce one. Convenience never costs you repeatability.
 
 In numbers: **19 commands**, **71 stable result codes** (they only ever get
 added, never renamed or removed, so automation built on them keeps working), a
 self-describing `manifest`, structured output everywhere, a compact `--dense`
-mode for token-limited agents, and a built-in adversarial test suite that keeps
-the checkers honest.
+mode for token-limited agents, and a built-in adversarial test suite — including
+regression fixtures from a real red-team eval — that keeps the checkers honest.
 
 Everything below is how it works in detail.
 
@@ -185,9 +277,11 @@ symspec runs a **forced pipeline** — `parse → lint → check → certify` �
 order is load-bearing. A statement that fails an earlier surface stage is
 *excluded* from the formal stage, because feeding unparsed or dangling-reference
 text into an SMT encoding is unsound. The exclusion is reported in the `check`
-envelope's `excluded[]` so nothing disappears silently. An opt-in **semantic
-tier** (`--semantic`) runs alongside the formal stage to surface paraphrased
-conflicts, and an opt-in **Lean 4 certification** tier runs only on demand.
+envelope's `excluded[]` so nothing disappears silently. A core **semantic
+tier** runs alongside the formal stage on every `check` to surface paraphrased
+conflicts and opposition candidates (a missing embedding model fails the run
+closed — pre-warm with `symspec download-model`), and an opt-in **Lean 4
+certification** tier runs only on demand.
 
 ### 1. Parse — prose → EARS slots (regex-first ladder)
 
@@ -241,15 +335,35 @@ stage.
 `src/formal/`. The heart of the tool. Runs in-process on the `z3-solver` WASM
 package — **no external binary is required for a working `symspec check`**.
 
-- **Atomization** (`atomize.ts`, `antonyms.ts`) — the load-bearing contract.
-  A single pure `atomize` function derives Boolean atoms with a conservative,
-  near-exact normalization: lowercase → strip leading articles → strip
-  punctuation → collapse whitespace → underscore-join. It does **not** stem,
-  lemmatize, or strip stopwords beyond leading articles. Every atom is scoped
-  per `systemName`, so identical response text under two systems yields two
-  distinct atoms and never manufactures a cross-system conflict. Negation lands
-  on the *same* atom with opposite polarity, and a 15-pair seed antonym table
-  (`accept↔reject`, `grant↔revoke`, `enable↔disable`, …) unifies polar opposites.
+- **Atomization** (`atomize.ts`, `antonyms.ts`, `lemma.ts`) — the load-bearing
+  contract. A single pure `atomize` function derives Boolean atoms with a
+  conservative, near-exact normalization: lowercase → strip leading articles →
+  strip punctuation → collapse whitespace → underscore-join. It does **not**
+  stem or strip stopwords from the *remainder* of a slot; three closed,
+  deterministic head/token rules are the whole exception surface, each added to
+  close a real red-team escape:
+  - the **leading response verb de-inflects** via a vendored irregular-verb
+    table plus a closed third-person rule ("opens"→"open", "kept"→"keep",
+    "rolls back"→`roll_back`), so inflected phrasing can't hide a conflict;
+  - **guard slots drop one copula token**, so "while the session *is*
+    authenticated" and the state a bridge establishes ("mark the session
+    authenticated") name the same condition;
+  - on an **antonym hit only**, one preposition drops from the remainder, so
+    "include X *in* the view" / "exclude X *from* the view" collide ("move X
+    to/from" is untouched — direction lives in the verb class, never the
+    preposition).
+
+  Every atom is scoped per `systemName`, so identical response text under two
+  systems yields two distinct atoms and never manufactures a cross-system
+  conflict. Negation lands on the *same* atom with opposite polarity, and a
+  **32-pair seed antonym table** resolved into signed equivalence classes
+  (`grant/allow/permit/authorize ↔ revoke/deny/forbid`, `commit ↔ roll back`,
+  `seal ↔ expose`, `quarantine ↔ release`, `publish ↔ retract`, …) unifies
+  polar opposites; the resolved class map is snapshot-pinned so a seed edit
+  that silently merges classes fails a test. A bulk dictionary import was
+  evaluated and rejected — WordNet's verb antonyms cover a fraction of the
+  operational opposites requirements English actually uses — so the table grows
+  only by explicit edit or the doc-committed `antonym add` path.
 - **Encoding** (`encode.ts`) — each requirement becomes a guarded implication
   with an assumption literal, `REQ-i ⇒ (context ⇒ response)`. The encoder is a
   pure, unit-tested function separate from the solver call.
@@ -262,8 +376,17 @@ package — **no external binary is required for a working `symspec check`**.
   `bridge ⇒ (authenticated ⇒ verified)` and added to the conjunction, so the
   solver links a rule guarded on `authenticated` to one guarded on `verified` and
   a *transitive* conflict becomes provable — with the bridge named in the core.
-  Sound: it only re-expresses an implication the spec already asserts, and an
-  established state that matches no other rule's guard is dropped as inert.
+  The establishment lexicon covers the bare copular forms (`be/become/remain`),
+  the object forms (`mark/set/flag/classify/label/record/register/designate
+  <thing> as <state>`, `escalate/promote/transition/place <thing> to|into|in
+  <state>`), and the held-state forms (`keep/hold <thing> <state>` — "keeps the
+  reactor online" bridges into a guard reading "while the reactor is online"),
+  with heads de-inflected so tense never breaks a bridge. Sound: it only
+  re-expresses an implication the spec already asserts, and an established
+  state that matches no other rule's guard is dropped as inert — a multi-hop
+  chain (authenticated → verified → trusted → privileged) composes inside the
+  solver, so a grant-at-the-end vs deny-at-the-start conflict is proven with
+  every bridge named.
   Subsumption/redundancy
   (`subsumption.ts`) decide directional implication over pairwise candidates;
   vacuity (`vacuity.ts`) is relational across the whole spec; a completeness
@@ -331,8 +454,8 @@ everything fuzzier is `info` and proposes, never decides.**
   a reported conflict is real; a `sat`-at-bound-`k` result is not a consistency
   certificate (`{bound, complete: false}` in the evidence). See the runnable demo
   below.
-- **Requirement similarity graph + DAG (`src/formal/graph.ts`, opt-in with
-  `--semantic`).** A deterministic kNN graph (batch-invariant embedder, cosine
+- **Requirement similarity graph + DAG (`src/formal/graph.ts`, core —
+  always-on).** A deterministic kNN graph (batch-invariant embedder, cosine
   quantized before threshold, id tie-breaks, union-find clustering) proposes
   `FND_MISSING_TRACE_LINK` (a high-cosine pair with no committed edge) and
   `FND_DUPLICATE_CLUSTER` — info only, because trace-link precision is too low to
@@ -343,7 +466,13 @@ A generative-adversarial harness (`adversarial/`) generates increasingly subtle
 BAD specs across all five defect classes and scores symspec on detection +
 localization, escalating difficulty with a gap report — a standing regression
 gate that the deterministic tiers catch 100% of, and 20/20 across four tiers with
-the real embedding model.
+the real embedding model. Alongside it, `adversarial/eval-rounds.ts` pins the
+winning rounds of a real external red-team eval (a frontier-model proposer that
+beat an earlier symspec 25/30 under `--strict`): each round now either *proves*
+its planted contradiction with the culprits named, or — where no committed
+lexicon can reach the conflict — demotes `verified` so the run abstains instead
+of certifying. A meta-test asserts the eval's exact win condition (clean exit
+with a hidden contradiction) is unreachable on every round.
 
 #### The temporal tier in action
 
@@ -397,14 +526,18 @@ The `{ bound: 10, complete: false }` evidence is the sound-for-UNSAT honesty
 marker: the conflict was proven within a 10-step trace, and a clean run at some
 bound is never read as a full consistency certificate.
 
-### 4. Semantic — optional paraphrase bridging (local ONNX embeddings)
+### 4. Semantic — core paraphrase + opposition bridging (local ONNX embeddings)
 
-`src/formal/embed.ts`, `model-cache.ts`, `semantic.ts`. Opt-in with
-`check --semantic`; the default `check` never touches it and pays zero cost. The
-formal tier is *sound modulo atomization*, so a real conflict can hide when two
-responses are worded differently ("issue a session token" vs "issue a login
-credential" are distinct atoms). The semantic tier closes that gap **without
-breaking determinism**, by splitting PROPOSE from DECIDE:
+`src/formal/embed.ts`, `model-cache.ts`, `semantic.ts`. **Core on every
+`check`** — a red-team eval proved that a certification gate whose opposition
+detector can be silently skipped is gameable by omission, so a missing model
+now fails the run closed (`ERR_EMBED_MODEL_MISSING`, exit 2) instead of
+degrading. Pre-warm once with `symspec download-model`; air-gapped hosts work
+offline from the sha256-pinned cache. (`--semantic` remains as a deprecated
+no-op flag.) The formal tier is *sound modulo atomization*, so a real conflict
+can hide when two responses are worded differently ("issue a session token" vs
+"issue a login credential" are distinct atoms). The semantic tier closes that
+gap **without breaking determinism**, by splitting PROPOSE from DECIDE:
 
 - **PROPOSE (fuzzy).** For each unmerged same-system response pair, symspec
   embeds both phrasings and, when their cosine similarity clears a threshold
@@ -430,21 +563,28 @@ breaking determinism**, by splitting PROPOSE from DECIDE:
 The **opposition** counterpart works the same way. Cosine cannot tell antonymy
 from synonymy — opposite words embed *close*, not far — so the opposition
 proposal is a *deterministic* structural signal (same object, different leading
-verb, not already unified), surfaced as an info-tier `FND_OPPOSITION_CANDIDATE`
-under `--semantic` that suggests `symspec antonym add <a> <b>`. Committing that
-pair is the DECIDE half: `atomize` folds it into the seed antonym table's signed
-union-find, so `open the valve` / `shut the valve` collapse to one atom at
-opposite polarity and `check` proves the contradiction the 15-pair seed table
-missed. `symspec antonym add/remove/list` manages the committed pairs; a pair
-that would make the antonym classes inconsistent is rejected at write time so
-`check` stays throw-free.
+verb after de-inflection, not already unified — plus a morphological
+`de-`/`un-`/`dis-` prefix check that fires even below the topical cosine
+floor), surfaced as an info-tier `FND_OPPOSITION_CANDIDATE` that suggests
+`symspec antonym add <a> <b>`. Committing that pair is the DECIDE half:
+`atomize` folds it into the seed antonym table's signed union-find, so
+`open the valve` / `shut the valve` collapse to one atom at opposite polarity
+and `check` proves the contradiction the seed table missed. An **untriaged**
+opposition candidate demotes `data.verified` — the demotion-only principle:
+propose-only findings can push `verified` toward abstention, never toward
+certification — and `data.coverage.demotions` names the discharging command
+(`antonym add`, `glossary add`, or `waive`). `symspec antonym add/remove/list`
+manages the committed pairs; a pair that would make the antonym classes
+inconsistent is rejected at write time so `check` stays throw-free.
 
-The model (~110 MB) is fetched on first use into an OS cache dir and verified
-against a pinned sha256, so runs are reproducible after the first fetch and
-fully offline thereafter. Pre-warm it with `symspec download-model` (for
-air-gapped or CI machines); when the model is absent and remote fetching is
-disabled, symspec returns `ERR_EMBED_MODEL_MISSING` and **never blocks the
-SMT/lint tiers**, which run independently.
+The model (~110 MB) is fetched into an OS cache dir and verified against a
+pinned sha256, so runs are reproducible after the first fetch and fully offline
+thereafter. Pre-warm it with `symspec download-model` (for air-gapped or CI
+machines, run once wherever the cache dir is provisioned; or set
+`SYMSPEC_EMBED_ALLOW_REMOTE=1` to let a run fetch it). When the model is absent
+and remote fetching is disabled, `check` returns `ERR_EMBED_MODEL_MISSING` and
+exits `2` **before any tier runs** — fail closed, because a certification whose
+opposition detector silently skipped is not a certification.
 
 ### 5. Certify — optional Lean 4 tier
 
@@ -496,12 +636,14 @@ prose.
   gate tripped on an otherwise error-free run. Output flags never change the exit
   code.
 - **Verified vs inconclusive** — `check`'s payload carries a first-class
-  `data.verified` boolean: `false` when ≥2 requirements produced no
-  cross-requirement comparison, so an agent can tell "verified clean" from
-  "nothing could be checked" without parsing `residualRisk`. Opt into gating that
-  with `check --strict` (fail an inconclusive run → exit `3`) or
-  `--fail-on-unmatched <n>` (fail when too many atoms went uncompared) — the
-  machine-readable form of "silence is not a consistency certificate".
+  `data.verified` boolean, and it is a *whole-document* claim: `true` only when
+  every requirement participated in a cross-requirement comparison, every
+  opposition candidate was triaged, and the decide tier actually ran (see
+  [The certification loop](#the-certification-loop)). `data.coverage` breaks
+  down per-requirement participation, singleton atoms, and the `demotions[]`
+  work list with discharging commands. Gate on it with `check --strict` (a
+  demoted run → exit `3`) or `--fail-on-unmatched <n>` — the machine-readable
+  form of "silence is not a consistency certificate".
 - **Output modes** — the JSON envelope is the zero-flag default. `--json` is a
   no-op compatibility alias; `--pretty` (alias `--human`) opts into prose. An
   agent never needs a flag to get parseable output.
@@ -556,9 +698,11 @@ src/
   lint/
     gtwr.ts            # ~24 INCOSE GtWR v4 rules (code, severity, span, suggestion)
     codes.ts           # GTWR_* enum + describe corpus
-  formal/              # SMT tier — atomize, antonyms, encode, backend (z3 WASM),
-                       #   contradiction, subsumption, vacuity, incomplete, similar,
-                       #   needs-review, finding (evidence), emit-smt2, binary-backend, codes
+  formal/              # SMT tier — atomize, antonyms, lemma (vendored verb
+                       #   de-inflection), encode, backend (z3 WASM),
+                       #   contradiction, subsumption, guard-implication, vacuity,
+                       #   incomplete, similar, needs-review, finding (evidence),
+                       #   emit-smt2, binary-backend, codes
                        # numeric tier (v3.0) — numeric (predicate extraction),
                        #   numeric-contradiction (LIA/LRA joint-SAT, default on)
                        # ambiguity tier (v3.1) — ambiguity (vague/quantifier/reference, default on)
@@ -566,7 +710,7 @@ src/
                        #   temporal (bounded LTL→SMT, opt-in --temporal)
                        # semantic + graph (v3.1–v3.2) — embed (onnxruntime-web WASM + tokenizer),
                        #   model-cache (fetch + sha256-verify + cache), semantic (paraphrase finder),
-                       #   graph (deterministic kNN trace-link/duplicate proposals, opt-in --semantic)
+                       #   graph (deterministic kNN trace-link/duplicate proposals, core/always-on)
   solvers/
     free/              # exact duplicates, ambiguity (lexical), pairwise candidate filter
     index.ts, types.ts # free+formal orchestrator + shared ReqView/finding types
@@ -584,6 +728,7 @@ src/
 adversarial/           # generative-adversarial detection harness (v3.4):
   generate.ts          #   bad-spec generator across five defect classes, escalating difficulty
   harness.ts           #   scores symspec on detection + localization, gap report
+  eval-rounds.ts       #   pinned red-team eval rounds — proof or abstention, never a clean lie
 scripts/
   gen-agents.ts        # regenerates AGENTS.md from buildManifest() (pnpm check:agents guards drift)
   temporal-feasibility.ts # v3.3 gate: Z3-WASM bounded-LTL feasibility benchmark
@@ -726,6 +871,9 @@ Plain-language definitions for the terms and abbreviations used above.
 | **Z3** | The specific SMT solver symspec runs. It ships built in (compiled to WebAssembly), so there's nothing extra to install. |
 | **Unsat core** | Short for *unsatisfiable core*: the smallest subset of requirements that already conflict. symspec reports this so you know exactly which ones to fix, not just that "something" is wrong. |
 | **Atom** | The normalized, canonical form of a requirement's action (e.g. "grant access") that the logic checker compares. Two requirements clash when their atoms match but their polarity (do vs. don't) is opposite. |
+| **Antonym table** | symspec's curated list of opposite-verb pairs (grant↔deny, commit↔roll back, seal↔expose, …). It's what lets the prover see that "grant access" and "deny access" are one claim with opposite polarity. Grows only by explicit edit or your confirmed `antonym add`. |
+| **Coverage / demotion** | `data.coverage` reports which requirements the prover actually compared and what's still untriaged. Any gap *demotes* `data.verified` to `false` with a listed fix — fuzzy signals can lower confidence but never raise it. |
+| **Opposition candidate** | A suggestion that two requirements may be opposites ("admit" vs "block" the same request). You decide: opposites (`antonym add`), synonyms (`glossary add`), or neither (`waive`). Untriaged candidates block certification. |
 | **LIA / LRA** | *Linear Integer Arithmetic* / *Linear Real Arithmetic* — the kinds of number reasoning the solver uses to catch conflicting limits like "under 2 seconds" vs "over 3 seconds". |
 | **LTL** | *Linear Temporal Logic* — a standard way to express timing and ordering rules ("eventually", "never", "until") so the timing checker can test them. |
 | **Sound-for-UNSAT** | A precise honesty guarantee: when the timing checker reports a conflict, it's real; but because it checks a bounded window, *not* finding one isn't a full guarantee of safety. symspec labels this in its output. |

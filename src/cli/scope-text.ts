@@ -92,16 +92,42 @@ export const SCOPE_CONTEXTUAL_AMBIGUITY_NOT_CHECKED =
 
 /**
  * The propose-only boundary for the semantic paraphrase tier (AC-9-7): the
- * embedding pass (`check --semantic`) suggests glossary merges but NEVER emits
- * a conflict verdict. `check` stays reproducible given the document, its
- * glossary, and the pinned embedding model. Contains the exact substring
- * `"semantic similarity is a propose-only assist"` the manifest test greps for.
+ * always-on embedding pass suggests glossary merges and opposition candidates
+ * but NEVER emits a conflict verdict. `check` stays reproducible given the
+ * document, its glossary, and the pinned embedding model. Contains the exact
+ * substring `"semantic similarity is a propose-only assist"` the manifest test
+ * greps for.
  */
 export const SCOPE_SEMANTIC_PROPOSE_ONLY =
-  'Semantic similarity is a propose-only assist: `check --semantic` suggests ' +
-  'glossary merges for paraphrased responses but never emits a conflict ' +
-  'verdict, so `check` remains reproducible given the document, its glossary, ' +
-  'and the pinned embedding model.'
+  'Semantic similarity is a propose-only assist: the always-on embedding tier ' +
+  'suggests glossary merges and opposition candidates for paraphrased or ' +
+  'polar-opposite responses but never emits a conflict verdict, so `check` ' +
+  'remains reproducible given the document, its glossary, and the pinned ' +
+  'embedding model. A missing model fails the run closed ' +
+  '(ERR_EMBED_MODEL_MISSING) rather than silently skipping the tier; pre-warm ' +
+  'with `symspec download-model`.'
+
+/**
+ * The coverage-demotion principle (adversarial-eval hardening): `verified` is
+ * a whole-document claim — every requirement must participate in a
+ * cross-requirement comparison and every opposition candidate must be triaged —
+ * and propose-only findings or coverage statistics can only DEMOTE it toward
+ * abstention, never promote it. `data.coverage.demotions` enumerates each
+ * demotion with the exact discharging command, so an agent iterates:
+ * check --strict → apply the listed ops → re-check → verified. Contains the
+ * exact substring `"demote verified, never promote"` the manifest test greps
+ * for.
+ */
+export const SCOPE_COVERAGE_DEMOTION =
+  '`data.verified` is a whole-document claim: it is true only when every ' +
+  'requirement shares vocabulary with a peer (participates in a ' +
+  'cross-requirement comparison), every opposition candidate has been triaged ' +
+  '(committed via `antonym add`/`glossary add` or waived), and a decide-tier ' +
+  'comparison actually ran. Propose-only findings and coverage statistics can ' +
+  'only demote verified, never promote it. Each demotion is listed in ' +
+  '`data.coverage.demotions` with the concrete command that discharges it, so ' +
+  'an agent can iterate: `check --strict` (exit 3 on demotion) -> apply the ' +
+  'listed ops or rewrite the named requirements -> re-check -> exit 0.'
 
 /**
  * The numeric-tier scope (AC-30-5): numeric conflicts ARE now checked, over
@@ -127,6 +153,7 @@ export const SCOPE_TEXT = [
   SCOPE_CONTEXTUAL_AMBIGUITY_NOT_CHECKED,
   SCOPE_SEMANTIC_PROPOSE_ONLY,
   SCOPE_NUMERIC_CHECKED,
+  SCOPE_COVERAGE_DEMOTION,
 ].join(' ')
 
 /**
@@ -142,6 +169,7 @@ export const SCOPE = {
   contextualAmbiguityNotChecked: SCOPE_CONTEXTUAL_AMBIGUITY_NOT_CHECKED,
   semanticProposeOnly: SCOPE_SEMANTIC_PROPOSE_ONLY,
   numericChecked: SCOPE_NUMERIC_CHECKED,
+  coverageDemotion: SCOPE_COVERAGE_DEMOTION,
   text: SCOPE_TEXT,
 } as const
 
@@ -157,6 +185,7 @@ export const ScopeSchema = z.object({
   contextualAmbiguityNotChecked: z.literal(SCOPE_CONTEXTUAL_AMBIGUITY_NOT_CHECKED),
   semanticProposeOnly: z.literal(SCOPE_SEMANTIC_PROPOSE_ONLY),
   numericChecked: z.literal(SCOPE_NUMERIC_CHECKED),
+  coverageDemotion: z.literal(SCOPE_COVERAGE_DEMOTION),
   text: z.literal(SCOPE_TEXT),
 })
 export type Scope = z.infer<typeof ScopeSchema>

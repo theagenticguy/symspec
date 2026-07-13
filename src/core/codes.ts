@@ -193,7 +193,7 @@ export const ErrCodeMeta = {
   ERR_EMBED_MODEL_MISSING: z
     .literal('ERR_EMBED_MODEL_MISSING')
     .describe(
-      'The opt-in `--semantic` embedding model is not cached and remote loading is disabled. Suggestion: pre-download the model or set SYMSPEC_EMBED_ALLOW_REMOTE=1 once. Never blocks the SMT/lint tiers.',
+      'The embedding model (core to every `check`) is not cached and remote loading is disabled — the run fails closed rather than silently skipping the semantic/opposition tier. Suggestion: run `symspec download-model` once, or set SYMSPEC_EMBED_ALLOW_REMOTE=1 for this run.',
     ),
   ERR_DUPLICATE_KEY: z
     .literal('ERR_DUPLICATE_KEY')

@@ -217,6 +217,64 @@ export interface ResidualRisk {
    * formal tier built, so it costs nothing beyond a tally.
    */
   unmatchedAtoms: number
+  /**
+   * How many gate-included requirements share NO atom with any other included
+   * requirement — vocabulary-disjoint islands the decide tier never actually
+   * constrained against a peer. Mirrors `coverage.requirements[].participates`
+   * for one-glance reading; any nonzero count demotes {@link CheckReport.verified}.
+   */
+  uncoveredRequirements: number
+}
+
+/** One requirement's participation row in {@link CoverageReport}. */
+export interface CoverageRequirementRow {
+  id: string
+  /**
+   * True when this requirement shares ≥1 atom with ≥1 OTHER gate-included
+   * requirement — i.e. the SMT conjunction genuinely constrained it against a
+   * peer. A non-participating requirement was never cross-compared, so its
+   * conflicts are invisible no matter what the rest of the document proves.
+   */
+  participates: boolean
+  /** This requirement's singleton atoms (atoms no other requirement references). */
+  unmatchedAtoms: string[]
+  /** Actionable next step when `participates` is false. */
+  suggestion?: string
+}
+
+/** Why `verified` was demoted, with the concrete discharging action. */
+export interface CoverageDemotion {
+  reason:
+    | 'uncovered-requirement'
+    | 'open-opposition-candidate'
+    | 'no-decide-tier-comparison'
+    | 'semantic-tier-skipped'
+  requirementIds: string[]
+  /** The exact command (or rewrite guidance) that discharges this demotion. */
+  action: string
+}
+
+/**
+ * Per-requirement coverage detail (adversarial-eval hardening): the structured
+ * answer to "what exactly did the decide tier NOT verify, and what do I do
+ * about it?". This is the driving surface of the agent iteration loop —
+ * `verified: false` is not a dead end but a work list: each {@link demotions}
+ * entry names its discharging op (`antonym add` / `glossary add` / `waive` /
+ * rewrite), and applying them then re-running `check` converges to
+ * `verified: true` because every demotion reason is finitely dischargeable.
+ *
+ * Design principle (the demotion-only rule): propose-only findings and
+ * coverage statistics may DEMOTE `verified` toward abstention, but can never
+ * PROMOTE it — the dual of the propose/decide split. A fuzzy signal can raise
+ * the alarm; only the deterministic decide tier can sound the all-clear.
+ */
+export interface CoverageReport {
+  /** One row per gate-included requirement, ordered by id. */
+  requirements: CoverageRequirementRow[]
+  /** Count of kept (post-waiver) `FND_OPPOSITION_CANDIDATE` findings. */
+  openOppositionCandidates: number
+  /** Every reason `verified` is false, empty exactly when `verified` is true. */
+  demotions: CoverageDemotion[]
 }
 
 /** The complete `check` result the CLI wraps in its envelope (AC-6-2). */
@@ -238,20 +296,31 @@ export interface CheckReport {
   counts: { error: number; warn: number; info: number }
   /** Rolled-up residual-risk summary (wishlist #5b) — what was NOT verified. */
   residualRisk: ResidualRisk
+  /** Per-requirement coverage + the actionable demotion list (agent loop). */
+  coverage: CoverageReport
   /**
    * First-class "did the formal tier actually verify anything across
-   * requirements?" flag (wishlist #5). Distinguishes the two states an exit `0`
-   * used to conflate: a genuinely CLEAN run (something was compared and no
-   * conflict was found) from an INCONCLUSIVE one (nothing cross-requirement was
-   * compared, so silence is not a certificate).
+   * requirements?" flag (wishlist #5, hardened after the Run 3 adversarial
+   * eval). `true` requires ALL of:
+   *   (a) PARTICIPATION — every gate-included requirement shares ≥1 atom with
+   *       another included requirement, so the SMT conjunction genuinely
+   *       constrained it against a peer. This kills the eval's winning shape:
+   *       dense distractor vocabulary buying one checked pair while the
+   *       conflicting pair's atoms stayed singletons;
+   *   (b) NO OPEN OPPOSITION CANDIDATES — every kept `FND_OPPOSITION_CANDIDATE`
+   *       has been triaged (committed via `antonym add`/`glossary add`, or
+   *       waived). An untriaged candidate is a possible conflict the decide
+   *       tier cannot see, so certifying over it would be dishonest;
+   *   (c) a decide-tier cross-requirement comparison actually happened
+   *       (pairsChecked > 0 or a non-propose-only cross-requirement finding);
+   *   (d) when ≥2 requirements exist, the semantic tier ran (an embedder was
+   *       supplied) — the opposition detector is part of the certification
+   *       surface, so skipping it demotes.
+   * A spec with <2 requirements is vacuously verified. Every demotion is
+   * enumerated with its discharging action in {@link CheckReport.coverage}.
    *
-   * `false` exactly when there are ≥2 requirements, the pairwise tier checked
-   * zero pairs, AND no cross-requirement finding fired — the SAME union-of-tiers
-   * predicate that governs the `FND_NO_PAIRS_CHECKED` disclosure, so the boolean
-   * and the finding never disagree. `true` otherwise (including the trivial
-   * 0/1-requirement case, where there is nothing to cross-check and the run is
-   * vacuously conclusive). An agent consuming the envelope can branch on this
-   * without parsing `residualRisk`.
+   * Demotion-only invariant: propose-only findings and coverage stats can only
+   * push this flag toward `false` (abstention), never toward `true`.
    */
   verified: boolean
   /**
@@ -575,6 +644,11 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
   // from the SAME encoded roster the formal tier builds (so it is free), inside
   // the closure where `encoded` is in scope.
   let unmatchedAtoms = 0
+  // Adversarial-eval hardening: the full atom→owners map escapes the closure so
+  // the per-requirement participation coverage (and its demotion of `verified`)
+  // is computed from the same roster.
+  let coverageAtomOwners: ReadonlyMap<string, ReadonlySet<string>> = new Map()
+  let coverageIncludedIds: readonly string[] = []
 
   const report = await runSolvers(doc, {
     ...(options.similarityThreshold !== undefined
@@ -622,6 +696,8 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       for (const owners of atomOwners.values()) {
         if (owners.size === 1) unmatchedAtoms += 1
       }
+      coverageAtomOwners = atomOwners
+      coverageIncludedIds = included.map((r) => r.id)
 
       const includedPairs = pairs.filter((p) => includedIdSet.has(p.a) && includedIdSet.has(p.b))
 
@@ -857,30 +933,11 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
     })
   }
 
-  // Wishlist #5: `verified` is a STRICTER claim than "something was compared" —
-  // it is "a DECIDE-tier check actually verified consistency across ≥2
-  // requirements". A propose-only info proposal (FND_SIMILAR_SEMANTIC,
-  // FND_OPPOSITION_CANDIDATE, …) spans two ids and suppresses the disclaimer
-  // above, but it is a fuzzy SUGGESTION, not a verdict, so it must NOT flip
-  // `verified` to true (adversarial-review finding): letting an embedding cosine
-  // quiet the "inconclusive" signal would let a fuzzy score soften the `--strict`
-  // gate, violating the propose/decide split the whole tool rests on. So the run
-  // is INCONCLUSIVE unless a non-propose-only finding spanning ≥2 requirements
-  // fired. A spec with <2 requirements is vacuously conclusive.
-  // A checked pair (pairsChecked > 0) IS a decide-tier verification: the
-  // subsumption/redundancy tier ran over it and a clean result is a genuine
-  // "verified, no conflict". So the run is inconclusive only when the pairwise
-  // tier checked NOTHING and no decide-tier cross-requirement finding fired.
-  const decideTierCrossReqFired = formal.some(
-    (f) => f.requirementIds.length >= 2 && !PROPOSE_ONLY_FND_CODES.has(f.code),
-  )
-  const inconclusive =
-    report.pairsChecked === 0 && requirements.length >= 2 && !decideTierCrossReqFired
-  const verified = !inconclusive
-
   // Wishlist #3: drop findings suppressed by a committed waiver BEFORE tallying,
   // so the exit-code gate honors the waiver too. Count what was dropped so the
-  // report can surface a reviewed-baseline `waived` number.
+  // report can surface a reviewed-baseline `waived` number. Runs BEFORE the
+  // `verified` computation because a waived opposition candidate is a triaged
+  // one — it must stop demoting (agent-loop convergence).
   const waivers = doc.waivers ?? []
   let waived = 0
   const kept = findings.filter((f) => {
@@ -895,6 +952,118 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
   const counts = { error: 0, warn: 0, info: 0 }
   for (const f of kept) counts[f.severity] += 1
 
+  // Wishlist #5, hardened after the Run 3 adversarial eval: `verified` is a
+  // STRICTER claim than "something was compared" — it is "the decide tier
+  // actually verified consistency across the WHOLE document". The eval's
+  // winning shape was 10-12 requirements with dense shared guard vocabulary
+  // buying one checked pair (verified=true under the old any-pair predicate)
+  // while the genuinely conflicting responses sat on singleton atoms nobody
+  // compared. The hardened predicate demotes on:
+  //   - any gate-included requirement whose atoms are ALL singletons
+  //     (participation — clause a);
+  //   - any kept FND_OPPOSITION_CANDIDATE (untriaged possible conflict —
+  //     clause b; waived candidates were triaged and do not demote);
+  //   - no decide-tier cross-requirement comparison at all (clause c, the
+  //     original predicate);
+  //   - the semantic tier not running over a ≥2-requirement doc (clause d —
+  //     the opposition detector is part of the certification surface).
+  // Demotion-only invariant: propose-only findings and coverage stats can push
+  // `verified` to false but NEVER to true — a fuzzy cosine proposal must not
+  // quiet the "silence is not a consistency certificate" signal the `--strict`
+  // gate rests on. Every demotion carries its discharging action so an agent
+  // can iterate: apply the op (antonym add / glossary add / waive / rewrite),
+  // re-run check, converge.
+  const decideTierCrossReqFired = formal.some(
+    (f) => f.requirementIds.length >= 2 && !PROPOSE_ONLY_FND_CODES.has(f.code),
+  )
+  const inconclusive =
+    report.pairsChecked === 0 && requirements.length >= 2 && !decideTierCrossReqFired
+
+  // A requirement participates when (a) it shares ≥1 atom with another
+  // included requirement (the propositional conjunction constrained it), OR
+  // (b) a decide-tier cross-requirement finding names it (the numeric/temporal
+  // tiers compare requirements the propositional atom roster cannot see).
+  const decideFindingParticipants = new Set<string>()
+  for (const f of formal) {
+    if (f.requirementIds.length >= 2 && !PROPOSE_ONLY_FND_CODES.has(f.code)) {
+      for (const id of f.requirementIds) decideFindingParticipants.add(id)
+    }
+  }
+  const coverageRows: CoverageRequirementRow[] = [...coverageIncludedIds]
+    .sort()
+    .map((id): CoverageRequirementRow => {
+      const singletons: string[] = []
+      let shares = decideFindingParticipants.has(id)
+      for (const [atomName, owners] of coverageAtomOwners) {
+        if (!owners.has(id)) continue
+        if (owners.size >= 2) shares = true
+        else singletons.push(atomName)
+      }
+      singletons.sort()
+      return {
+        id,
+        participates: shares,
+        unmatchedAtoms: singletons,
+        ...(shares
+          ? {}
+          : {
+              suggestion:
+                `Rewrite ${id} to share guard/response vocabulary with the requirements it ` +
+                'relates to, or link its terms via `symspec glossary add`/`symspec antonym add` ' +
+                'so the formal tier can cross-compare it.',
+            }),
+      }
+    })
+  const uncoveredRows = coverageRows.filter((r) => !r.participates)
+
+  const openOppositionFindings = kept.filter((f) => f.code === 'FND_OPPOSITION_CANDIDATE')
+
+  const demotions: CoverageDemotion[] = []
+  if (requirements.length >= 2) {
+    for (const row of uncoveredRows) {
+      demotions.push({
+        reason: 'uncovered-requirement',
+        requirementIds: [row.id],
+        action: row.suggestion ?? '',
+      })
+    }
+    for (const f of openOppositionFindings) {
+      demotions.push({
+        reason: 'open-opposition-candidate',
+        requirementIds: [...f.requirementIds],
+        action:
+          'Triage this opposition candidate: commit `symspec antonym add <a> <b>` if the verbs are ' +
+          'opposites, `symspec glossary add "<a>" "<b>"` if synonyms, or waive it ' +
+          `(\`symspec waive add FND_OPPOSITION_CANDIDATE --reason "…"\`) if neither. See the finding's message for the exact verbs.`,
+      })
+    }
+    if (inconclusive) {
+      demotions.push({
+        reason: 'no-decide-tier-comparison',
+        requirementIds: requirements.map((r) => r.id),
+        action:
+          'No cross-requirement comparison happened. Align vocabulary across requirements (shared ' +
+          'guards/objects) or commit glossary/antonym links so the decide tier can compare pairs.',
+      })
+    }
+    if (options.semantic === undefined) {
+      demotions.push({
+        reason: 'semantic-tier-skipped',
+        requirementIds: [],
+        action:
+          'The semantic/opposition tier did not run, so untriaged opposition candidates may exist. ' +
+          'Run `symspec check` via the CLI (which loads the embedding model), or supply an embedder ' +
+          'to runCheck; pre-warm an air-gapped host with `symspec download-model`.',
+      })
+    }
+  }
+  const verified = demotions.length === 0
+  const coverageReport: CoverageReport = {
+    requirements: coverageRows,
+    openOppositionCandidates: openOppositionFindings.length,
+    demotions,
+  }
+
   // Wishlist #5b: roll the residual-risk axes up from the KEPT (post-waiver)
   // finding set, so a waived residual-risk finding drops out of the summary too.
   const residualRisk: ResidualRisk = {
@@ -904,6 +1073,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
     noPairsChecked: report.pairsChecked === 0,
     excludedRequirements: gateResult.excluded.length,
     unmatchedAtoms,
+    uncoveredRequirements: uncoveredRows.length,
   }
 
   // Wishlist #4: resolve the opt-in strict coverage gate. It runs only when a
@@ -915,7 +1085,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
   // contract is untouched.
   const gateRequested = options.strict === true || options.failOnUnmatched !== undefined
   const gateTripped =
-    (options.strict === true && inconclusive) ||
+    (options.strict === true && !verified) ||
     (options.failOnUnmatched !== undefined && unmatchedAtoms > options.failOnUnmatched)
   const strictGate: 'pass' | 'fail' | undefined = gateRequested
     ? gateTripped
@@ -930,6 +1100,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
     waived,
     counts,
     residualRisk,
+    coverage: coverageReport,
     verified,
     ...(strictGate !== undefined ? { strictGate } : {}),
   }

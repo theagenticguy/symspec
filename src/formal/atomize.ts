@@ -19,11 +19,24 @@
  *
  *   2. CONSERVATIVE, NEAR-EXACT NORMALIZATION. The pipeline is EXACTLY:
  *        lowercase → strip leading articles (a|an|the) → strip punctuation
- *        → collapse whitespace → underscore-join.
- *      It MUST NOT stem, lemmatize, or strip stopwords beyond a single leading
- *      article. "issues" and "issue" stay distinct atoms. Aggressive
- *      normalization is the one false-positive risk class (AC-4-11), so we buy
- *      only what regex can honestly deliver.
+ *        → collapse whitespace → underscore-join → glossary rewrite →
+ *        copula strip (guard slots only) → leading-verb de-inflection +
+ *        antonym rewrite (response slots only).
+ *      It MUST NOT stem, lemmatize, or strip stopwords from the REMAINDER of a
+ *      slot. Three closed, deterministic head/token rules are the whole
+ *      exception surface (each below, each tested):
+ *        - the LEADING RESPONSE VERB is de-inflected by a closed third-person
+ *          -s rule ({@link deInflectHead}), so "shall opens the valve" and
+ *          "shall open the valve" collide on one atom;
+ *        - GUARD slots (pre/trig) drop a single copula token
+ *          ({@link stripCopula}), so "the session is authenticated" and "the
+ *          session authenticated" name one guard state;
+ *        - when (and only when) an ANTONYM head-flip fires, one preposition
+ *          token is dropped from the remainder ({@link canonicalizeAntonymRest}),
+ *          so "include X in the view" / "exclude X from the view" unify.
+ *      Everything else stays near-exact: aggressive normalization is the one
+ *      false-positive risk class (AC-4-11), so we buy only what closed rules
+ *      can honestly deliver.
  *
  *   3. PER-systemName SCOPING. Every atom is prefixed `sys__<system>__<kind>__`.
  *      Identical response text under two different systems therefore yields two
@@ -44,6 +57,9 @@
  */
 
 import { ANTONYM_INDEX, type AntonymEntry } from './antonyms.js'
+import { deInflectHead } from './lemma.js'
+
+export { deInflectHead } from './lemma.js'
 
 /** Which EARS slot an atom was derived from (research-smt.md §4.1). */
 export type AtomKind = 'trig' | 'pre' | 'resp'
@@ -135,6 +151,72 @@ export function normalize(text: string): string {
 }
 
 /**
+ * The copula tokens a GUARD (pre/trig) body drops — exactly one, the first
+ * occurrence — so "the session is authenticated" and "the session
+ * authenticated" (the state a bridge like "mark the session as authenticated"
+ * establishes) atomize identically. This both lets guard-implication bridges
+ * (#2) match guards naturally and soundly merges copula/non-copula phrasings of
+ * the same real-world condition into one context group.
+ */
+const COPULA_TOKENS: ReadonlySet<string> = new Set([
+  'is',
+  'are',
+  'was',
+  'were',
+  'be',
+  'been',
+  'being',
+  'becomes',
+  'remains',
+])
+
+/** Strip the FIRST standalone copula token from an underscore-joined guard body. */
+function stripCopula(body: string): string {
+  const tokens = body.split('_')
+  const i = tokens.findIndex((t) => COPULA_TOKENS.has(t))
+  if (i === -1) return body
+  tokens.splice(i, 1)
+  return tokens.join('_')
+}
+
+/**
+ * Prepositions dropped from an antonym-flipped response remainder (A4). Fires
+ * ONLY after an antonym head hit, and drops exactly ONE token — the first
+ * preposition appearing after at least one non-preposition token — so
+ * "exclude that tile from the default gallery view" and "include that tile in
+ * the default gallery view" unify at opposite polarity. Direction within an
+ * antonym class is carried by the HEAD (include vs exclude), never by the
+ * preposition, which is what makes this sound; verbs outside the antonym
+ * table ("move X to A" / "move X from A") are never touched, and differing
+ * landing sites ("…gallery A" vs "…gallery B") still produce distinct atoms
+ * because only the preposition itself is dropped, never the noun phrase.
+ */
+const REST_PREPOSITIONS: ReadonlySet<string> = new Set([
+  'in',
+  'into',
+  'from',
+  'within',
+  'inside',
+  'to',
+  'onto',
+  'at',
+  'on',
+])
+
+/** Drop the first mid-remainder preposition token (antonym-hit responses only). */
+function canonicalizeAntonymRest(rest: string): string {
+  if (rest === '') return rest
+  const tokens = rest.split('_')
+  for (let i = 1; i < tokens.length; i++) {
+    if (REST_PREPOSITIONS.has(tokens[i] as string)) {
+      tokens.splice(i, 1)
+      return tokens.join('_')
+    }
+  }
+  return rest
+}
+
+/**
  * Turn one EARS slot into a scoped Boolean {@link Atom}. Pure and deterministic.
  *
  * For `resp` slots, the leading verb is checked against the seed antonym table:
@@ -156,22 +238,47 @@ export function atomize(args: AtomizeArgs): Atom {
     if (canonical !== undefined) body = canonical
   }
 
+  // Copula strip applies only to GUARD slots (pre/trig), AFTER the glossary
+  // rewrite so committed glossary entries keyed on the natural phrasing keep
+  // matching. "the session is authenticated" ⇒ "session_authenticated", the
+  // same atom the guard-implication tier derives from a "mark the session as
+  // authenticated" bridge — the copula was the byte gap that dropped those
+  // bridges as inert (Run 2/3 adversarial escape).
+  if (args.kind === 'pre' || args.kind === 'trig') {
+    body = stripCopula(body)
+  }
+
   // Antonym unification applies only to responses (spec AC-4-2a: "polar-opposite
-  // responses"). Requires a leading-verb match; the object remainder must be
-  // byte-identical after normalization, so "grant access"/"revoke access" unify
-  // but "grant access"/"revoke permission" do not.
+  // responses"). The leading verb is de-inflected (closed 3sg rule) and looked
+  // up longest-prefix-first — two tokens ("roll_back") before one ("roll") — so
+  // multiword opposites like commit/roll-back resolve. On a hit the head is
+  // rewritten to the class canonical, polarity flips, and one remainder
+  // preposition is dropped (see canonicalizeAntonymRest); the rest of the
+  // remainder must still be byte-identical, so "grant access"/"revoke access"
+  // unify but "grant access"/"revoke permission" do not. On a miss the
+  // de-inflected head still replaces the surface head, so "opens the valve"
+  // and "open the valve" collide even outside any antonym class.
   if (args.kind === 'resp' && body.length > 0) {
-    const sep = body.indexOf('_')
-    const head = sep === -1 ? body : body.slice(0, sep)
-    const rest = sep === -1 ? '' : body.slice(sep) // keeps the leading '_'
+    const tokens = body.split('_')
+    const tok1 = deInflectHead(tokens[0] as string)
     // Consult the doc-augmented antonym index when supplied (#1), else the
     // code-committed seed table — same lookup shape, so an agent-confirmed pair
     // (open/shut) unifies exactly like a seed pair (grant/revoke).
     const index = args.antonyms ?? ANTONYM_INDEX
-    const entry = index.get(head)
+    // Longest-prefix probe: try the de-inflected two-token head first (so
+    // "rolls back" → "roll_back" matches a multiword class member), then one.
+    const twoTok = tokens.length >= 2 ? `${tok1}_${tokens[1] as string}` : undefined
+    const twoEntry = twoTok !== undefined ? index.get(twoTok) : undefined
+    const entry = twoEntry ?? index.get(tok1)
+    const headLen = twoEntry !== undefined ? 2 : 1
     if (entry) {
-      body = entry.canonical + rest
+      const rest = tokens.slice(headLen).join('_')
+      const canonRest = canonicalizeAntonymRest(rest)
+      body = canonRest === '' ? entry.canonical : `${entry.canonical}_${canonRest}`
       negated = negated !== entry.negated // XOR: compose AC-2-4 negation with the antonym flip
+    } else if (tok1 !== tokens[0]) {
+      tokens[0] = tok1
+      body = tokens.join('_')
     }
   }
 
