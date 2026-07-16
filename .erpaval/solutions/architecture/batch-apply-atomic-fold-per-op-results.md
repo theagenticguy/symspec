@@ -37,7 +37,7 @@ example_files:
 
 # Why this matters
 
-The field report's #1 lever: a 42-req spec took ~150 subprocess calls plus a
+The #1 authoring lever: a 42-req spec took ~150 subprocess calls plus a
 sidecar UUID map, with no resume after a crash. One `apply` command over a JSONL
 op stream collapses all three problems — throughput, external state, and
 partial-failure recovery — but only if you fold `applyChange` yourself. Reaching

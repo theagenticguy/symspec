@@ -2,7 +2,7 @@
  * The `apply` command core (wishlist #1): apply a batch of mutation ops from a
  * JSONL stream in ONE process and ONE save.
  *
- * The field report's single biggest lever: authoring a 42-requirement spec took
+ * The single biggest authoring lever: authoring a 42-requirement spec took
  * ~150 subprocess calls (one per `add`/`update`/`derive`) plus a label→UUID
  * sidecar file, and a mid-batch crash had no resume story. `apply` collapses all
  * of that: a stream of `{op, ...}` records — one JSON object per line — folded

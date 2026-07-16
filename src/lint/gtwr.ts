@@ -78,7 +78,7 @@ function getMatches(sentence: string, pattern: RegExp): RegExpExecArray[] {
  *
  * The lookbehind is done on the text slice BEFORE the number (the standard name
  * PRECEDES the digits). `[-\s]*$` after the token accepts both the spaced
- * ("RFC 9457") and hyphenated ("RFC-9457") forms the field report hit: for
+ * ("RFC 9457") and hyphenated ("RFC-9457") forms authors hit: for
  * "RFC-9457" the bare-number regex's `\b` starts after the hyphen, so the slice
  * ends with "RFC-" and the trailing `[-\s]*` matches the hyphen.
  */
@@ -99,7 +99,7 @@ function isStandardIdentifierNumber(sentence: string, matchIndex: number): boole
  * `TODO(coordination)` in src/cli/manifest.ts) and the two whitelists can be
  * reconciled in one place.
  *
- * The field report (GitHub issue #2) flagged legitimate units R6 was
+ * GitHub issue #2 flagged legitimate units R6 was
  * error-flagging: mass, volume, electrical, data-rate, distance, and calendar
  * units were all absent. The list below is grouped by dimension and kept
  * deliberately CONSERVATIVE — only closed, well-known unit spellings, never an
@@ -258,7 +258,7 @@ const R6_BARE_NUMBER = new RegExp(
  * A bare decimal in the closed interval [0, 1] (e.g. `0.3`, `0.7`, `1.0`,
  * `0.95`) is a legitimately DIMENSIONLESS quantity — a probability, a score, a
  * cosine/similarity threshold, or a fusion constant (RRF-style) — so it must NOT
- * trip R6. Field report (issue #2): authors were degrading `"score ≥ 0.7"` to
+ * trip R6. Issue #2: authors were degrading `"score ≥ 0.7"` to
  * dodge a spurious missing-units error. This escape is deliberately narrow:
  *   - it fires ONLY for a decimal WITH a fractional part (must contain a `.`),
  *     so a bare integer like `"60"` (RRF k, account counts) is still flagged —

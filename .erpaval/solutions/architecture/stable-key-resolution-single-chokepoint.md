@@ -11,7 +11,7 @@ applies_when:
   - every command already validates its id through one guard
   - you want the new addressing everywhere without touching every command
 pattern: |
-  symspec addresses requirements by minted UUID; the field report wanted a
+  symspec addresses requirements by minted UUID; authors want a
   stable human key ("G1") usable wherever a UUID is. The whole surface got that
   from TWO small edits, because every id-taking command (show/update/derive/
   satisfy/remove-edge/delete) already funnels its raw `<id>` through ONE guard:

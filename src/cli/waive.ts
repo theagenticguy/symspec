@@ -2,7 +2,7 @@
  * The `waive` command core (wishlist #3): manage the document's committed
  * finding waivers — the reviewed-suppression half of the lint workflow.
  *
- * A field-report pain point: `symspec check` re-emits ~200 non-actionable
+ * A recurring authoring pain point: `symspec check` re-emits ~200 non-actionable
  * warnings every run with no record that they were reviewed, so the next reader
  * cannot tell triage from neglect, and a heuristic false positive (GTWR_R6 on
  * "RFC 9457") forces a choice between degrading prose and living with noise.

@@ -34,8 +34,8 @@ pattern: |
       enum to equal exactly {command names} + 'error', and each type has ONE data
       shape — so antonym data ({action, antonyms}) cannot ride under the
       'glossary' type. Ship it as a peer TOP-LEVEL `antonym` command (like
-      `waive`), not folded under glossary, even though the field report asked for
-      `glossary antonym <a> <b>`.
+      `waive`), not folded under glossary, even if a `glossary antonym <a> <b>`
+      sub-command reads more naturally.
     - contradiction.ts needs NO change: get open/shut to atomize to one atom at
       opposite polarity and the existing solver proves it. Thread the doc antonym
       index through BOTH makeAtomize call sites (main closure AND encodeIncluded,

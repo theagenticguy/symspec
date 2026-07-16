@@ -201,11 +201,11 @@ describe('T-AC-3-2: enum reachability (AC-6-3 append-only guard)', () => {
   })
 })
 
-describe('GtWR bare-number rules — standard-identifier allowlist (field-report fix)', () => {
+describe('GtWR bare-number rules — standard-identifier allowlist', () => {
   // A number that is part of a standard's NAME ("RFC 9457", "HTTP 401") is an
   // identifier, not a units-less quantity, so R6 (missing-units) and R33
   // (missing-tolerance) must NOT fire on it. Includes the hyphenated
-  // "RFC-9457" form the field report explicitly hit.
+  // "RFC-9457" form authors explicitly hit.
   const STANDARD_IDENTIFIER_SENTENCES: ReadonlyArray<string> = [
     'the API shall return an RFC 9457 problem document',
     'the API shall emit an RFC-9457 response',
@@ -257,7 +257,7 @@ describe('GtWR bare-number rules — standard-identifier allowlist (field-report
   })
 })
 
-describe('GtWR R6 — broadened recognized-unit whitelist (issue #2 field report)', () => {
+describe('GtWR R6 — broadened recognized-unit whitelist (issue #2)', () => {
   // Each spelling is a legitimate unit R6 must NOT error-flag. Grouped like the
   // R6_RECOGNIZED_UNITS / R6_MULTIWORD_UNITS / R6_SYMBOL_UNITS lists in gtwr.ts.
   const RECOGNIZED_UNIT_SENTENCES: ReadonlyArray<string> = [
