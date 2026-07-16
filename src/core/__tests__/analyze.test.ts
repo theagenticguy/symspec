@@ -133,10 +133,31 @@ describe('analyze', () => {
     }
   })
 
-  it('flags OrphanRequirement only when more than one node exists and the orphan has no edges', () => {
+  it('flags OrphanRequirement for edgeless nodes once the doc uses at least one trace link', () => {
+    // Trace-gate: an orphan is only meaningful relative to a document that
+    // traces. Here c→d is a committed link, so the tier is un-gated and the two
+    // genuinely edgeless nodes (a, b) are flagged. c and d have edges, so they
+    // are not orphans.
+    const doc = docOf(
+      req('a', 'ubiquitous', 'svc', 'do A'),
+      req('b', 'ubiquitous', 'svc', 'do B'),
+      req('c', 'ubiquitous', 'svc', 'do C', { derives: ['d'] }),
+      req('d', 'ubiquitous', 'svc', 'do D'),
+    )
+    const orphans = analyze(doc).filter((f) => f.kind === 'OrphanRequirement')
+    expect(orphans.map((f) => (f.kind === 'OrphanRequirement' ? f.id : '')).sort()).toEqual([
+      'a',
+      'b',
+    ])
+  })
+
+  it('does NOT flag orphans in a doc that uses ZERO trace links (trace-gate suppresses the noise)', () => {
+    // A trace-free doc: every requirement is trivially edgeless, so flagging them
+    // all just penalizes an author who has not adopted trace links yet. No trace
+    // edge anywhere ⇒ no OrphanRequirement findings.
     const doc = docOf(req('a', 'ubiquitous', 'svc', 'do A'), req('b', 'ubiquitous', 'svc', 'do B'))
     const findings = analyze(doc)
-    expect(findings.filter((f) => f.kind === 'OrphanRequirement')).toHaveLength(2)
+    expect(findings.filter((f) => f.kind === 'OrphanRequirement')).toHaveLength(0)
   })
 
   it('does not flag OrphanRequirement for a single-requirement snapshot', () => {

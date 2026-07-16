@@ -29,15 +29,64 @@ describe('buildSimilarityGraph (AC-32-4)', () => {
     const embedder = fakeEmbedder({
       'issue a session token': [1, 0.02],
       'issue a login credential': [1, 0.05], // ~parallel → high cosine
+      'unrelated statement': [0, 1],
+      'linked target': [0.1, 1],
     })
+    // The doc uses at least one trace link somewhere (C→D), so the missing-link
+    // tier is un-gated and the unlinked A/B pair yields a proposal. (An entirely
+    // trace-free doc suppresses these — see the dedicated trace-gate test below.)
     const findings = await buildSimilarityGraph(
-      [gr('A', 'issue a session token'), gr('B', 'issue a login credential')],
+      [
+        gr('A', 'issue a session token'),
+        gr('B', 'issue a login credential'),
+        gr('C', 'unrelated statement', ['D']),
+        gr('D', 'linked target'),
+      ],
       embedder,
       { threshold: 0.82 },
     )
     const links = findings.filter((f) => f.code === 'FND_MISSING_TRACE_LINK')
     expect(links).toHaveLength(1)
     expect(links[0]!.severity).toBe('info')
+    expect(links[0]!.requirementIds).toEqual(['A', 'B'])
+  })
+
+  it('suppresses missing-trace-link proposals in a doc that uses ZERO trace links', async () => {
+    // Trace-gate: in a completely trace-free doc, every high-cosine pair is
+    // unlinked, so proposing a link on each would just spam an author who has
+    // not adopted tracing. No `linkedTo` anywhere ⇒ no FND_MISSING_TRACE_LINK.
+    const embedder = fakeEmbedder({
+      'issue a session token': [1, 0.02],
+      'issue a login credential': [1, 0.05],
+    })
+    const findings = await buildSimilarityGraph(
+      [gr('A', 'issue a session token'), gr('B', 'issue a login credential')],
+      embedder,
+      { threshold: 0.82 },
+    )
+    expect(findings.filter((f) => f.code === 'FND_MISSING_TRACE_LINK')).toEqual([])
+  })
+
+  it('still detects the unlinked pair once ANY trace link exists (orphans meaningful vs a tracing doc)', async () => {
+    // Mirror of the suppression test: add a single committed link (A→B here is
+    // NOT it; instead a separate C→A link) and the tier re-engages for the
+    // remaining unlinked high-cosine pair.
+    const embedder = fakeEmbedder({
+      'issue a session token': [1, 0.02],
+      'issue a login credential': [1, 0.05],
+      seed: [0, 1],
+    })
+    const findings = await buildSimilarityGraph(
+      [
+        gr('A', 'issue a session token'),
+        gr('B', 'issue a login credential'),
+        gr('C', 'seed', ['A']), // one committed trace link ⇒ un-gates the tier
+      ],
+      embedder,
+      { threshold: 0.82 },
+    )
+    const links = findings.filter((f) => f.code === 'FND_MISSING_TRACE_LINK')
+    expect(links).toHaveLength(1)
     expect(links[0]!.requirementIds).toEqual(['A', 'B'])
   })
 
@@ -114,9 +163,14 @@ describe('buildSimilarityGraph (AC-32-4)', () => {
     const noEdge = await buildSimilarityGraph([gr('A', 'a'), gr('B', 'b')], embedder)
     expect(noEdge).toEqual([])
 
-    // A truly near-duplicate pair (cosine ≈ 0.999) clears the default bar.
-    const near = fakeEmbedder({ a: [1, 0.02], b: [1, 0.05] })
-    const edge = await buildSimilarityGraph([gr('A', 'a'), gr('B', 'b')], near)
+    // A truly near-duplicate pair (cosine ≈ 0.999) clears the default bar. A
+    // committed trace link elsewhere (C→D) un-gates the missing-link tier so the
+    // A/B proposal fires (the trace-gate is exercised on its own above).
+    const near = fakeEmbedder({ a: [1, 0.02], b: [1, 0.05], seed: [0, 1], other: [0.05, 1] })
+    const edge = await buildSimilarityGraph(
+      [gr('A', 'a'), gr('B', 'b'), gr('C', 'seed', ['D']), gr('D', 'other')],
+      near,
+    )
     expect(edge.filter((f) => f.code === 'FND_MISSING_TRACE_LINK')).toHaveLength(1)
   })
 })

@@ -220,6 +220,37 @@ describe('CLI integration — --dense round-trip (AC-6-4)', () => {
   })
 })
 
+describe('CLI integration — --field jq-style projection', () => {
+  it('projects a single nested field to a nested object', async () => {
+    await runCli(['init', docPath])
+    const { stdout, code } = await runCli(['check', docPath, '--field', 'data.verified'])
+    expect(code).toBe(0)
+    expect(lastJson(stdout)).toEqual({ data: { verified: true } })
+  })
+
+  it('projects multiple fields, merged into one nested object', async () => {
+    await runCli(['init', docPath])
+    const { stdout } = await runCli(['check', docPath, '--field', 'type,data.verified'])
+    expect(lastJson(stdout)).toEqual({ type: 'check', data: { verified: true } })
+  })
+
+  it('omits an unresolved path (no null); an all-miss projection is {}', async () => {
+    await runCli(['init', docPath])
+    const present = await runCli(['check', docPath, '--field', 'data.verified,data.nope'])
+    expect(lastJson(present.stdout)).toEqual({ data: { verified: true } })
+    const allMiss = await runCli(['check', docPath, '--field', 'data.nope,other.miss'])
+    expect(lastJson(allMiss.stdout)).toEqual({})
+  })
+
+  it('composes with --dense (minified projection of the densified envelope)', async () => {
+    await runCli(['init', docPath])
+    const { stdout, code } = await runCli(['check', docPath, '--dense', '--field', 'data.verified'])
+    expect(code).toBe(0)
+    expect(stdout.trim()).not.toContain('\n ') // minified
+    expect(lastJson(stdout)).toEqual({ data: { verified: true } })
+  })
+})
+
 describe('CLI integration — manifest validates against ManifestSchema (AC-6-1)', () => {
   it("manifest envelope's data parses through ManifestSchema", async () => {
     const { stdout, code } = await runCli(['manifest'])
@@ -274,6 +305,51 @@ describe('CLI integration — bad args → ERR_USAGE envelope, not a stack trace
     expect(code).toBe(2)
     const env = lastJson(stdout) as { code: string }
     expect(env.code).toBe('ERR_NOT_FOUND')
+  })
+
+  it('a positional on `glossary list` names the stray arg and points at --file/SYMSPEC_DOC', async () => {
+    await runCli(['init', docPath])
+    // A natural mistake: passing the doc positionally to a read-only list
+    // subcommand (which takes --file). The error must name the offending arg and
+    // the doc-path remedy, not a bare "too many arguments" count.
+    const { stdout, code } = await runCli(['glossary', 'list', docPath])
+    expect(code).toBe(2)
+    const env = lastJson(stdout) as { code: string; error: string; suggestions: string[] }
+    expect(env.code).toBe('ERR_USAGE')
+    expect(env.error).toContain('glossary list takes no positional argument')
+    expect(env.error).toContain(docPath)
+    expect(env.error).toContain('--file')
+    expect(env.error).toContain('SYMSPEC_DOC')
+  })
+
+  it('`waive list` and `antonym list` reject a stray positional the same way', async () => {
+    await runCli(['init', docPath])
+    for (const group of ['waive', 'antonym'] as const) {
+      const { stdout, code } = await runCli([group, 'list', docPath])
+      expect(code).toBe(2)
+      const env = lastJson(stdout) as { code: string; error: string }
+      expect(env.code).toBe('ERR_USAGE')
+      expect(env.error).toContain(`${group} list takes no positional argument`)
+      expect(env.error).toContain('--file')
+    }
+  })
+
+  it('an arity error on `delete` (doc passed positionally) suggests --file/SYMSPEC_DOC', async () => {
+    await runCli(['init', docPath])
+    // `delete <id>` takes the doc via --file; passing <id> then a doc path
+    // positionally is a too-many-arguments arity error. The suggestion must name
+    // the doc-path remedy so the agent can correct the call.
+    const { stdout, code } = await runCli([
+      'delete',
+      '11111111-1111-1111-1111-111111111111',
+      docPath,
+    ])
+    expect(code).toBe(2)
+    const env = lastJson(stdout) as { code: string; suggestions: string[] }
+    expect(env.code).toBe('ERR_USAGE')
+    expect(env.suggestions.some((s) => s.includes('--file') && s.includes('SYMSPEC_DOC'))).toBe(
+      true,
+    )
   })
 })
 

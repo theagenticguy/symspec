@@ -87,6 +87,70 @@ describe('findSimilarSemantic (AC-9-5)', () => {
     expect(findings).toEqual([])
   })
 
+  it('also suggests `antonym add` when a high-cosine pair shares the SAME trigger', async () => {
+    // Same system AND same trigger + high cosine ⇒ the pair might be polar
+    // OPPOSITES, not synonyms (antonyms embed close). The message must point at
+    // BOTH glossary (synonym path) and antonym (opposition path), with concrete
+    // verb heads, and stay a suggestion — never a verdict.
+    const embedder = fakeEmbedder({
+      'open the valve': [1, 0.02],
+      'shut the valve': [1, 0.05],
+    })
+    const findings = await findSimilarSemantic(
+      [
+        {
+          id: 'A',
+          systemName: 'ctrl',
+          systemResponse: 'open the valve',
+          trigger: 'pressure rises',
+        },
+        {
+          id: 'B',
+          systemName: 'ctrl',
+          systemResponse: 'shut the valve',
+          trigger: 'pressure rises',
+        },
+      ],
+      embedder,
+      { threshold: DEFAULT_SEMANTIC_THRESHOLD },
+    )
+    expect(findings).toHaveLength(1)
+    const msg = findings[0]!.message
+    expect(msg).toContain('symspec glossary add')
+    expect(msg).toContain('symspec antonym add open shut')
+    expect(msg).toContain('SAME trigger')
+    expect(msg).toContain('not a verdict')
+  })
+
+  it('does NOT add the antonym hint when triggers differ (only the glossary path)', async () => {
+    const embedder = fakeEmbedder({
+      'open the valve': [1, 0.02],
+      'shut the valve': [1, 0.05],
+    })
+    const findings = await findSimilarSemantic(
+      [
+        {
+          id: 'A',
+          systemName: 'ctrl',
+          systemResponse: 'open the valve',
+          trigger: 'pressure rises',
+        },
+        {
+          id: 'B',
+          systemName: 'ctrl',
+          systemResponse: 'shut the valve',
+          trigger: 'pressure drops',
+        },
+      ],
+      embedder,
+      { threshold: DEFAULT_SEMANTIC_THRESHOLD },
+    )
+    expect(findings).toHaveLength(1)
+    const msg = findings[0]!.message
+    expect(msg).toContain('symspec glossary add')
+    expect(msg).not.toContain('symspec antonym add')
+  })
+
   it('skips a pair already merged by the glossary index', async () => {
     const embedder = fakeEmbedder({
       'issue a session token': [1, 0.02],

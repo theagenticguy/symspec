@@ -222,13 +222,50 @@ to look at.
 > **Why so strict?** Because the permissive version was beaten. A red-team eval
 > (frontier-model proposer, blind judge panel, z3 as the oracle) authored specs
 > with genuine, machine-provable contradictions that earlier symspec certified
-> as clean 25 times out of 30 — by hiding conflicts behind unshared vocabulary,
-> inflected verbs, and multi-hop state chains while a single trivially-similar
-> pair satisfied the old "something was compared" bar. Every one of those
-> winning rounds is now a regression fixture (`adversarial/eval-rounds.ts`):
-> the fixable ones are *proven* contradictions, and the ones no lexicon can
-> reach hit the abstention backstop — symspec refuses to certify rather than
-> certify a lie.
+> as clean — first 25/30, then 28/30 after the first hardening, as attackers
+> abandoned the closed seams and converged on the numeric tier's structural
+> blind spot (a bound keyed off the verb phrase, an aggregate never summed, an
+> emergent impossibility no lexicon reaches). Each escape is now closed the same
+> way: the tractable ones become *proven* contradictions, and the ones no sound
+> extractor can reach **demote `verified` with an actionable caveat** rather than
+> certify. Every winning round is a regression fixture (`adversarial/eval-rounds.ts`).
+
+### Recipe — make a code-vs-intent conflict provable
+
+A real divergence hides when the two requirements never atomize to the same
+thing, so the prover never compares them. To force it into the open:
+
+1. **State both sides on a shared system + trigger** — the intended invariant
+   and the as-built (or conflicting) behavior, same `systemName`, same trigger,
+   so they land in one context group.
+2. **Collapse the responses onto one atom.** Reduce both to a shared object
+   phrase differing only on the verb head (`run the cycle` vs `skip the cycle`),
+   then commit the link the prover needs:
+   - polar opposites → `symspec antonym add run skip` → `FND_CONTRADICTION`;
+   - same meaning → `symspec glossary add "…" "…"`.
+3. **Numeric bounds on one quantity worded two ways?** `check` emits
+   `FND_QUANTITY_ALIAS_CANDIDATE` carrying the *exact* `glossary add` command;
+   commit it and the numeric tier proves the `FND_NUMERIC_CONTRADICTION`.
+4. **Re-run `check`.** Aligning vocabulary is what lets the prover see — the
+   commit turns an unprovable divergence into a named, evidence-carrying proof.
+
+What the prover genuinely cannot recover from prose — aggregate/conservation
+sums, cross-quantity arithmetic, emergent structural impossibility (odd-cycle
+colorings, pigeonhole) — is not silently passed: `check` flags the shape with
+`FND_RELATIONAL_UNCHECKED` and demotes `verified`, so "verified" never outruns
+what was actually compared.
+
+### Coverage is loud, never silent
+
+`data.coverage` reports `{ encoded, excluded }` and a one-line `pairsCheckedNote`
+so a low pair count is read correctly (disjoint transitions have no same-context
+peer to conflict with — not a coverage gap). A requirement dropped from the
+formal tier by an error-severity lint raises a first-class
+`FND_EXCLUDED_FROM_FORMAL` and demotes `verified` — silence over an unchecked
+requirement is never a clean bill of health. Re-admit it by fixing the lint, or
+by waiving the *blocking* finding (`symspec waive add <code> --ref <id>`), which
+the gate honors by returning the requirement to the solver; waiving the
+`FND_EXCLUDED_FROM_FORMAL` disclosure alone does not restore coverage.
 
 ---
 

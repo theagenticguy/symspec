@@ -38,7 +38,17 @@ export interface SemanticRequirement {
   readonly systemName: string
   readonly systemResponse: string
   readonly negated?: boolean
-  /** Optional glossary index (AC-9-2) so already-merged pairs are skipped. */
+  /**
+   * Optional trigger clause. When two high-cosine responses fire under the SAME
+   * system AND the SAME trigger, the pair is a candidate for opposition (polar
+   * opposites), not just synonymy — so `findSimilarSemantic` extends its message
+   * to ALSO point at `antonym add` in that case. Callers pass the stored trigger
+   * (a `ReqView` already carries it); omitted ⇒ the antonym hint is not added.
+   * Declared `string | undefined` (not merely optional) so a `ReqView` — whose
+   * `trigger` is `string | undefined` — is assignable under
+   * `exactOptionalPropertyTypes`.
+   */
+  readonly trigger?: string | undefined
 }
 
 /** Options for {@link findSimilarSemantic}. */
@@ -162,6 +172,32 @@ export async function findSimilarSemantic(
 
       seen.add(key)
       const [lo, hi] = a.id < b.id ? [a.id, b.id] : [b.id, a.id]
+
+      // When the two responses fire under the SAME trigger (not just the same
+      // system), high cosine is equally consistent with them being polar
+      // OPPOSITES (antonyms embed close — shared topic — so cosine cannot tell
+      // opposites from synonyms). In that case also point at `antonym add`, so an
+      // agent triaging a same-trigger paraphrase is not railroaded toward
+      // `glossary add` when the pair might really be a contradiction. Reuse the
+      // same head-extraction as findOppositionCandidates for a concrete verb
+      // suggestion; fall back to a generic pointer if a clean head is unavailable.
+      const sameTrigger =
+        a.trigger !== undefined &&
+        b.trigger !== undefined &&
+        normalize(a.trigger) === normalize(b.trigger)
+      let antonymHint = ''
+      if (sameTrigger) {
+        const [headA] = fuseNegatingPrefix(normalize(a.systemResponse))
+        const [headB] = fuseNegatingPrefix(normalize(b.systemResponse))
+        antonymHint =
+          headA !== '' && headB !== '' && headA !== headB
+            ? ` These fire under the SAME trigger, so if they are polar OPPOSITES rather than ` +
+              `synonyms, run \`symspec antonym add ${headA} ${headB}\` instead — the formal tier ` +
+              'will then collapse them to one atom at opposite polarity and can prove the conflict.'
+            : ' These fire under the SAME trigger, so if these responses are opposites rather than ' +
+              'synonyms, register an antonym instead (see `symspec antonym add`).'
+      }
+
       findings.push({
         code: 'FND_SIMILAR_SEMANTIC',
         severity: 'info',
@@ -172,7 +208,7 @@ export async function findSimilarSemantic(
           `${threshold}) under the same system, but atomized to different atoms. If they mean ` +
           `the same thing, run \`symspec glossary add "${a.systemResponse}" "${b.systemResponse}"\` ` +
           'so the formal tier treats them as one atom, then re-run `symspec check` to surface any ' +
-          'conflict the shared atom exposes. This is a suggestion, not a verdict.',
+          `conflict the shared atom exposes.${antonymHint} This is a suggestion, not a verdict.`,
       })
     }
   }

@@ -71,6 +71,60 @@ describe('apply — happy path with intra-batch key references', () => {
   })
 })
 
+describe('apply — delete op accepts `id` as an alias for `ref`', () => {
+  // Build a 2-req doc via a batch, then delete one by `id` and (in a parallel
+  // run) the same by `ref`; both resolve identically (key-or-UUID), so the batch
+  // op agrees with the single-command `delete <id>`.
+  const seed = (): string =>
+    jsonl(
+      {
+        op: 'add',
+        key: 'G1',
+        patternType: 'ubiquitous',
+        systemName: 'svc',
+        systemResponse: 'do a',
+      },
+      {
+        op: 'add',
+        key: 'S3',
+        patternType: 'ubiquitous',
+        systemName: 'svc',
+        systemResponse: 'do b',
+      },
+    )
+
+  it('a delete op using `id` resolves identically to one using `ref`', () => {
+    const built = runApply(emptyDoc(), seed())
+    if (!('next' in built)) throw new Error('seed batch failed')
+    const base = built.next
+
+    const byRef = runApply(base, jsonl({ op: 'delete', ref: 'S3' }))
+    const byId = runApply(base, jsonl({ op: 'delete', id: 'S3' }))
+
+    expect('next' in byRef).toBe(true)
+    expect('next' in byId).toBe(true)
+    if (!('next' in byRef) || !('next' in byId)) return
+
+    // Both removed S3 and left G1 — the resulting requirement sets are equal.
+    const keysRef = Object.values(byRef.next.requirements)
+      .map((r) => r.key)
+      .sort()
+    const keysId = Object.values(byId.next.requirements)
+      .map((r) => r.key)
+      .sort()
+    expect(keysRef).toEqual(['G1'])
+    expect(keysId).toEqual(['G1'])
+    expect(keysRef).toEqual(keysId)
+  })
+
+  it('`ref` still works (backward compat) and an unknown id is ERR_NOT_FOUND', () => {
+    const res = runApply(emptyDoc(), jsonl({ op: 'delete', id: 'NOPE' }))
+    if ('next' in res) throw new Error('expected no next on a failed delete')
+    expect(res.envelope.type).toBe('error')
+    if (res.envelope.type === 'error') expect(res.envelope.code).toBe('ERR_NOT_FOUND')
+  })
+})
+
 describe('apply — atomic by default', () => {
   it('aborts on the first failing op and writes nothing', () => {
     const doc = emptyDoc()

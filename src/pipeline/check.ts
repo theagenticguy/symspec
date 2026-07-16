@@ -64,7 +64,11 @@ import { glossaryIndex, normalize, atomize as realAtomize } from '../formal/atom
 import { getContext } from '../formal/backend.js'
 import { type FndCode, structuralKindToFndCode } from '../formal/codes.js'
 import { findContradictions } from '../formal/contradiction.js'
-import { noPairsCheckedFinding } from '../formal/coverage.js'
+import {
+  excludedFromFormalFinding,
+  noPairsCheckedFinding,
+  relationalUncheckedFinding,
+} from '../formal/coverage.js'
 import type { Embedder } from '../formal/embed.js'
 import {
   type Atomize,
@@ -78,6 +82,8 @@ import { checkCompleteness } from '../formal/incomplete.js'
 import { findNeedsReview } from '../formal/needs-review.js'
 import { extractNumericPredicates } from '../formal/numeric.js'
 import { findNumericContradictions } from '../formal/numeric-contradiction.js'
+import { findQuantityAliasCandidates } from '../formal/quantity-alias.js'
+import { findRelationalUnchecked } from '../formal/relational.js'
 import { findOppositionCandidates, findSimilarSemantic } from '../formal/semantic.js'
 import { findSimilarUnunified } from '../formal/similar.js'
 import { checkSubsumption } from '../formal/subsumption.js'
@@ -249,6 +255,20 @@ export interface CoverageDemotion {
     | 'open-opposition-candidate'
     | 'no-decide-tier-comparison'
     | 'semantic-tier-skipped'
+    // A requirement was dropped from the formal tier by an error-severity
+    // lint/parse finding, so the solver never saw it — `verified` cannot cover
+    // it. Discharged by fixing the blocking finding (rephrase), NOT by waiving.
+    | 'excluded-from-formal'
+    // Same-system+same-trigger opposed numeric bounds whose labels differ only
+    // by verb landed on distinct quantity keys and were never compared — a
+    // possible single-quantity conflict went unexamined. Discharged by a
+    // `glossary add` alias (or waiving if genuinely distinct quantities).
+    | 'quantity-alias-candidate'
+    // A shared trigger carries numeric bounds alongside unmatched atoms — the
+    // shape where aggregate/conservation or cross-quantity relational conflicts
+    // hide, which symspec's pairwise numeric tier does not attempt. An honest
+    // "not attempted" caveat so `verified` never outruns what was compared.
+    | 'relational-reasoning-not-attempted'
   requirementIds: string[]
   /** The exact command (or rewrite guidance) that discharges this demotion. */
   action: string
@@ -275,6 +295,29 @@ export interface CoverageReport {
   openOppositionCandidates: number
   /** Every reason `verified` is false, empty exactly when `verified` is true. */
   demotions: CoverageDemotion[]
+  /**
+   * How many requirements reached the formal (SMT) tier — the count the solver
+   * actually encoded and could reason about. A first-class, one-glance answer to
+   * "how much of the document did `check` formally see?" so a reader never has to
+   * infer coverage from the absence of findings.
+   */
+  encoded: number
+  /**
+   * How many requirements the AC-3-7 gate excluded from the formal tier (an
+   * error-severity lint/parse finding blocked their surface). Nonzero means
+   * `verified` is demoted with an `excluded-from-formal` reason per requirement:
+   * silence over a requirement the solver never saw is not a consistency
+   * certificate. Fix the blocking finding (rephrase) to re-admit it; waiving the
+   * finding suppresses the report line but does NOT restore formal coverage.
+   */
+  excluded: number
+  /**
+   * A plain-English interpretation of `pairsChecked`, so a low count is not
+   * misread as "the tool barely looked". Requirements describing disjoint
+   * transitions across different systems/triggers share no atom group and have
+   * no same-context peer to conflict with — a singleton is not a coverage gap.
+   */
+  pairsCheckedNote: string
 }
 
 /** The complete `check` result the CLI wraps in its envelope (AC-6-2). */
@@ -373,6 +416,32 @@ const PROPOSE_ONLY_FND_CODES: ReadonlySet<string> = new Set<FndCode>([
   'FND_OPPOSITION_CANDIDATE',
   'FND_MISSING_TRACE_LINK',
   'FND_DUPLICATE_CLUSTER',
+  // Demotion-only coverage disclosures: each RAISES the alarm (demotes
+  // `verified`) but is never itself a verdict, and — unlike the similar-pair
+  // reporters above — must NOT suppress `FND_NO_PAIRS_CHECKED`, because each
+  // signals that a comparison did NOT happen (a requirement went unencoded, two
+  // bounds never met, or relational reasoning was skipped). So they are
+  // deliberately excluded from CROSS_REQUIREMENT_FND_CODES.
+  'FND_EXCLUDED_FROM_FORMAL',
+  'FND_QUANTITY_ALIAS_CANDIDATE',
+  'FND_RELATIONAL_UNCHECKED',
+])
+
+/**
+ * The coverage-GAP subset of the propose-only codes: findings that span ≥2
+ * requirement ids yet mean "a comparison did NOT happen" (a requirement was
+ * excluded from the solver, two numeric bounds landed on different keys, or
+ * aggregate/relational reasoning was not attempted). They must NOT suppress the
+ * `FND_NO_PAIRS_CHECKED` disclaimer through the id-count clause — doing so would
+ * let the report both claim nothing was compared (`residualRisk.noPairsChecked`)
+ * and hide the disclaimer that says so. Distinct from the semantic-tier propose
+ * codes (similar/opposition/missing-trace-link), which DO reflect a real
+ * embedding comparison and legitimately suppress the disclaimer.
+ */
+const COVERAGE_GAP_FND_CODES: ReadonlySet<string> = new Set<FndCode>([
+  'FND_EXCLUDED_FROM_FORMAL',
+  'FND_QUANTITY_ALIAS_CANDIDATE',
+  'FND_RELATIONAL_UNCHECKED',
 ])
 
 /**
@@ -520,7 +589,10 @@ export function toEncodable(view: ReqView): EncodableRequirement {
  */
 export function encodeIncluded(doc: Doc): EncodedRequirement[] {
   const requirements = listRequirements(doc)
-  const excluded = excludedIds(gateRequirements(requirements))
+  // Waiver-aware gate (waiver-vs-exclusion soundness): a waived blocking finding
+  // re-admits its requirement to the formal tier, so `--emit-smt2` exports the
+  // SAME included set `check` evaluates. Empty waivers ⇒ identical partition.
+  const excluded = excludedIds(gateRequirements(requirements, doc.waivers ?? []))
   const atomize = makeAtomize(glossaryIndex(doc.glossary), docAntonymIndex(doc))
   return requirements
     .map(asView)
@@ -628,7 +700,12 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
   }
 
   // ---- AC-3-7 gate: partition before symbolization -----------------------
-  const gateResult = gateRequirements(requirements)
+  // Waiver-aware (waiver-vs-exclusion soundness): a committed waiver on a
+  // formal-blocking finding re-admits its requirement to the formal tier, so
+  // gateResult.excluded naturally shrinks and the FND_EXCLUDED_FROM_FORMAL loop
+  // below no longer fires for a requirement the author took responsibility for.
+  // Empty waivers ⇒ the exact pre-feature partition.
+  const gateResult = gateRequirements(requirements, doc.waivers ?? [])
   const excluded = excludedIds(gateResult)
 
   // ---- Free tier + formal tier via the solver orchestrator ---------------
@@ -744,6 +821,49 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       }))
       const numericContradictions = await findNumericContradictions(ctx, numericReqPreds)
 
+      // Issue #2 (reproducer a): the numeric tier keys a quantity off the noun
+      // phrase before the comparator, so ONE physical quantity described with
+      // two different verbs ("complete the infusion within ≤30 min" vs "run the
+      // infusion for ≥60 min") splits into two keys and the joint bound is never
+      // compared. Propose-only: flag same-system+same-trigger opposed bounds
+      // whose labels share an object but differ in verb, suggesting a `glossary
+      // add` alias that routes both to one quantity key (DECIDE tier). Demotes
+      // `verified`; never a verdict. Reuses the predicates already extracted
+      // (with the committed alias map applied), so a pair already unified via
+      // the glossary no longer differs and the candidate stops firing.
+      const predsById = new Map(numericReqPreds.map((p) => [p.id, p.predicates]))
+      const quantityAliasCandidates = findQuantityAliasCandidates(
+        reqs.map((r) => ({
+          id: r.id,
+          systemName: r.systemName,
+          triggerKey: r.trigger !== undefined ? normalize(r.trigger) : '',
+          predicates: predsById.get(r.id) ?? [],
+        })),
+      )
+
+      // Issue #2 (reproducer b + aggregate/relational families): detect the
+      // STRUCTURAL SHAPE where aggregate/conservation or emergent-structural
+      // (odd-cycle 2-coloring, pigeonhole, transitivity) conflicts hide — bounds
+      // or inter-entity relational language under one shared trigger that the
+      // pairwise same-quantity numeric tier does not attempt. Demotion-only: it
+      // declines to certify (DEMOTES `verified`), never asserts a conflict, so
+      // it cannot manufacture a false one. Per-requirement `hasUnmatchedAtom` is
+      // read from the atom-owner roster built above (owners.size === 1).
+      const singletonOwnerIds = new Set<string>()
+      for (const [, owners] of atomOwners) {
+        if (owners.size === 1) for (const id of owners) singletonOwnerIds.add(id)
+      }
+      const relationalUnchecked = findRelationalUnchecked(
+        reqs.map((r) => ({
+          id: r.id,
+          systemName: r.systemName,
+          triggerKey: r.trigger !== undefined ? normalize(r.trigger) : '',
+          responseText: r.systemResponse,
+          hasNumericBound: (predsById.get(r.id) ?? []).length > 0,
+          hasUnmatchedAtom: singletonOwnerIds.has(r.id),
+        })),
+      )
+
       // AC-33-2: opt-in bounded temporal tier. Map each requirement to LTL
       // (Dwyer/FRET) and prove temporal contradictions via bounded LTL→SMT on
       // the shared Z3-WASM context. Runs over ALL requirements (temporal
@@ -830,6 +950,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
         ...semantic,
         ...graph,
         ...opposition,
+        ...quantityAliasCandidates,
       ]) {
         formal.push({
           code: f.code,
@@ -866,6 +987,20 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
         })
       }
 
+      // Issue #2: relational/aggregate blind-spot disclosures. Demotion-only
+      // info findings that name the shared-trigger group whose aggregate or
+      // cross-entity relation the pairwise numeric tier did not attempt.
+      for (const f of relationalUnchecked) {
+        const finding = relationalUncheckedFinding(f.requirementIds)
+        formal.push({
+          code: finding.code,
+          severity: finding.severity,
+          tier: 'formal',
+          requirementIds: [...finding.requirementIds],
+          message: finding.message,
+        })
+      }
+
       return { findings: [], pairsChecked: includedPairs.length }
     },
   })
@@ -885,6 +1020,29 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
   }
 
   findings.push(...formal)
+
+  // Formal-exclusion disclosure: emit one loud FND_EXCLUDED_FROM_FORMAL info
+  // finding per requirement the AC-3-7 gate dropped, so a coverage hole the
+  // solver never saw is visible in findings[] — not merely a count buried in
+  // residualRisk. Each also DEMOTES `verified` below. This is the fix for the
+  // "0 contradictions, verified: true, but a third of the doc was never checked"
+  // false-confidence trap (both feedback sources).
+  for (const ex of gateResult.excluded) {
+    const blockingCodes = ex.findings.map((f) => f.code)
+    const finding = excludedFromFormalFinding(ex.id, ex.reason, blockingCodes)
+    findings.push({
+      code: finding.code,
+      severity: finding.severity,
+      // A gate-phase coverage disclosure, NOT a solver output: the requirement
+      // was excluded at the AC-3-7 gate (structural boundary) before
+      // symbolization, so it is tagged 'structural'. This keeps it distinct from
+      // formal-tier (solver) findings — nothing the SMT layer reasoned about
+      // names an excluded requirement, but this disclosure deliberately does.
+      tier: 'structural',
+      requirementIds: [...finding.requirementIds],
+      message: finding.message,
+    })
+  }
 
   // Wishlist #6: a formal tier that compared zero PAIRS proved nothing via the
   // pairwise (subsumption/redundancy) route. Emit a loud info finding (only when
@@ -913,8 +1071,21 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
   // A cross-requirement finding of ANY kind (verdict OR propose-only proposal)
   // means a comparison DID happen, so the "nothing was compared" disclaimer must
   // not fire alongside it (coverage-disclaimer lesson).
+  //
+  // EXCEPTION (adversarial review): the coverage-GAP codes are the opposite —
+  // each spans ≥2 ids yet signals a comparison did NOT happen (a requirement was
+  // excluded from the solver, two bounds landed on different keys, or aggregate/
+  // relational reasoning was skipped). If one of those suppressed the disclaimer
+  // via the `length >= 2` clause, the report would claim (residualRisk.
+  // noPairsChecked=true) that nothing was compared while omitting the finding
+  // that says so — an internal contradiction. So they never count as "a
+  // comparison happened". The semantic-tier propose codes (opposition / similar /
+  // missing-trace-link) still DO suppress: those come from a real embedding
+  // comparison of the pair.
   const crossRequirementFired = formal.some(
-    (f) => f.requirementIds.length >= 2 || CROSS_REQUIREMENT_FND_CODES.has(f.code),
+    (f) =>
+      (f.requirementIds.length >= 2 && !COVERAGE_GAP_FND_CODES.has(f.code)) ||
+      CROSS_REQUIREMENT_FND_CODES.has(f.code),
   )
   // Wishlist #6 disclaimer: emit the FND_NO_PAIRS_CHECKED info finding when the
   // pairwise tier checked nothing AND no cross-requirement finding (of any kind)
@@ -1017,6 +1188,14 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
   const uncoveredRows = coverageRows.filter((r) => !r.participates)
 
   const openOppositionFindings = kept.filter((f) => f.code === 'FND_OPPOSITION_CANDIDATE')
+  // NOTE: the excluded-from-formal demotion is driven by `gateResult.excluded`
+  // (a structural fact), NOT by the post-waiver `kept` set — see the demotion
+  // loop below. Quantity-alias and relational demotions ARE keyed off `kept` on
+  // purpose: those findings are genuinely triaged away by a waiver (the author
+  // confirmed the quantities differ, or hand-verified the aggregate), which is a
+  // legitimate discharge, unlike suppressing a coverage FACT.
+  const quantityAliasFindings = kept.filter((f) => f.code === 'FND_QUANTITY_ALIAS_CANDIDATE')
+  const relationalFindings = kept.filter((f) => f.code === 'FND_RELATIONAL_UNCHECKED')
 
   const demotions: CoverageDemotion[] = []
   if (requirements.length >= 2) {
@@ -1025,6 +1204,56 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
         reason: 'uncovered-requirement',
         requirementIds: [row.id],
         action: row.suggestion ?? '',
+      })
+    }
+    // Excluded-from-formal: the solver never saw these requirements, so
+    // `verified` cannot cover them. Discharged by fixing the blocking finding
+    // (rephrase) — or by WAIVING that blocking finding, which the waiver-aware
+    // gate honors by re-admitting the requirement (so `gateResult.excluded`
+    // shrinks and this demotion disappears). It is computed from
+    // `gateResult.excluded` (the structural fact), NOT from the post-waiver
+    // finding set: waiving the DISCLOSURE code (`FND_EXCLUDED_FROM_FORMAL`)
+    // hides the report line but must NEVER promote `verified` over a requirement
+    // the solver still never saw — that would be a demotion-only violation
+    // (a suppression is not a decide-tier proof). Adversarial-review hardened.
+    for (const ex of gateResult.excluded) {
+      demotions.push({
+        reason: 'excluded-from-formal',
+        requirementIds: [ex.id],
+        action:
+          `Rephrase ${ex.id} to clear the error-severity lint/parse finding that blocked it from ` +
+          'the formal tier (see the finding message for the blocking code), then re-run `symspec ' +
+          'check`. Alternatively, `symspec waive add <blocking-code> --ref ' +
+          `${ex.id}` +
+          ' --reason "…"` — the waiver-aware gate re-admits the requirement to the solver. Waiving ' +
+          'the FND_EXCLUDED_FROM_FORMAL disclosure itself does NOT restore coverage.',
+      })
+    }
+    // Quantity-alias candidates: a possible single-quantity numeric conflict
+    // was never compared because two verb-phrasings split one quantity.
+    for (const f of quantityAliasFindings) {
+      demotions.push({
+        reason: 'quantity-alias-candidate',
+        requirementIds: [...f.requirementIds],
+        action:
+          'Two same-trigger opposed numeric bounds landed on different quantity keys. If they ' +
+          'constrain one physical quantity, commit the `symspec glossary add` alias from the ' +
+          "finding's message so the numeric tier compares them; otherwise waive it. Then re-run `symspec check`.",
+      })
+    }
+    // Relational/aggregate blind spot: the pairwise same-quantity numeric tier
+    // did not attempt aggregate sums or cross-entity relations under this shared
+    // trigger. An honest "not attempted" caveat, dischargeable by hand-verifying
+    // (then waiving) or restating as a same-quantity bound.
+    for (const f of relationalFindings) {
+      demotions.push({
+        reason: 'relational-reasoning-not-attempted',
+        requirementIds: [...f.requirementIds],
+        action:
+          `Aggregate/cross-quantity reasoning over ${f.requirementIds.join(', ')} was not attempted ` +
+          '(the numeric tier is pairwise same-quantity only). Verify any shared-resource sum or ' +
+          'cross-entity relation by hand and waive this finding, or restate the constraint as a ' +
+          'same-quantity numeric bound the solver can check.',
       })
     }
     for (const f of openOppositionFindings) {
@@ -1058,10 +1287,24 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
     }
   }
   const verified = demotions.length === 0
+  const encodedCount = coverageIncludedIds.length
+  const excludedCount = gateResult.excluded.length
+  const pairsCheckedNote =
+    requirements.length < 2
+      ? 'Fewer than two requirements: nothing to cross-compare.'
+      : `${encodedCount} requirement(s) reached the formal tier` +
+        (excludedCount > 0 ? ` (${excludedCount} excluded by blocking lint/parse findings)` : '') +
+        `; ${report.pairsChecked} candidate pair(s) shared an atom and were compared. A low count ` +
+        'is expected for requirements describing disjoint transitions across different ' +
+        'systems/triggers — a singleton with no same-context peer is not a coverage gap. ' +
+        'Non-participating requirements are listed in `coverage.requirements` with a rewrite hint.'
   const coverageReport: CoverageReport = {
     requirements: coverageRows,
     openOppositionCandidates: openOppositionFindings.length,
     demotions,
+    encoded: encodedCount,
+    excluded: excludedCount,
+    pairsCheckedNote,
   }
 
   // Wishlist #5b: roll the residual-risk axes up from the KEPT (post-waiver)

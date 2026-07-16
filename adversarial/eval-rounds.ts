@@ -522,5 +522,129 @@ export function evalRoundCases(): AdversarialCase[] {
     })
   }
 
+  // ---- 10. GitHub issue #2 reproducer (a): same physical quantity, two verbs.
+  // "complete the infusion within at most 30 minutes" (≤30) vs "run the infusion
+  // for at least 60 minutes" (≥60) — one duration, jointly UNSAT, but the two
+  // verb phrasings key to different quantities so the pairwise LIA tier never
+  // compares them. symspec verdict then: exit 0, verified=true. Now the
+  // quantity-alias candidate demotes verified (abstention) and hands the author
+  // the glossary command; case 11 proves the fix works once committed.
+  {
+    const t = 'issue2-infusion'
+    const trigger = 'an infusion is started'
+    const reqs = [
+      mkReq({
+        id: rid(t, 1),
+        patternType: 'event-driven',
+        systemName: 'infusion pump',
+        trigger,
+        systemResponse: 'complete the infusion within at most 30 minutes',
+      }),
+      mkReq({
+        id: rid(t, 2),
+        patternType: 'event-driven',
+        systemName: 'infusion pump',
+        trigger,
+        systemResponse: 'run the infusion for at least 60 minutes',
+      }),
+    ]
+    cases.push({
+      id: 'eval-issue2-infusion-quantity-alias',
+      kind: 'contradiction',
+      tier: 5,
+      expectedCodes: [],
+      culpritIds: [rid(t, 1), rid(t, 2)],
+      doc: docOf(reqs),
+      note:
+        'Issue #2 (a): same-quantity-two-verbs. No glossary alias committed, so the numeric ' +
+        'tier keys the bounds separately and cannot prove the ≤30 ∧ ≥60 conflict — but the ' +
+        'quantity-alias candidate (+ relational-unchecked) must DEMOTE verified, never certify.',
+    })
+  }
+
+  // ---- 11. Issue #2 (a), the fix committed: with the author-confirmed glossary
+  // alias unifying both verb phrasings onto one quantity, the numeric tier now
+  // sees ≤30min ∧ ≥60min on ONE duration and PROVES FND_NUMERIC_CONTRADICTION.
+  // This is the propose→decide loop closing: the candidate told the author what
+  // to commit, and committing it turned abstention into a hard proof.
+  {
+    const t = 'issue2-infusion-fixed'
+    const trigger = 'an infusion is started'
+    const reqs = [
+      mkReq({
+        id: rid(t, 1),
+        patternType: 'event-driven',
+        systemName: 'infusion pump',
+        trigger,
+        systemResponse: 'complete the infusion within at most 30 minutes',
+      }),
+      mkReq({
+        id: rid(t, 2),
+        patternType: 'event-driven',
+        systemName: 'infusion pump',
+        trigger,
+        systemResponse: 'run the infusion for at least 60 minutes',
+      }),
+    ]
+    cases.push({
+      id: 'eval-issue2-infusion-proven-via-glossary',
+      kind: 'contradiction',
+      tier: 5,
+      expectedCodes: ['FND_NUMERIC_CONTRADICTION'],
+      culpritIds: [rid(t, 1), rid(t, 2)],
+      doc: (() => {
+        const d = docOf(reqs)
+        // The exact alias the quantity-alias candidate suggests for this pair
+        // (`glossary add "infusion within" "run the infusion"`), unifying the two
+        // verb-phrasings onto one quantity key so the LIA tier proves the conflict.
+        d.glossary = [{ canonical: 'run the infusion', aliases: ['infusion within'] }]
+        return d
+      })(),
+      note:
+        'Issue #2 (a) fixed: the committed glossary alias unifies both verb phrasings onto one ' +
+        'quantity, so the numeric tier proves FND_NUMERIC_CONTRADICTION (≤30min ∧ ≥60min UNSAT) ' +
+        'naming both requirements — the propose→decide loop closing on a real z3 proof.',
+    })
+  }
+
+  // ---- 12. GitHub issue #2 reproducer (b): odd-cycle 2-coloring. Five sensors
+  // in a ring, each required to differ from its neighbor's channel, only two
+  // channels — graph-theoretically impossible, but every pair is individually
+  // satisfiable so the pairwise tier reports verified=true. Not soundly
+  // recoverable from NL; the relational-unchecked disclosure must DEMOTE.
+  {
+    const t = 'issue2-ring'
+    const trigger = 'the ring bus initializes'
+    const responses = [
+      'route sensor traffic across two channels',
+      'assign sensor one to a channel that differs from the channel of sensor two',
+      'assign sensor two to a channel that differs from the channel of sensor three',
+      'assign sensor three to a channel that differs from the channel of sensor four',
+      'assign sensor four to a channel that differs from the channel of sensor five',
+      'assign sensor five to a channel that differs from the channel of sensor one',
+    ]
+    const reqs = responses.map((systemResponse, i) =>
+      mkReq({
+        id: rid(t, i + 1),
+        patternType: 'event-driven',
+        systemName: 'controller',
+        trigger,
+        systemResponse,
+      }),
+    )
+    cases.push({
+      id: 'eval-issue2-ring-odd-cycle',
+      kind: 'contradiction',
+      tier: 5,
+      expectedCodes: [],
+      culpritIds: [rid(t, 2), rid(t, 3), rid(t, 4), rid(t, 5), rid(t, 6)],
+      doc: docOf(reqs),
+      note:
+        'Issue #2 (b): odd-cycle 2-coloring, an emergent structural impossibility beyond any ' +
+        'deterministic NL extractor. No FND_CONTRADICTION is provable, but the relational-unchecked ' +
+        'disclosure must DEMOTE verified — the tool declines to certify rather than certify a lie.',
+    })
+  }
+
   return cases
 }

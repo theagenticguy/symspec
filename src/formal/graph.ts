@@ -177,23 +177,34 @@ export async function buildSimilarityGraph(
     for (const t of r.linkedTo) linked.add(pairKey(r.id, t))
   }
 
+  // Trace-gate the noise: "you should link these" only makes sense in a document
+  // that HAS adopted trace links. In a doc with ZERO trace edges anywhere, every
+  // high-cosine pair is unlinked, so proposing a link on each just spams an
+  // author who has not adopted tracing — no signal. So the missing-trace-link
+  // proposals only fire once the doc uses at least one committed trace link
+  // somewhere (some requirement has a non-empty `linkedTo`). Near-duplicate
+  // clusters (step 4) are independent of trace adoption and are NOT gated.
+  const usesAnyTraceLink = reqs.some((r) => r.linkedTo.length > 0)
+
   const findings: GraphFinding[] = []
-  for (const e of kept) {
-    const ra = reqs[e.a]!
-    const rb = reqs[e.b]!
-    const key = pairKey(ra.id, rb.id)
-    if (linked.has(key)) continue
-    const [lo, hi] = ra.id < rb.id ? [ra.id, rb.id] : [rb.id, ra.id]
-    findings.push({
-      code: 'FND_MISSING_TRACE_LINK',
-      severity: 'info',
-      requirementIds: [lo, hi],
-      cosine: e.score,
-      message:
-        `${lo} and ${hi} are semantically similar (cosine ${e.score} ≥ ${threshold}) but have no ` +
-        'committed trace link. If one refines or derives the other, add the edge (e.g. ' +
-        `\`symspec derive ${lo} ${hi}\`). This is a suggestion, not a verdict.`,
-    })
+  if (usesAnyTraceLink) {
+    for (const e of kept) {
+      const ra = reqs[e.a]!
+      const rb = reqs[e.b]!
+      const key = pairKey(ra.id, rb.id)
+      if (linked.has(key)) continue
+      const [lo, hi] = ra.id < rb.id ? [ra.id, rb.id] : [rb.id, ra.id]
+      findings.push({
+        code: 'FND_MISSING_TRACE_LINK',
+        severity: 'info',
+        requirementIds: [lo, hi],
+        cosine: e.score,
+        message:
+          `${lo} and ${hi} are semantically similar (cosine ${e.score} ≥ ${threshold}) but have no ` +
+          'committed trace link. If one refines or derives the other, add the edge (e.g. ' +
+          `\`symspec derive ${lo} ${hi}\`). This is a suggestion, not a verdict.`,
+      })
+    }
   }
 
   // 4. Near-duplicate clusters: connected components over the kept edges with

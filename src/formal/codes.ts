@@ -98,6 +98,27 @@ export const FndCodeSchema = z.enum([
   // the seed/committed antonym tables did not unify. Propose-only, info-tier:
   // it suggests `symspec antonym add`, never a verdict.
   'FND_OPPOSITION_CANDIDATE',
+  // Formal-exclusion disclosure (appended) — a requirement was dropped from the
+  // formal (SMT) tier because an error-severity lint/parse finding blocked its
+  // surface. `verified` cannot cover a requirement the solver never saw, so this
+  // is a first-class LOUD signal (not buried in residualRisk) and DEMOTES
+  // `verified`. Info-tier, one per excluded requirement.
+  'FND_EXCLUDED_FROM_FORMAL',
+  // Quantity-alias proposal (appended) — two same-system+same-trigger numeric
+  // bounds land on DIFFERENT quantity keys that nonetheless share a noun token
+  // (e.g. "complete the infusion within ≤30 min" vs "run the infusion for ≥60
+  // min"). The bounds may constrain ONE physical quantity the verb phrasing
+  // split apart. Propose-only: suggests `symspec glossary add` to unify the
+  // quantities so the LIA tier can compare their bounds. Never a verdict; it
+  // DEMOTES `verified` because a possible numeric conflict went unexamined.
+  'FND_QUANTITY_ALIAS_CANDIDATE',
+  // Relational-reasoning disclosure (appended) — requirements under one shared
+  // trigger carry numeric bounds AND unmatched (singleton) atoms, the shape
+  // where aggregate/conservation or cross-quantity relational conflicts hide.
+  // symspec's numeric tier is pairwise same-quantity only; it does NOT attempt
+  // aggregate sums or cross-quantity arithmetic. Info-tier, DEMOTES `verified`
+  // so "verified" never outruns what the solver actually compared.
+  'FND_RELATIONAL_UNCHECKED',
 ])
 
 export type FndCode = z.infer<typeof FndCodeSchema>
@@ -227,6 +248,21 @@ export const FndCodeMeta = {
     .literal('FND_OPPOSITION_CANDIDATE')
     .describe(
       'info — two same-system responses share an object phrase but differ on the leading verb (e.g. "open the valve" vs "shut the valve"), a LIKELY antonym pair the seed/committed antonym tables have not unified. Propose-only: if the verbs are truly opposite, run `symspec antonym add <verbA> <verbB>` so the formal tier collapses them to one atom at opposite polarity and can prove any conflict. Never a verdict.',
+    ),
+  FND_EXCLUDED_FROM_FORMAL: z
+    .literal('FND_EXCLUDED_FROM_FORMAL')
+    .describe(
+      'info — a requirement was excluded from the formal (SMT) tier because an error-severity lint or parse finding blocked its surface, so no cross-requirement analysis covered it. A LOUD coverage signal that DEMOTES `verified` (silence over an unchecked requirement is not a consistency certificate); discharge by fixing the blocking finding (rephrase) — waiving the finding alone does NOT restore formal coverage.',
+    ),
+  FND_QUANTITY_ALIAS_CANDIDATE: z
+    .literal('FND_QUANTITY_ALIAS_CANDIDATE')
+    .describe(
+      'info — two same-system, same-trigger numeric bounds landed on different quantity keys that share a noun token (e.g. "complete the infusion within ≤30 min" vs "run the infusion for ≥60 min"), so a possible single-quantity conflict was never compared. Propose-only: if the bounds constrain ONE quantity, run the suggested `symspec glossary add` to unify them so the LIA tier can prove any conflict. DEMOTES `verified`; never a verdict.',
+    ),
+  FND_RELATIONAL_UNCHECKED: z
+    .literal('FND_RELATIONAL_UNCHECKED')
+    .describe(
+      "info — requirements under one shared trigger carry numeric bounds alongside unmatched (singleton) atoms — the shape where aggregate/conservation or cross-quantity relational conflicts hide. symspec's numeric tier is pairwise same-quantity only and does NOT attempt aggregate sums or cross-quantity arithmetic, so this reasoning was not attempted. DEMOTES `verified` so it never outruns what was compared; never a verdict.",
     ),
 } satisfies Record<FndCode, z.ZodLiteral<FndCode>>
 

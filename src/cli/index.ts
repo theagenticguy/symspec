@@ -55,11 +55,12 @@ import { parseBatch } from '../parse/batch.js'
 import { type CheckSeverity, encodeIncluded, filterReport, runCheck } from '../pipeline/check.js'
 import { runAdd } from './add.js'
 import { APPLY_USAGE, runApply } from './apply.js'
-import { denseEnvelope } from './dense.js'
+import { denseEnvelope, densifyEnvelope, minifyJson } from './dense.js'
 import { COMMAND_DESCRIPTIONS } from './descriptions.js'
 import { type Envelope, failure, success } from './envelope.js'
 import { parseRelation, requireRequirement, toErrorEnvelope, usageError } from './errors.js'
 import { exitCodeForEnvelope } from './exit.js'
+import { parseFieldPaths, projectFields } from './field.js'
 import {
   antonymAdd,
   antonymList,
@@ -80,12 +81,46 @@ import { waiveAdd, waiveList, waiveRemove } from './waive.js'
 // Global output flags + emit/exit spine
 // ---------------------------------------------------------------------------
 
+/**
+ * How to pass the requirements-document path — appended to every doc-path usage
+ * error so an agent that guessed the wrong argument shape sees the fix inline
+ * (rather than a bare "too many arguments" count with no remedy).
+ */
+const DOC_PATH_HINT =
+  'Pass the document via --file <path> or the SYMSPEC_DOC env var (default ./requirements.json).'
+
+/**
+ * A read-only `list` subcommand (`glossary list` / `waive list` / `antonym
+ * list`) takes NO positional argument — the document path is the `--file`
+ * option. But an agent naturally tries `symspec glossary list ./requirements.json`;
+ * without help, commander throws a generic ambiguous "too many arguments for
+ * 'list'" that never names --file/SYMSPEC_DOC. So each list subcommand accepts a
+ * stray positional and this guard rejects it with a specific, actionable
+ * ERR_USAGE naming the offending argument and the doc-path convention.
+ */
+function rejectListPositional(group: string, stray: readonly string[], flags: GlobalFlags): void {
+  if (stray.length === 0) return
+  emit(
+    usageError(
+      `${group} list takes no positional argument (got "${stray.join(' ')}"); it is read-only and the document path is not positional here. ${DOC_PATH_HINT}`,
+      `symspec ${group} list [--file <path>]`,
+    ),
+    flags,
+  )
+}
+
 /** The output-shaping flags every command inherits (AC-6-2a / AC-6-4). */
 interface GlobalFlags extends OutputFlags {
   /** `--dense` (AC-6-4): minified, default/null-omitting, evidence-elided JSON. */
   readonly dense?: boolean
   /** `--evidence` (AC-6-4): keep the heavy evidence/atom-table fields under `--dense`. */
   readonly evidence?: boolean
+  /**
+   * `--field <paths>`: comma-separated dotted paths projecting the envelope down
+   * to just those values (jq-style), emitted as JSON. An OUTPUT projection only
+   * — never changes data or the exit code. Unresolved paths are omitted.
+   */
+  readonly field?: string
 }
 
 /** Read the merged global flags off the commander program (root-level options). */
@@ -101,6 +136,23 @@ function globalFlags(cmd: Command): GlobalFlags {
  * envelope is ALWAYS written regardless of exit code; flags never change it.
  */
 function emit(env: Envelope, flags: GlobalFlags): never {
+  // `--field` projection (jq-style): reduce the envelope to just the requested
+  // dotted paths and emit that as JSON. Applied AFTER densify resolution so a
+  // `--dense --field data.verified` projects the densified envelope; the
+  // projection operates on the envelope OBJECT (never prose), so it composes
+  // with `--dense` but ignores `--pretty` (a field selection is inherently
+  // machine output). Unresolved paths are omitted; no path matching ⇒ `{}`.
+  if (flags.field !== undefined && flags.field.trim().length > 0) {
+    const base =
+      flags.dense === true
+        ? densifyEnvelope(env, undefined, { keepEvidence: flags.evidence === true })
+        : env
+    const projected = projectFields(base, parseFieldPaths(flags.field))
+    const rendered =
+      flags.dense === true ? minifyJson(projected) : JSON.stringify(projected, null, 2)
+    process.stdout.write(`${rendered}\n`)
+    process.exit(exitCodeForEnvelope(env))
+  }
   const rendered =
     flags.dense === true
       ? denseEnvelope(env, undefined, { keepEvidence: flags.evidence === true })
@@ -160,6 +212,10 @@ program
   .option('--human', 'alias of --pretty')
   .option('--dense', 'minified, default/null-omitting, evidence-elided JSON (AC-6-4)')
   .option('--evidence', 'keep the heavy evidence/atom-table fields under --dense')
+  .option(
+    '--field <paths>',
+    'project the envelope to just these comma-separated dotted paths (e.g. data.verified,data.coverage.demotions); JSON output, unresolved paths omitted',
+  )
   // AC-6-10: never let commander print a usage string + exit as a bare process
   // failure; we translate every commander error into an ERR_USAGE envelope.
   .exitOverride()
@@ -827,9 +883,14 @@ glossaryCmd
 glossaryCmd
   .command('list')
   .description('List the committed synonym groups (read-only).')
+  // Accept-and-reject a stray positional so a mistaken `glossary list <doc>`
+  // yields a specific ERR_USAGE naming --file/SYMSPEC_DOC, not commander's
+  // generic "too many arguments" (the doc path is the --file option here).
+  .argument('[stray...]', 'not accepted — the document path is the --file option')
   .option('--file <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
-  .action(async (opts: { file?: string }, cmd: Command) => {
+  .action(async (stray: string[], opts: { file?: string }, cmd: Command) => {
     const flags = globalFlags(cmd)
+    rejectListPositional('glossary', stray, flags)
     const loaded = await loadResolved(opts.file)
     if ('envelope' in loaded) emit(loaded.envelope, flags)
     emit(glossaryList(loaded.doc).envelope, flags)
@@ -946,9 +1007,12 @@ waiveCmd
 waiveCmd
   .command('list')
   .description('List the committed finding waivers (read-only).')
+  // Accept-and-reject a stray positional (see glossary list above).
+  .argument('[stray...]', 'not accepted — the document path is the --file option')
   .option('--file <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
-  .action(async (opts: { file?: string }, cmd: Command) => {
+  .action(async (stray: string[], opts: { file?: string }, cmd: Command) => {
     const flags = globalFlags(cmd)
+    rejectListPositional('waive', stray, flags)
     const loaded = await loadResolved(opts.file)
     if ('envelope' in loaded) emit(loaded.envelope, flags)
     emit(waiveList(loaded.doc).envelope, flags)
@@ -996,9 +1060,12 @@ antonymCmd
 antonymCmd
   .command('list')
   .description('List the committed antonym pairs (read-only).')
+  // Accept-and-reject a stray positional (see glossary list above).
+  .argument('[stray...]', 'not accepted — the document path is the --file option')
   .option('--file <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
-  .action(async (opts: { file?: string }, cmd: Command) => {
+  .action(async (stray: string[], opts: { file?: string }, cmd: Command) => {
     const flags = globalFlags(cmd)
+    rejectListPositional('antonym', stray, flags)
     const loaded = await loadResolved(opts.file)
     if ('envelope' in loaded) emit(loaded.envelope, flags)
     emit(antonymList(loaded.doc).envelope, flags)
@@ -1248,9 +1315,18 @@ async function main(): Promise<void> {
       process.exit(0)
     }
     const message = e instanceof Error ? e.message : String(e)
+    // An arity error (too many / missing positional) most often means an agent
+    // passed the requirements-document path positionally on a command that takes
+    // it via --file (delete/derive/satisfy/remove-edge/waive/…). Commander's
+    // message already names the expected-vs-got count; append the concrete
+    // remedy so the error is actionable rather than just a count.
+    const isArityError =
+      code === 'commander.excessArguments' || code === 'commander.missingArgument'
+    const extra = isArityError ? [DOC_PATH_HINT] : []
     const env = usageError(
       message.length > 0 ? message : 'invalid command or arguments',
       'symspec <command> [args] — run `symspec manifest` for the full command surface',
+      extra,
     )
     process.stdout.write(`${formatEnvelope(env)}\n`)
     process.exit(exitCodeForEnvelope(env))
