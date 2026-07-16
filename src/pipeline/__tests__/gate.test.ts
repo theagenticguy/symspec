@@ -151,6 +151,58 @@ describe('gate — pipeline-exclusion gate (AC-3-7)', () => {
     expect(encoded.map((e) => e.id)).toEqual(['B'])
   })
 
+  it('a waived blocking finding re-admits the requirement to the formal tier', () => {
+    // "store 42 records" trips GTWR_R6_MISSING_UNITS at error severity, so it is
+    // excluded by default. A committed document-wide waiver for that code makes
+    // the gate re-admit it — its ONLY blocking finding is waived, so it clears.
+    const bare = makeReq({
+      id: 'REQ-BARE',
+      systemName: 'store',
+      systemResponse: 'store 42 records',
+    })
+
+    const withoutWaiver = gateRequirements([bare])
+    expect(excludedIds(withoutWaiver).has('REQ-BARE')).toBe(true)
+
+    const withWaiver = gateRequirements(
+      [bare],
+      [{ code: 'GTWR_R6_MISSING_UNITS', reason: 'count is intentional here' }],
+    )
+    expect(withWaiver.included.map((r) => r.id)).toEqual(['REQ-BARE'])
+    expect(excludedIds(withWaiver).has('REQ-BARE')).toBe(false)
+
+    // Proof it reaches the solver input: the re-admitted requirement's atoms are
+    // now in the encoded set the formal tier would build.
+    const encoded = withWaiver.included.map((r) => encode(r, realAtomize))
+    expect(encoded.map((e) => e.id)).toContain('REQ-BARE')
+  })
+
+  it('a requirement-scoped waiver re-admits only the requirement it names', () => {
+    const bareA = makeReq({ id: 'A', systemName: 'store', systemResponse: 'store 42 records' })
+    const bareB = makeReq({ id: 'B', systemName: 'store', systemResponse: 'store 99 records' })
+
+    // Waiver scoped to A only → A re-admitted, B still excluded.
+    const result = gateRequirements(
+      [bareA, bareB],
+      [{ code: 'GTWR_R6_MISSING_UNITS', requirementId: 'A', reason: 'A is intentional' }],
+    )
+    expect(result.included.map((r) => r.id)).toEqual(['A'])
+    expect(excludedIds(result).has('A')).toBe(false)
+    expect(excludedIds(result).has('B')).toBe(true)
+  })
+
+  it('a waiver for a DIFFERENT code does not re-admit (only the ONLY blocking finding rule)', () => {
+    // The bare number is blocked by R6; a waiver for an unrelated code leaves
+    // the R6 finding blocking, so the requirement stays excluded.
+    const bare = makeReq({
+      id: 'REQ-BARE',
+      systemName: 'store',
+      systemResponse: 'store 42 records',
+    })
+    const result = gateRequirements([bare], [{ code: 'GTWR_R7_VAGUE', reason: 'unrelated code' }])
+    expect(excludedIds(result).has('REQ-BARE')).toBe(true)
+  })
+
   it('is pure/deterministic: gating the same input twice yields an equal partition', () => {
     const reqs = [
       makeReq({ id: 'X', systemResponse: 'provide optimal performance' }),

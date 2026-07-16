@@ -49,14 +49,19 @@ export interface NumericPredicate {
  * A unit dimension: a base unit and the multiplicative factor from each known
  * alias INTO the base. All values normalize to the base before comparison.
  */
-interface Dimension {
+export interface Dimension {
   readonly base: string
   /** alias (lowercased) → factor to multiply a value in that alias to get base. */
   readonly units: Readonly<Record<string, number>>
 }
 
-/** Known unit dimensions. Extend conservatively; unknown units stay unitless. */
-const DIMENSIONS: readonly Dimension[] = [
+/**
+ * Known unit dimensions. Extend conservatively; unknown units stay unitless.
+ * Exported so the manifest can surface the numeric tier's recognized units (an
+ * agent authoring bounds sees exactly which unit spellings normalize to a
+ * shared base before comparison).
+ */
+export const DIMENSIONS: readonly Dimension[] = [
   {
     base: 'ms',
     units: {
@@ -203,6 +208,18 @@ function labelBefore(text: string, comparatorStart: number): string | null {
     'is',
     'are',
   ])
+  // SOUNDNESS: we deliberately do NOT strip trailing comparator words (within/
+  // under/over/above/below/exceeding) from the quantity KEY. There is no
+  // syntactic way to tell a LEAKED compound-bound word ("complete the infusion
+  // WITHIN at most 30 min") from a phrasal-verb noun tail ("the carry OVER at
+  // least 100 mb", "the roll OVER", "the turn OVER") — both are
+  // [word][comparator][number]. Stripping unconditionally collapsed "carry over"
+  // and "carry" onto ONE key and fabricated a false FND_NUMERIC_CONTRADICTION
+  // (the cardinal sin: a false positive in the decide tier). So the key stays
+  // conservative; the SAME-QUANTITY-TWO-VERBS case (reproducer a) is instead
+  // surfaced by the PROPOSE-ONLY quantity-alias detector (quantity-alias.ts),
+  // where lenient object-matching is sound because it can only DEMOTE and
+  // suggest a glossary alias — never assert a contradiction.
   while (words.length > 1 && TRAILING_FILLER.has(words[words.length - 1]!.toLowerCase())) {
     words = words.slice(0, -1)
   }
@@ -247,7 +264,18 @@ export function extractNumericPredicates(
       const after = text.slice(idx + phrase.length)
       const m = new RegExp(String.raw`^\s+(?:[a-zA-Z]+\s+){0,2}${NUMBER}\s*${UNIT}`).exec(after)
       if (m === null) continue
-      claimed.push([idx, idx + phrase.length + m[0].length])
+      const end = idx + phrase.length + m[0].length
+      // Overlap must be checked over the FULL match range, not just the phrase:
+      // in a compound bound like "within at most 30 minutes", the outer phrase
+      // ("within") sits BEFORE the inner one ("at most") — its phrase span does
+      // not overlap, but the filler-word allowance lets it re-claim the SAME
+      // "30 minutes" the inner comparator already claimed. Without this, one
+      // bound yields two predicates on two bogus quantity keys and a real
+      // conflict escapes. COMPARATOR_LEXICON lists the tighter phrases first, so
+      // the inner comparator claims the number and the outer preposition is
+      // correctly dropped here (and stripped from the label as trailing filler).
+      if (overlaps(idx, end)) continue
+      claimed.push([idx, end])
 
       const rawValue = Number(m[1]!.replace(/,/g, ''))
       if (!Number.isFinite(rawValue)) continue

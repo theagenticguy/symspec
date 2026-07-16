@@ -67,3 +67,23 @@ Do not drive a "verified" flag or an exit-code gate off the same "cross-req
 finding fired" predicate that governs a coverage disclaimer — a propose-only
 finding legitimately suppresses the disclaimer (a comparison happened) but must
 not assert verification. Split the predicates.
+
+# Update (2026-07-13): verified is now a WHOLE-DOCUMENT claim (full demotion)
+
+The Run 3 adversarial eval defeated the "any checked pair flips verified"
+predicate 25/30: dense shared guard vocabulary bought one Jaccard pair
+(verified=true) while the conflicting responses sat on singleton atoms nobody
+compared. Hardened predicate — `verified=true` iff ALL hold:
+
+1. PARTICIPATION: every gate-included requirement shares ≥1 atom with a peer
+   (or is named by a decide-tier cross-req finding);
+2. zero untriaged `FND_OPPOSITION_CANDIDATE` (waived = triaged, stops demoting);
+3. a decide-tier cross-requirement comparison happened (the original rule);
+4. the semantic tier ran (an embedder was supplied) when ≥2 requirements exist.
+
+The dual principle now has a name: DEMOTION-ONLY. Propose-only findings and
+coverage stats may demote `verified` (raise the alarm) but never promote it
+(sound the all-clear). `data.coverage.demotions` lists every reason with its
+exact discharging command, so the agent loop converges:
+`check --strict` (exit 3) → apply listed ops (`antonym add`/`glossary add`/
+`waive`/rewrite) → re-check → exit 0.

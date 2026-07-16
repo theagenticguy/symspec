@@ -99,6 +99,41 @@ Failure:
 6. Optionally `symspec certify` for Lean-kernel-checked certificates
    (requires a Lean toolchain; never needed for `check`).
 
+## Recipe — prove a code-vs-intent (or spec-vs-spec) conflict
+
+The most common reason a real conflict hides: the two requirements never
+atomize to the same thing, so the solver never compares them. To make a
+divergence PROVABLE:
+
+1. **State both sides on a shared system + trigger.** Write the intended
+   invariant and the conflicting behavior as two requirements with the SAME
+   `systemName` and the SAME trigger/precondition, so they land in one context
+   group.
+2. **Make the responses collide on one atom.** Reduce both responses to a shared
+   object phrase differing only on the verb head (`run the cycle` vs
+   `skip the cycle`), then commit the relationship the solver needs:
+   - polar OPPOSITES → `symspec antonym add run skip` (collapses to one atom at
+     opposite polarity → `FND_CONTRADICTION`);
+   - same meaning, different words → `symspec glossary add "…" "…"` (collapses
+     to one atom → any bound/polarity conflict surfaces).
+3. **For numeric bounds on one quantity described two ways**
+   (`complete … within at most 30 minutes` vs `run … for at least 60 minutes`):
+   `check` emits `FND_QUANTITY_ALIAS_CANDIDATE` with the exact
+   `symspec glossary add` command to unify the two quantity keys; commit it and
+   the numeric tier proves the `FND_NUMERIC_CONTRADICTION`.
+4. **Re-run `symspec check`.** The alignment is what lets the prover SEE the
+   conflict — committing the link doesn't quiet a warning, it turns an
+   unprovable divergence into a named, evidence-carrying contradiction.
+
+symspec follows a DEMOTION-ONLY rule: fuzzy signals and coverage gaps
+(`FND_QUANTITY_ALIAS_CANDIDATE`, `FND_RELATIONAL_UNCHECKED`,
+`FND_EXCLUDED_FROM_FORMAL`) can only push `data.verified` toward `false` and
+list a discharging command in `data.coverage.demotions`; only the deterministic
+proof tier can produce `verified: true`. A requirement excluded from the formal
+tier by an error-severity lint is re-admitted either by fixing the lint or by
+waiving it (`symspec waive add <code> --ref <id>`) — waiving the
+`FND_EXCLUDED_FROM_FORMAL` disclosure alone never restores coverage.
+
 ## Honest scope — read before trusting a verdict
 
 > The formal (SMT) tier is sound modulo atomization, given the conservative near-exact normalization of the atom table: every reported conflict is a genuine logical conflict of the requirements as atomized, and the atom table attached to each finding shows exactly what the solver compared.
@@ -132,7 +167,7 @@ Failure:
 | `ERR_SOLVER_INCONCLUSIVE` | A whole-run solver-init failure / the solver is unusable — never a per-group `unknown` (that is FND_NEEDS_REVIEW). Suggestion: verify the solver backend and raise the timeout. |
 | `ERR_LEAN_TOOLCHAIN_MISSING` | `certify` was requested but no Lean toolchain is discoverable. Suggestion: run `elan default stable`. This never blocks a prior SMT-tier result. |
 | `ERR_DOC_EXISTS` | `init` refused to overwrite an existing document at the resolved path. Suggestion: pass --force to recreate it, or choose a different path — the existing file is left intact. |
-| `ERR_EMBED_MODEL_MISSING` | The opt-in `--semantic` embedding model is not cached and remote loading is disabled. Suggestion: pre-download the model or set SYMSPEC_EMBED_ALLOW_REMOTE=1 once. Never blocks the SMT/lint tiers. |
+| `ERR_EMBED_MODEL_MISSING` | The embedding model (core to every `check`) is not cached and remote loading is disabled — the run fails closed rather than silently skipping the semantic/opposition tier. Suggestion: run `symspec download-model` once, or set SYMSPEC_EMBED_ALLOW_REMOTE=1 for this run. |
 | `ERR_DUPLICATE_KEY` | A create supplied a --key that another requirement already uses; keys must be unique. Suggestion: choose a different key, or omit --key to create the requirement without one. |
 
 ## Lint rule codes (`GTWR_*`)
@@ -195,3 +230,6 @@ Failure:
 | `FND_TEMPORAL_CONTRADICTION` | error — a set of requirements is temporally inconsistent under bounded LTL→SMT (no trace of length ≤ k satisfies them jointly); sound-for-UNSAT, evidence carries {bound,complete:false}. Opt-in via `check --temporal`. |
 | `FND_NO_PAIRS_CHECKED` | info — the formal tier evaluated 0 candidate pairs (no two requirements shared an atom), so no cross-requirement conflict/subsumption analysis actually ran. Silence here is not a consistency certificate; consider glossary entries to align vocabulary so related requirements share atoms. |
 | `FND_OPPOSITION_CANDIDATE` | info — two same-system responses share an object phrase but differ on the leading verb (e.g. "open the valve" vs "shut the valve"), a LIKELY antonym pair the seed/committed antonym tables have not unified. Propose-only: if the verbs are truly opposite, run `symspec antonym add <verbA> <verbB>` so the formal tier collapses them to one atom at opposite polarity and can prove any conflict. Never a verdict. |
+| `FND_EXCLUDED_FROM_FORMAL` | info — a requirement was excluded from the formal (SMT) tier because an error-severity lint or parse finding blocked its surface, so no cross-requirement analysis covered it. A LOUD coverage signal that DEMOTES `verified` (silence over an unchecked requirement is not a consistency certificate); discharge by fixing the blocking finding (rephrase) — waiving the finding alone does NOT restore formal coverage. |
+| `FND_QUANTITY_ALIAS_CANDIDATE` | info — two same-system, same-trigger numeric bounds landed on different quantity keys that share a noun token (e.g. "complete the infusion within ≤30 min" vs "run the infusion for ≥60 min"), so a possible single-quantity conflict was never compared. Propose-only: if the bounds constrain ONE quantity, run the suggested `symspec glossary add` to unify them so the LIA tier can prove any conflict. DEMOTES `verified`; never a verdict. |
+| `FND_RELATIONAL_UNCHECKED` | info — requirements under one shared trigger carry numeric bounds alongside unmatched (singleton) atoms — the shape where aggregate/conservation or cross-quantity relational conflicts hide. symspec's numeric tier is pairwise same-quantity only and does NOT attempt aggregate sums or cross-quantity arithmetic, so this reasoning was not attempted. DEMOTES `verified` so it never outruns what was compared; never a verdict. |

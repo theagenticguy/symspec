@@ -9,12 +9,18 @@
  *
  * Scope and conservatism (research-smt.md §4.2, §4.3):
  *   - This is a small, HIGH-PRECISION, curated resource — NOT a thesaurus and
- *     NOT stemming/lemmatization. It ships with exactly the 15 seed pairs the
- *     spec pins and is meant to grow only by an explicit edit to this seed set
- *     (AC-4-12), never by fuzzy expansion at runtime.
- *   - Unification requires the leading verb to match AND the object remainder to
- *     be identical after normalization (see atomize.ts): "grant access" unifies
- *     with "revoke access" but not with "revoke permission".
+ *     NOT runtime fuzzy expansion. It ships the 15 seed pairs the spec pinned
+ *     plus the adversarial-eval expansion (each pair below is an eval-confirmed
+ *     real-world blind spot), and grows only by an explicit edit to this seed
+ *     set (AC-4-12) or the doc-committed `antonym add` path. A bulk dictionary
+ *     import was evaluated (2026-07) and rejected: WordNet's 477 verb-antonym
+ *     pairs cover only 13 of the 32 pairs this table needs, contain odd
+ *     polarity cycles that break the signed union-find, and merge classes this
+ *     table deliberately keeps apart — curation IS the architecture here.
+ *   - Unification requires the (de-inflected) leading verb to match AND the
+ *     object remainder to be identical after normalization + the antonym-hit
+ *     preposition drop (see atomize.ts): "grant access" unifies with
+ *     "revoke access" but not with "revoke permission".
  *
  * Shared-member semantics (why a signed union-find, not a flat pair map):
  *   Some seed pairs share a member — `accept↔reject`, `approve↔reject`, and
@@ -30,12 +36,33 @@
  */
 
 /**
- * The 15 seed antonym pairs (AC-4-2a). Each `[a, b]` asserts that `a` and `b`
- * are polar opposites — a response led by `a` and one led by `b` (with the same
- * object remainder) resolve to the same atom with opposite polarity.
+ * The seed antonym pairs (AC-4-2a; original 15 from the spec plus the
+ * adversarial-eval expansion). Each `[a, b]` asserts that `a` and `b` are polar
+ * opposites — a response led by `a` and one led by `b` (with the same object
+ * remainder) resolve to the same atom with opposite polarity. Multiword heads
+ * are underscore-joined in normalized form (`roll_back`); the atomizer probes
+ * two-token heads before one.
  *
  * Append-only in spirit: the seed set is a documented contract surface. Grow it
- * by editing this array, do not silently reorder or drop pairs.
+ * by editing this array, do not silently reorder or drop pairs. The resolved
+ * class → canonical map is snapshot-tested so any edit that silently merges or
+ * re-canonicalizes classes fails loudly.
+ *
+ * Deliberate class merges (adversarial-eval driven, each a judgment call):
+ *   - grant/allow/permit/authorize collapse into ONE positive authorization
+ *     class against revoke/deny/forbid (via grant↔deny, permit↔deny,
+ *     authorize↔deny): in the EARS response idiom these are interchangeable
+ *     authorization verbs over an identical object remainder, and the
+ *     remainder-must-match rule bounds the over-unification risk. The eval's
+ *     grant-vs-deny blind spot (grant/revoke and allow/deny were disjoint
+ *     classes) is closed by exactly this merge.
+ *   - publish/extend transitively share a class via retract/withdraw
+ *     (publish↔retract, extend↔retract, insert↔withdraw): acceptable under
+ *     remainder-match ("publish the report" vs "extend the report" colliding
+ *     requires identical remainders AND opposite intent — no observed case);
+ *     kept because both pairs are eval-confirmed real-world conflicts.
+ *   - The accept/approve/reject/decline class is deliberately NOT merged into
+ *     the authorization class (proposal-acceptance ≠ access-authorization).
  */
 export const SEED_ANTONYM_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['accept', 'reject'],
@@ -53,6 +80,24 @@ export const SEED_ANTONYM_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['start', 'stop'],
   ['show', 'hide'],
   ['accept', 'decline'],
+  // --- adversarial-eval expansion (Run 1–3 confirmed blind spots) ---
+  ['grant', 'deny'],
+  ['permit', 'deny'],
+  ['authorize', 'deny'],
+  ['commit', 'roll_back'],
+  ['commit', 'rollback'],
+  ['seal', 'unseal'],
+  ['seal', 'expose'],
+  ['expose', 'conceal'],
+  ['quarantine', 'release'],
+  ['publish', 'retract'],
+  ['suspend', 'resume'],
+  ['engage', 'disengage'],
+  ['raise', 'lower'],
+  ['insert', 'withdraw'],
+  ['flood', 'drain'],
+  ['energize', 'de_energize'],
+  ['extend', 'retract'],
 ]
 
 /** A resolved antonym-class membership for one verb. */

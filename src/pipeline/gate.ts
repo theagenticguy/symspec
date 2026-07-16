@@ -32,7 +32,7 @@
  */
 
 import { renderSentence } from '../core/render.js'
-import type { Requirement } from '../core/schema.js'
+import type { Requirement, Waiver } from '../core/schema.js'
 import { checkGtWRules, type GtWRFinding } from '../lint/gtwr.js'
 
 /** Why a requirement was excluded from symbolization. */
@@ -69,14 +69,37 @@ export interface GateInput {
 }
 
 /**
+ * True when a committed waiver `w` suppresses the blocking finding `f` on
+ * requirement `requirementId`: the codes match and the waiver is either
+ * document-wide (no `requirementId`) or scoped to this requirement. Mirrors
+ * `isWaived` in `src/pipeline/check.ts` — kept in sync deliberately (the check
+ * pipeline drops the SAME finding from `findings[]`, so a waived blocking
+ * finding must both disappear from the report AND stop excluding the
+ * requirement here, or the two would disagree).
+ */
+function isWaivedBlocking(f: GtWRFinding, requirementId: string, w: Waiver): boolean {
+  if (f.code !== w.code) return false
+  if (w.requirementId === undefined) return true
+  return w.requirementId === requirementId
+}
+
+/**
  * Run the GtWR lint (AC-3-2) over one requirement's rendered sentence and
  * report only the `error`-severity findings — the ones that are blocking
  * under AC-3-3 (R26/R32/R35/R16's legitimate exceptions land at `warn`/`info`
  * and must never exclude a statement here).
+ *
+ * A committed waiver that matches a blocking finding DROPS it from the returned
+ * set: the author has taken responsibility for that finding, so it must no
+ * longer exclude the requirement from the formal tier (waiver-vs-exclusion
+ * soundness — see {@link gate}). A requirement whose ONLY blocking findings are
+ * all waived therefore returns `[]` and is re-admitted to symbolization.
  */
-function blockingFindings(requirement: Requirement): GtWRFinding[] {
+function blockingFindings(requirement: Requirement, waivers: readonly Waiver[]): GtWRFinding[] {
   const sentence = requirement.sentence || renderSentence(requirement)
-  return checkGtWRules(requirement, sentence).filter((f) => f.severity === 'error')
+  return checkGtWRules(requirement, sentence)
+    .filter((f) => f.severity === 'error')
+    .filter((f) => !waivers.some((w) => isWaivedBlocking(f, requirement.id, w)))
 }
 
 /**
@@ -93,8 +116,22 @@ function blockingFindings(requirement: Requirement): GtWRFinding[] {
  *      `'blocking-surface-check'`, carrying those findings as evidence.
  *   3. A requirement with zero blocking findings (including one with only
  *      `warn`/`info` findings, per AC-3-3) is included.
+ *
+ * ## Waiver-vs-exclusion soundness (`waivers`)
+ *
+ * An optional `waivers` list makes the gate waiver-aware: a blocking finding
+ * suppressed by a committed waiver no longer excludes its requirement, so a
+ * requirement whose ONLY blocking finding is waived is RE-ADMITTED to the formal
+ * tier (its atoms rejoin the SMT conjunction and cross-requirement analysis).
+ * This closes a silent unsoundness: previously `check` waived a formal-blocking
+ * finding out of `findings[]` (and the exit gate) but the gate still excluded
+ * the requirement, so the author saw the finding "resolved" yet the solver
+ * silently never reasoned about that requirement. Re-admission is defensible
+ * because a waiver is a reviewed, reasoned decision — the author took
+ * responsibility for the finding. Waivers default to empty, so a caller that
+ * passes none gets the exact pre-feature partition.
  */
-export function gate(inputs: readonly GateInput[]): GateResult {
+export function gate(inputs: readonly GateInput[], waivers: readonly Waiver[] = []): GateResult {
   const included: Requirement[] = []
   const excluded: Exclusion[] = []
 
@@ -104,7 +141,7 @@ export function gate(inputs: readonly GateInput[]): GateResult {
       continue
     }
 
-    const findings = blockingFindings(requirement)
+    const findings = blockingFindings(requirement, waivers)
     if (findings.length > 0) {
       excluded.push({ id: requirement.id, reason: 'blocking-surface-check', findings })
       continue
@@ -120,10 +157,18 @@ export function gate(inputs: readonly GateInput[]): GateResult {
  * Convenience wrapper over {@link gate} for the common case: a plain list of
  * requirements with no parse-failure tracking yet (no caller currently wires
  * `ParseResult` through this gate). Every requirement is gated purely on the
- * AC-3-2 surface check.
+ * AC-3-2 surface check. Pass `waivers` to make the gate waiver-aware — a waived
+ * blocking finding then re-admits its requirement to the formal tier (see
+ * {@link gate}).
  */
-export function gateRequirements(requirements: readonly Requirement[]): GateResult {
-  return gate(requirements.map((requirement) => ({ requirement })))
+export function gateRequirements(
+  requirements: readonly Requirement[],
+  waivers: readonly Waiver[] = [],
+): GateResult {
+  return gate(
+    requirements.map((requirement) => ({ requirement })),
+    waivers,
+  )
 }
 
 /** The stable set of ids excluded by a {@link GateResult}, for quick membership checks downstream. */

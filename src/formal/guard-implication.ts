@@ -58,6 +58,7 @@ import {
   implies,
   not,
 } from './encode.js'
+import { deInflectHead } from './lemma.js'
 
 /**
  * One extracted guard-implication bridge: the requirement it came from and the
@@ -72,76 +73,126 @@ export interface GuardImplication {
 }
 
 /**
- * The conservative state-establishment verb lexicon. A response led by one of
- * these (optionally followed by an article) establishes the remaining phrase as
- * a state. `mark`/`set`/`flag`/`consider`/`treat` also support the
- * "mark <thing> as <state>" / "set <thing> to <state>" object form, handled
+ * The conservative state-establishment verb lexicon, in BASE form — heads are
+ * de-inflected ({@link deInflectHead}: "marks"→"mark", "keeps"→"keep",
+ * "kept"→"keep") before the lookup, so inflected phrasings need no hand-listed
+ * variants. A response led by one of these (optionally followed by an article)
+ * establishes the remaining phrase as a state. The verbs in
+ * {@link OBJECT_FORM_VERBS} also support the "mark <thing> as <state>" /
+ * "set <thing> to <state>" / "escalate <thing> to <state>" object form, handled
  * separately. High-precision by design — grow only by explicit edit.
  */
 const ESTABLISH_VERBS: ReadonlySet<string> = new Set([
   'be',
   'become',
-  'becomes',
   'been',
   'is',
   'are',
   'remain',
-  'remains',
   'stay',
-  'stays',
   'mark',
-  'marks',
   'set',
-  'sets',
   'flag',
-  'flags',
   'consider',
-  'considers',
   'treat',
-  'treats',
   'enter',
-  'enters',
+  // Adversarial-eval expansion: bridge verbs the Run 2/3 specs used.
+  'classify',
+  'label',
+  'record',
+  'register',
+  'designate',
+  'escalate',
+  'promote',
+  'transition',
+  'place',
+  // "keeps the reactor online" / "hold the coolant valve sealed": the remainder
+  // after the verb IS the state ("the reactor online" ≡ guard "the reactor is
+  // online" after copula normalization). The inert-implication guard keeps
+  // misparses harmless — an unmatched state never enters the conjunction.
+  'keep',
+  'hold',
+])
+
+/**
+ * The establish verbs that take the object form
+ * "<verb> <thing> as|to|into|in <state>" — the connector introduces the state.
+ */
+const OBJECT_FORM_VERBS: ReadonlySet<string> = new Set([
+  'mark',
+  'set',
+  'flag',
+  'consider',
+  'treat',
+  'classify',
+  'label',
+  'record',
+  'register',
+  'designate',
+  'escalate',
+  'promote',
+  'transition',
+  'place',
+  'keep',
+  'hold',
 ])
 
 /**
  * Extract the established STATE phrase from a response, or `null` when the
  * response is not a recognized state-establishment. Deterministic and
- * conservative:
- *   - "mark/set/flag/consider/treat <thing> as|to <state>" → `<state>`;
+ * conservative; the head verb is de-inflected before the lexicon lookup:
+ *   - "<object-form verb> <thing> as|to|into|in <state>" → `<state>`
+ *     ("mark the session as verified", "escalate the principal to privileged",
+ *     "place the record in quarantine");
  *   - "<verb> <state>" where `<verb>` is an establishment verb → `<state>`
- *     (a leading article after the verb is dropped by the atomizer's normalize).
- * Returns the raw substring; the caller atomizes it (so glossary/normalize
- * canonicalization applies uniformly).
+ *     ("keeps the reactor online" → "the reactor online"; a leading article and
+ *     any copula are dropped by the atomizer's guard normalization, so the
+ *     state matches a guard phrased "while the reactor is online").
+ * Returns the raw substring; the caller atomizes it (so glossary/normalize/
+ * copula canonicalization applies uniformly).
  */
 export function establishedState(response: string): string | null {
-  const trimmed = response.trim()
-  if (trimmed === '') return null
-  const words = trimmed.split(/\s+/)
-  const head = words[0]?.toLowerCase() ?? ''
-  if (!ESTABLISH_VERBS.has(head)) return null
+  const candidates = establishedStateCandidates(response)
+  // The single-reading view is the BARE state (last candidate) — the object
+  // form's connector-introduced phrase ("verified" in "mark the session as
+  // verified"), matching the original contract of this function.
+  const last = candidates[candidates.length - 1]
+  return last ?? null
+}
 
-  // Object form: "mark the session as verified" / "set the flag to active".
-  // Take the phrase after the LAST " as "/" to " connector.
-  const asMatch = /\b(?:as|to)\s+(.+)$/i.exec(trimmed)
-  if (
-    asMatch?.[1] !== undefined &&
-    (head === 'mark' ||
-      head === 'marks' ||
-      head === 'set' ||
-      head === 'sets' ||
-      head === 'flag' ||
-      head === 'flags' ||
-      head === 'consider' ||
-      head === 'considers' ||
-      head === 'treat' ||
-      head === 'treats')
-  ) {
-    return asMatch[1].trim()
+/**
+ * All candidate readings of the established state, most specific first. The
+ * object form is genuinely ambiguous about how the matching guard is phrased:
+ * "mark the session as verified" establishes a state a guard may name either as
+ * "the session (is) verified" (subject included) or just "verified" — so BOTH
+ * candidates are offered and {@link extractGuardImplications} bridges on
+ * whichever one an actual guard uses. Sound: each candidate is an honest
+ * re-encoding of the same doc assertion, and the inert-implication filter
+ * drops any candidate no guard names.
+ */
+export function establishedStateCandidates(response: string): string[] {
+  const trimmed = response.trim()
+  if (trimmed === '') return []
+  const words = trimmed.split(/\s+/)
+  const head = deInflectHead(words[0]?.toLowerCase() ?? '')
+  if (!ESTABLISH_VERBS.has(head)) return []
+
+  // Object form: "mark the session as verified" / "set the flag to active" /
+  // "escalate the principal to privileged" / "place the record in quarantine".
+  // The state phrase follows the LAST " as "/" to "/" into "/" in " connector;
+  // the object phrase sits between the verb and the connector.
+  const asMatch = /^(.+?)\s+\b(?:as|to|into|in)\s+(.+)$/i.exec(words.slice(1).join(' '))
+  if (asMatch?.[2] !== undefined && OBJECT_FORM_VERBS.has(head)) {
+    const object = (asMatch[1] as string).trim()
+    const state = asMatch[2].trim()
+    const candidates = [state]
+    if (object !== '') candidates.unshift(`${object} ${state}`)
+    return candidates
   }
 
   // Bare form: drop the leading establishment verb; the rest is the state.
   const rest = words.slice(1).join(' ').trim()
-  return rest === '' ? null : rest
+  return rest === '' ? [] : [rest]
 }
 
 /**
@@ -191,29 +242,34 @@ export function extractGuardImplications(
     }
     if (contextLits.length === 0) continue
 
-    const stateText = establishedState(r.systemResponse)
-    if (stateText === null) continue
+    const stateTexts = establishedStateCandidates(r.systemResponse)
+    if (stateTexts.length === 0) continue
 
-    // Re-atomize the established state as a GUARD (pre) atom, threading the
+    // Re-atomize each candidate state as a GUARD (pre) atom, threading the
     // response's negation so "shall not be verified" establishes ¬verified. The
     // response's own negation is what `encode` would pass as the resp negation;
     // recompute it here via the resp atomization so glossary/antonym rewrites of
-    // the response verb compose correctly.
+    // the response verb compose correctly. The FIRST candidate that lands on a
+    // guard some other requirement uses wins (most specific — object+state —
+    // first); non-landing candidates are inert and dropped.
     const respNegated = atomize('resp', r.systemResponse, r.systemName, r.negated ?? false).negated
-    const stateAtomLit = atomize('pre', stateText, r.systemName, respNegated)
+    for (const stateText of stateTexts) {
+      const stateAtomLit = atomize('pre', stateText, r.systemName, respNegated)
 
-    // Inert-implication guard: the consequent must be a guard some OTHER
-    // requirement keys on. A rule is never its own bridge.
-    if (!guardAtoms.has(stateAtomLit.atom)) continue
+      // Inert-implication guard: the consequent must be a guard some OTHER
+      // requirement keys on. A rule is never its own bridge.
+      if (!guardAtoms.has(stateAtomLit.atom)) continue
 
-    const stateLiteral: Formula = stateAtomLit.negated
-      ? not(atom(stateAtomLit.atom))
-      : atom(stateAtomLit.atom)
+      const stateLiteral: Formula = stateAtomLit.negated
+        ? not(atom(stateAtomLit.atom))
+        : atom(stateAtomLit.atom)
 
-    out.push({
-      bridgeId: r.id,
-      formula: implies(atom(r.id), implies(and(contextLits), stateLiteral)),
-    })
+      out.push({
+        bridgeId: r.id,
+        formula: implies(atom(r.id), implies(and(contextLits), stateLiteral)),
+      })
+      break
+    }
   }
   return out
 }

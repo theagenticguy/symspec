@@ -3,6 +3,7 @@ import pkg from '../../../package.json' with { type: 'json' }
 import { ErrCodeMeta, ErrCodeSchema } from '../../core/codes.js'
 import { f } from '../../core/schema.js'
 import { FndCodeMeta, FndCodeSchema } from '../../formal/codes.js'
+import { DIMENSIONS } from '../../formal/numeric.js'
 import { DEFAULT_SEMANTIC_THRESHOLD } from '../../formal/semantic.js'
 import { GtwrCodeMeta, GtwrCodeSchema } from '../../lint/codes.js'
 import { buildManifest, ManifestSchema } from '../manifest.js'
@@ -133,6 +134,33 @@ describe('manifest (AC-6-1)', () => {
     expect(conventions.docPath).toContain('Positional [file]')
     expect(conventions.docPath).toContain('--file <path> option')
     expect(conventions.docPath).toContain('--doc <path> option (apply)')
+  })
+
+  it('surfaces the global --field projection flag in globalOptions', () => {
+    // Item 3: an agent discovering the manifest sees --field (jq-style output
+    // projection) without fail-then-learn; its description is single-sourced.
+    const opts = buildManifest().globalOptions as {
+      properties: Record<string, { description?: string }>
+    }
+    expect(opts.properties.field?.description).toContain('`--field <paths>`')
+    expect(opts.properties.field?.description).toContain('jq-style')
+  })
+
+  it('exposes the numeric tier units derived from the DIMENSIONS table', () => {
+    // Item 4: the unit whitelist is now in the manifest (was a separate, hidden
+    // list). `units.numeric` derives from formal/numeric.ts DIMENSIONS, so an
+    // agent authoring bounds sees which spellings normalize to a shared base.
+    const units = buildManifest().units
+    expect(units.numeric.length).toBe(DIMENSIONS.length)
+    expect(units.numeric.length).toBeGreaterThan(0)
+    const bases = units.numeric.map((d) => d.base)
+    expect(bases).toContain('ms')
+    expect(bases).toContain('B')
+    const time = units.numeric.find((d) => d.base === 'ms')
+    expect(time?.units.seconds).toBe(1000)
+    expect(time?.units.ms).toBe(1)
+    // Byte-for-byte the exported table (single-source, not a hand copy).
+    expect(units.numeric).toEqual(DIMENSIONS.map((d) => ({ base: d.base, units: { ...d.units } })))
   })
 
   it('the error-code table derives from the exported ErrCodeSchema enum', () => {

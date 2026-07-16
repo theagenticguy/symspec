@@ -218,6 +218,9 @@ describe('FND_* reachability (AC-6-3 — every documented code is reachable)', (
       'FND_TEMPORAL_CONTRADICTION',
       'FND_NO_PAIRS_CHECKED',
       'FND_OPPOSITION_CANDIDATE',
+      'FND_EXCLUDED_FROM_FORMAL',
+      'FND_QUANTITY_ALIAS_CANDIDATE',
+      'FND_RELATIONAL_UNCHECKED',
     ] as const) {
       expect(sources.includes(`code: '${code}'`), `no emit literal for ${code}`).toBe(true)
       reached.add(code)

@@ -53,6 +53,36 @@ describe('add --dry-run (#10)', () => {
       expect(errors).toEqual([])
     }
   })
+
+  it('an error-severity finding attaches a formal-exclusion coverage note (dry-run parity)', async () => {
+    // A bare number trips GTWR_R6 at error severity → the AC-3-7 gate will
+    // EXCLUDE this requirement from the formal tier at `check` time. The dry-run
+    // must warn the author of that coverage consequence up front.
+    const res = await runAdd(emptyDoc(), {
+      dryRun: true,
+      slots: ubiquitousSlots({ systemResponse: 'store 42 records' }),
+    })
+    expect('next' in res).toBe(false)
+    if (res.envelope.type !== 'error' && 'dryRun' in res.envelope.data) {
+      const note = res.envelope.data.formalExclusion
+      expect(note).toBeDefined()
+      if (!note) return
+      expect(note.excludedFromFormal).toBe(true)
+      expect(note.blockingCodes).toContain('GTWR_R6_MISSING_UNITS')
+      expect(note.message).toMatch(/formal \(SMT\) tier/)
+    }
+    expect(() => SuccessEnvelopeSchema.parse(res.envelope)).not.toThrow()
+  })
+
+  it('a clean requirement omits the formal-exclusion note entirely', async () => {
+    // No error-severity finding ⇒ the requirement stays in the formal tier, so
+    // the note key is OMITTED (not set to undefined), per exactOptionalPropertyTypes.
+    const res = await runAdd(emptyDoc(), { dryRun: true, slots: ubiquitousSlots() })
+    if (res.envelope.type !== 'error' && 'dryRun' in res.envelope.data) {
+      expect(res.envelope.data.formalExclusion).toBeUndefined()
+      expect('formalExclusion' in res.envelope.data).toBe(false)
+    }
+  })
 })
 
 describe('add --key stable-key minting + uniqueness (#2)', () => {

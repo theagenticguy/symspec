@@ -87,6 +87,70 @@ describe('findSimilarSemantic (AC-9-5)', () => {
     expect(findings).toEqual([])
   })
 
+  it('also suggests `antonym add` when a high-cosine pair shares the SAME trigger', async () => {
+    // Same system AND same trigger + high cosine ⇒ the pair might be polar
+    // OPPOSITES, not synonyms (antonyms embed close). The message must point at
+    // BOTH glossary (synonym path) and antonym (opposition path), with concrete
+    // verb heads, and stay a suggestion — never a verdict.
+    const embedder = fakeEmbedder({
+      'open the valve': [1, 0.02],
+      'shut the valve': [1, 0.05],
+    })
+    const findings = await findSimilarSemantic(
+      [
+        {
+          id: 'A',
+          systemName: 'ctrl',
+          systemResponse: 'open the valve',
+          trigger: 'pressure rises',
+        },
+        {
+          id: 'B',
+          systemName: 'ctrl',
+          systemResponse: 'shut the valve',
+          trigger: 'pressure rises',
+        },
+      ],
+      embedder,
+      { threshold: DEFAULT_SEMANTIC_THRESHOLD },
+    )
+    expect(findings).toHaveLength(1)
+    const msg = findings[0]!.message
+    expect(msg).toContain('symspec glossary add')
+    expect(msg).toContain('symspec antonym add open shut')
+    expect(msg).toContain('SAME trigger')
+    expect(msg).toContain('not a verdict')
+  })
+
+  it('does NOT add the antonym hint when triggers differ (only the glossary path)', async () => {
+    const embedder = fakeEmbedder({
+      'open the valve': [1, 0.02],
+      'shut the valve': [1, 0.05],
+    })
+    const findings = await findSimilarSemantic(
+      [
+        {
+          id: 'A',
+          systemName: 'ctrl',
+          systemResponse: 'open the valve',
+          trigger: 'pressure rises',
+        },
+        {
+          id: 'B',
+          systemName: 'ctrl',
+          systemResponse: 'shut the valve',
+          trigger: 'pressure drops',
+        },
+      ],
+      embedder,
+      { threshold: DEFAULT_SEMANTIC_THRESHOLD },
+    )
+    expect(findings).toHaveLength(1)
+    const msg = findings[0]!.message
+    expect(msg).toContain('symspec glossary add')
+    expect(msg).not.toContain('symspec antonym add')
+  })
+
   it('skips a pair already merged by the glossary index', async () => {
     const embedder = fakeEmbedder({
       'issue a session token': [1, 0.02],
@@ -214,5 +278,60 @@ describe('findOppositionCandidates (#6)', () => {
       embedder,
     )
     expect(findings).toHaveLength(0)
+  })
+
+  it('proposes de-/un-/dis- prefix pairs EVEN below the cosine floor (morphological opposition)', async () => {
+    // "mount the volume" vs "unmount the volume": opposition by negating prefix
+    // (NOT in the seed table, so atomize does not already unify them) —
+    // deterministic structure, so the orthogonal (below-floor) embeddings must
+    // not suppress the proposal.
+    const embedder = fakeEmbedder({
+      'mount the volume': [1, 0],
+      'unmount the volume': [0, 1],
+      'pressurize the tank': [1, 0],
+      'de-pressurize the tank': [0, 1],
+    })
+    const mounted = await findOppositionCandidates(
+      [req('A', 'mount the volume'), req('B', 'unmount the volume')],
+      embedder,
+    )
+    expect(mounted).toHaveLength(1)
+    expect(mounted[0]!.verbs.sort()).toEqual(['mount', 'unmount'])
+    expect(mounted[0]!.message).toContain('symspec antonym add')
+    const pressurized = await findOppositionCandidates(
+      [req('C', 'pressurize the tank'), req('D', 'de-pressurize the tank')],
+      embedder,
+    )
+    expect(pressurized).toHaveLength(1)
+  })
+
+  it('skips pairs the expanded seed table already unifies (seal/unseal, suspend/resume)', async () => {
+    // These are now seed antonyms — atomize collapses them to one atom at
+    // opposite polarity, a proven-or-provable conflict, NOT a candidate.
+    const embedder = fakeEmbedder({
+      'seal the record': [1, 0.1],
+      'unseal the record': [1, 0.12],
+    })
+    const findings = await findOppositionCandidates(
+      [req('A', 'seal the record'), req('B', 'unseal the record')],
+      embedder,
+    )
+    expect(findings).toHaveLength(0)
+  })
+
+  it('de-inflects heads so 3sg phrasing still matches the structural shape', async () => {
+    // "escalates the ticket" vs "dismisses the ticket" — heads de-inflect to
+    // escalate/dismiss (not seeded antonyms); same object remainder → candidate
+    // (high cosine).
+    const embedder = fakeEmbedder({
+      'escalates the ticket': [1, 0.1],
+      'dismisses the ticket': [1, 0.12],
+    })
+    const findings = await findOppositionCandidates(
+      [req('A', 'escalates the ticket'), req('B', 'dismisses the ticket')],
+      embedder,
+    )
+    expect(findings).toHaveLength(1)
+    expect(findings[0]!.verbs.sort()).toEqual(['dismiss', 'escalate'])
   })
 })

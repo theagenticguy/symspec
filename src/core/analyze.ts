@@ -78,24 +78,35 @@ export function analyze(doc: RequirementsDoc): Finding[] {
     })
   }
 
-  // Orphan detection (no in or out edges of any relation)
-  const inboundCount = new Map<string, number>()
-  for (const r of reqs) {
-    for (const relation of RELATIONS) {
-      for (const target of r[relation]) {
-        inboundCount.set(target, (inboundCount.get(target) ?? 0) + 1)
+  // Orphan detection (no in or out edges of any relation).
+  //
+  // Trace-gate the noise: an orphan is only meaningful RELATIVE to a document
+  // that actually traces. In a doc that uses ZERO trace links anywhere, EVERY
+  // requirement is trivially an orphan — so flagging them all just penalizes an
+  // author who has not adopted trace links yet, with no signal. So orphan
+  // detection only fires once the doc uses at least one trace link somewhere
+  // (any relation edge on any requirement); then a requirement with no edges is
+  // a genuine gap against a document that does trace.
+  const usesAnyTraceLink = reqs.some((r) => RELATIONS.some((rel) => r[rel].length > 0))
+  if (usesAnyTraceLink) {
+    const inboundCount = new Map<string, number>()
+    for (const r of reqs) {
+      for (const relation of RELATIONS) {
+        for (const target of r[relation]) {
+          inboundCount.set(target, (inboundCount.get(target) ?? 0) + 1)
+        }
       }
     }
-  }
-  for (const r of reqs) {
-    const outbound = RELATIONS.reduce((acc, rel) => acc + r[rel].length, 0)
-    const inbound = inboundCount.get(r.id) ?? 0
-    if (outbound === 0 && inbound === 0 && reqs.length > 1) {
-      findings.push({
-        kind: 'OrphanRequirement',
-        id: r.id,
-        message: `Requirement ${r.id} has no inbound or outbound edges.`,
-      })
+    for (const r of reqs) {
+      const outbound = RELATIONS.reduce((acc, rel) => acc + r[rel].length, 0)
+      const inbound = inboundCount.get(r.id) ?? 0
+      if (outbound === 0 && inbound === 0 && reqs.length > 1) {
+        findings.push({
+          kind: 'OrphanRequirement',
+          id: r.id,
+          message: `Requirement ${r.id} has no inbound or outbound edges.`,
+        })
+      }
     }
   }
 

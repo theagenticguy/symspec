@@ -109,7 +109,33 @@ export interface AddDryRunData {
   readonly requirement: Requirement
   /** The per-statement GtWR findings the rendered sentence would trigger. */
   readonly findings: DryRunFinding[]
+  /**
+   * Present ONLY when at least one previewed finding is `error`-severity: a
+   * heads-up that this requirement will be EXCLUDED from the formal (SMT) tier
+   * at `check` time. An error-severity GtWR finding is blocking (AC-3-3), and
+   * the AC-3-7 gate drops any blocking-finding requirement before symbolization
+   * — so the solver never reasons about it and `check` cannot verify it against
+   * its peers. Surfacing this at authoring time means the author is not
+   * surprised by a `coverage.excluded` / `FND_EXCLUDED_FROM_FORMAL` hit later.
+   * Omitted (not `undefined`) when the preview has no error-severity finding.
+   */
+  readonly formalExclusion?: FormalExclusionNote
   readonly parse?: AddParseMeta
+}
+
+/**
+ * The coverage consequence of an error-severity finding on the previewed
+ * requirement (dry-run parity with what `check` reports). Carries the blocking
+ * codes and a plain-English explanation so an agent can decide to fix the
+ * finding before the requirement silently drops out of the formal tier.
+ */
+export interface FormalExclusionNote {
+  /** Always true — the requirement WOULD be excluded from the formal tier. */
+  readonly excludedFromFormal: true
+  /** The error-severity GtWR codes that would block it (e.g. `GTWR_R6_MISSING_UNITS`). */
+  readonly blockingCodes: string[]
+  /** Human-readable coverage-consequence explanation. */
+  readonly message: string
 }
 
 /** Parse provenance echoed back on the `--from-parse` create path. */
@@ -295,10 +321,32 @@ export async function runAdd(
         span: finding.span,
         ...(finding.suggestion !== undefined ? { suggestion: finding.suggestion } : {}),
       }))
+      // Dry-run parity with `check`: an error-severity GtWR finding is blocking
+      // (AC-3-3), so the AC-3-7 gate will EXCLUDE this requirement from the
+      // formal (SMT) tier at `check` time — the solver never sees it and cannot
+      // verify it against its peers. Surface that coverage consequence now, at
+      // authoring time, so the exclusion is not a surprise later. Mirrors
+      // src/pipeline/gate.ts's `blockingFindings` (severity === 'error').
+      const blockingCodes = findings.filter((f) => f.severity === 'error').map((f) => f.code)
+      const formalExclusion: FormalExclusionNote | undefined =
+        blockingCodes.length > 0
+          ? {
+              excludedFromFormal: true,
+              blockingCodes,
+              message:
+                `This requirement carries ${blockingCodes.length} error-severity finding(s) ` +
+                `(${blockingCodes.join(', ')}). At \`symspec check\` time the AC-3-7 gate will ` +
+                'EXCLUDE it from the formal (SMT) tier, so it will not be cross-checked for ' +
+                'contradiction/subsumption and `coverage.excluded` will count it. Fix the ' +
+                'finding(s) before check to keep it in the formal tier; waiving suppresses the ' +
+                'report line but does NOT restore formal coverage.',
+            }
+          : undefined
       const preview: AddDryRunData = {
         dryRun: true,
         requirement: created,
         findings,
+        ...(formalExclusion !== undefined ? { formalExclusion } : {}),
         ...(parseMeta !== undefined ? { parse: parseMeta } : {}),
       }
       return { envelope: success('add', preview) }

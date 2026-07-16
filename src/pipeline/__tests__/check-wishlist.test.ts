@@ -64,6 +64,21 @@ function byCode(findings: CheckFinding[], code: string): CheckFinding[] {
   return findings.filter((f) => f.code === code)
 }
 
+/**
+ * Deterministic fake embedder for tests that assert `verified: true` — the
+ * hardened predicate demotes when the semantic/opposition tier did not run
+ * (clause d), so those tests supply an embedder. Orthogonal-ish vectors keep
+ * cosines low so no accidental FND_SIMILAR_SEMANTIC/opposition noise fires.
+ */
+const fakeEmbedder: import('../../formal/embed.js').Embedder = async (texts) =>
+  texts.map((t, i) => {
+    const v = new Float32Array(4)
+    v[i % 4] = 1
+    v[3] = t.length % 2 === 0 ? 0.01 : 0.02
+    return v
+  })
+const withSemantic = { semantic: { embedder: fakeEmbedder } }
+
 /** Two requirements with totally disjoint vocabulary → the formal tier compares 0 pairs. */
 function disjointDoc(): { doc: RequirementsDoc; ids: { a: string; b: string } } {
   const ids = { a: randomUUID(), b: randomUUID() }
@@ -453,16 +468,28 @@ describe('wishlist #5 — data.verified (conclusive vs inconclusive)', () => {
     expect(byCode(report.findings, 'FND_NO_PAIRS_CHECKED')).toHaveLength(1)
   })
 
-  it('verified:true when a real pair was compared', async () => {
+  it('verified:true when a real pair was compared (semantic tier supplied)', async () => {
+    const trigger = 'the user submits valid credentials'
+    const doc = docOf([
+      req({ id: randomUUID(), trigger, systemResponse: 'issue a session token' }),
+      req({ id: randomUUID(), trigger, systemResponse: 'grant elevated access' }),
+    ])
+    const report = await runCheck(doc, withSemantic)
+
+    expect(report.pairsChecked).toBeGreaterThan(0)
+    expect(report.verified).toBe(true)
+    expect(report.coverage.demotions).toEqual([])
+  })
+
+  it('verified:false WITHOUT the semantic tier — the opposition detector is part of certification', async () => {
     const trigger = 'the user submits valid credentials'
     const doc = docOf([
       req({ id: randomUUID(), trigger, systemResponse: 'issue a session token' }),
       req({ id: randomUUID(), trigger, systemResponse: 'grant elevated access' }),
     ])
     const report = await runCheck(doc)
-
-    expect(report.pairsChecked).toBeGreaterThan(0)
-    expect(report.verified).toBe(true)
+    expect(report.verified).toBe(false)
+    expect(report.coverage.demotions.map((d) => d.reason)).toContain('semantic-tier-skipped')
   })
 
   it('verified:true (vacuously) for a single-requirement doc — nothing to cross-check', async () => {
@@ -488,7 +515,7 @@ describe('wishlist #5 — data.verified (conclusive vs inconclusive)', () => {
         systemResponse: 'respond over 3000 ms',
       }),
     ])
-    const report = await runCheck(doc)
+    const report = await runCheck(doc, withSemantic)
     expect(report.pairsChecked).toBe(0)
     expect(byCode(report.findings, 'FND_NUMERIC_CONTRADICTION').length).toBeGreaterThan(0)
     expect(report.verified).toBe(true)
@@ -516,7 +543,7 @@ describe('wishlist #4 — strict coverage gate (strictGate)', () => {
       req({ id: randomUUID(), trigger, systemResponse: 'issue a session token' }),
       req({ id: randomUUID(), trigger, systemResponse: 'grant elevated access' }),
     ])
-    const report = await runCheck(doc, { strict: true })
+    const report = await runCheck(doc, { strict: true, ...withSemantic })
     expect(report.verified).toBe(true)
     expect(report.strictGate).toBe('pass')
   })
@@ -544,7 +571,7 @@ describe('wishlist #4 — strict coverage gate (strictGate)', () => {
       req({ id: randomUUID(), trigger, systemResponse: 'issue a session token' }),
       req({ id: randomUUID(), trigger, systemResponse: 'grant elevated access' }),
     ])
-    const report = await runCheck(doc, { strict: true, failOnUnmatched: 0 })
+    const report = await runCheck(doc, { strict: true, failOnUnmatched: 0, ...withSemantic })
     expect(report.verified).toBe(true)
     // The two responses are distinct atoms owned by one req each → unmatched > 0.
     expect(report.residualRisk.unmatchedAtoms).toBeGreaterThan(0)
@@ -729,6 +756,237 @@ describe('#3 — quantity aliases make same-quantity-two-ways numeric conflicts 
   })
 })
 
+describe('issue #2 — the numeric tier is pairwise/same-verb; verified must not outrun it', () => {
+  const trigger = 'an infusion is started'
+  const infusionDoc = (): RequirementsDoc =>
+    docOf([
+      req({
+        id: 'R1',
+        patternType: 'event-driven',
+        systemName: 'infusion pump',
+        trigger,
+        systemResponse: 'complete the infusion within at most 30 minutes',
+      }),
+      req({
+        id: 'R2',
+        patternType: 'event-driven',
+        systemName: 'infusion pump',
+        trigger,
+        systemResponse: 'run the infusion for at least 60 minutes',
+      }),
+    ])
+
+  it('reproducer (a): same-quantity-two-verbs fires FND_QUANTITY_ALIAS_CANDIDATE and demotes verified', async () => {
+    const report = await runCheck(infusionDoc(), withSemantic)
+    const cand = byCode(report.findings, 'FND_QUANTITY_ALIAS_CANDIDATE')
+    expect(cand).toHaveLength(1)
+    expect(cand[0]!.severity).toBe('info')
+    expect([...cand[0]!.requirementIds].sort()).toEqual(['R1', 'R2'])
+    // The message hands the author a ready-to-run glossary command.
+    expect(cand[0]!.message).toContain('symspec glossary add')
+    // DEMOTION-ONLY: the propose-only candidate pushes verified to false.
+    expect(report.verified).toBe(false)
+    expect(report.coverage.demotions.map((d) => d.reason)).toContain('quantity-alias-candidate')
+  })
+
+  it('the fix is real: committing the suggested glossary alias makes the conflict z3-provable', async () => {
+    const doc = infusionDoc()
+    // Author commits EXACTLY the alias the candidate's message suggests —
+    // `glossary add "infusion within" "run the infusion"`, using the precise
+    // labels the extractor produced (the numeric key keeps the leaked "within"
+    // for soundness; the propose-only matcher strips it only for object
+    // comparison). Committing that alias unifies both bounds onto one quantity.
+    doc.glossary = [{ canonical: 'run the infusion', aliases: ['infusion within'] }]
+    const report = await runCheck(doc, withSemantic)
+    // Now the LIA tier sees ≤30min ∧ ≥60min on one quantity → UNSAT.
+    const numeric = byCode(report.findings, 'FND_NUMERIC_CONTRADICTION')
+    expect(numeric).toHaveLength(1)
+    expect(numeric[0]!.severity).toBe('error')
+    // The candidate no longer fires — the quantities unified.
+    expect(byCode(report.findings, 'FND_QUANTITY_ALIAS_CANDIDATE')).toHaveLength(0)
+  })
+
+  it('the double-match bug is fixed: a compound bound yields ONE predicate, not two', async () => {
+    // "complete the infusion within at most 30 minutes" once produced TWO
+    // predicates ("within" + "at most" both claiming "30 minutes") on two bogus
+    // keys. It must now produce exactly one FND_QUANTITY_ALIAS_CANDIDATE pair,
+    // not a self-referential tangle.
+    const report = await runCheck(infusionDoc(), withSemantic)
+    expect(byCode(report.findings, 'FND_QUANTITY_ALIAS_CANDIDATE')).toHaveLength(1)
+  })
+
+  it('reproducer (b): odd-cycle 2-coloring fires FND_RELATIONAL_UNCHECKED and demotes verified', async () => {
+    const trig = 'the ring bus initializes'
+    const ring = docOf([
+      req({
+        id: 'C1',
+        patternType: 'event-driven',
+        systemName: 'controller',
+        trigger: trig,
+        systemResponse: 'route sensor traffic across two channels',
+      }),
+      req({
+        id: 'C2',
+        patternType: 'event-driven',
+        systemName: 'controller',
+        trigger: trig,
+        systemResponse:
+          'assign sensor one to a channel that differs from the channel of sensor two',
+      }),
+      req({
+        id: 'C3',
+        patternType: 'event-driven',
+        systemName: 'controller',
+        trigger: trig,
+        systemResponse:
+          'assign sensor two to a channel that differs from the channel of sensor three',
+      }),
+      req({
+        id: 'C4',
+        patternType: 'event-driven',
+        systemName: 'controller',
+        trigger: trig,
+        systemResponse:
+          'assign sensor three to a channel that differs from the channel of sensor four',
+      }),
+      req({
+        id: 'C5',
+        patternType: 'event-driven',
+        systemName: 'controller',
+        trigger: trig,
+        systemResponse:
+          'assign sensor four to a channel that differs from the channel of sensor five',
+      }),
+      req({
+        id: 'C6',
+        patternType: 'event-driven',
+        systemName: 'controller',
+        trigger: trig,
+        systemResponse:
+          'assign sensor five to a channel that differs from the channel of sensor one',
+      }),
+    ])
+    const report = await runCheck(ring, withSemantic)
+    expect(byCode(report.findings, 'FND_RELATIONAL_UNCHECKED').length).toBeGreaterThan(0)
+    expect(report.verified).toBe(false)
+    expect(report.coverage.demotions.map((d) => d.reason)).toContain(
+      'relational-reasoning-not-attempted',
+    )
+  })
+
+  it('an error-severity lint exclusion demotes verified with excluded-from-formal + a loud finding', async () => {
+    // A bare-number response trips GTWR_R6 (error) → excluded from the formal
+    // tier. verified must NOT be true just because the solver saw nothing.
+    const doc = docOf([
+      req({
+        id: 'X1',
+        patternType: 'ubiquitous',
+        systemName: 'store',
+        systemResponse: 'retain 42 things',
+      }),
+      req({
+        id: 'X2',
+        patternType: 'ubiquitous',
+        systemName: 'store',
+        systemResponse: 'purge stale things',
+      }),
+    ])
+    const report = await runCheck(doc, withSemantic)
+    const excl = byCode(report.findings, 'FND_EXCLUDED_FROM_FORMAL')
+    expect(excl.length).toBeGreaterThan(0)
+    expect(report.coverage.excluded).toBeGreaterThan(0)
+    expect(report.verified).toBe(false)
+    expect(report.coverage.demotions.map((d) => d.reason)).toContain('excluded-from-formal')
+    // The disclosure is tagged structural (a gate-phase coverage signal), not a solver output.
+    expect(excl[0]!.tier).toBe('structural')
+  })
+
+  it('coverage carries encoded/excluded counts and a pairsChecked interpretation note', async () => {
+    const report = await runCheck(infusionDoc(), withSemantic)
+    expect(report.coverage.encoded).toBe(2)
+    expect(report.coverage.excluded).toBe(0)
+    expect(report.coverage.pairsCheckedNote).toMatch(/reached the formal tier/)
+  })
+
+  it('--strict trips (verified:false) when a requirement is excluded from formal', async () => {
+    const doc = docOf([
+      req({
+        id: 'Y1',
+        patternType: 'ubiquitous',
+        systemName: 'store',
+        systemResponse: 'retain 42 things',
+      }),
+      req({
+        id: 'Y2',
+        patternType: 'ubiquitous',
+        systemName: 'store',
+        systemResponse: 'purge stale things',
+      }),
+    ])
+    const report = await runCheck(doc, { ...withSemantic, strict: true })
+    expect(report.strictGate).toBe('fail')
+  })
+})
+
+describe('waiver-vs-exclusion soundness — a waived blocking finding re-admits to formal', () => {
+  // A bare-number response trips GTWR_R6 (error) → excluded from formal by
+  // default. A committed waiver on that code must RE-ADMIT the requirement to the
+  // formal tier (author took responsibility), so it is no longer counted in
+  // coverage.excluded and no FND_EXCLUDED_FROM_FORMAL fires for it.
+  function bareAndPeer(): RequirementsDoc {
+    const trig = 'the operator commits a batch'
+    return docOf([
+      req({
+        id: 'W1',
+        patternType: 'event-driven',
+        systemName: 'store',
+        trigger: trig,
+        systemResponse: 'retain 42 audit entries',
+      }),
+      req({
+        id: 'W2',
+        patternType: 'event-driven',
+        systemName: 'store',
+        trigger: trig,
+        systemResponse: 'not retain audit entries',
+      }),
+    ])
+  }
+
+  it('WITHOUT a waiver: the bare-number requirement is excluded from formal', async () => {
+    const report = await runCheck(bareAndPeer(), withSemantic)
+    // Baseline: it fires R6 (error) and is excluded.
+    expect(byCode(report.findings, 'GTWR_R6_MISSING_UNITS').length).toBeGreaterThan(0)
+    expect(report.coverage.excluded).toBeGreaterThan(0)
+    expect(
+      byCode(report.findings, 'FND_EXCLUDED_FROM_FORMAL').flatMap((f) => f.requirementIds),
+    ).toContain('W1')
+  })
+
+  it('WITH a waiver: the requirement is re-admitted (excluded shrinks, no FND_EXCLUDED_FROM_FORMAL for it)', async () => {
+    const doc = bareAndPeer()
+    const waivedDoc: RequirementsDoc = {
+      ...doc,
+      waivers: [{ code: 'GTWR_R6_MISSING_UNITS', reason: 'audit-entry count is intentional' }],
+    }
+    const report = await runCheck(waivedDoc, withSemantic)
+
+    // The R6 finding is waived out of findings[], AND the requirement re-enters
+    // the formal tier: excluded is back to 0 and no exclusion finding names W1.
+    expect(byCode(report.findings, 'GTWR_R6_MISSING_UNITS')).toHaveLength(0)
+    expect(report.coverage.excluded).toBe(0)
+    expect(
+      byCode(report.findings, 'FND_EXCLUDED_FROM_FORMAL').flatMap((f) => f.requirementIds),
+    ).not.toContain('W1')
+
+    // W1 now participates in cross-requirement analysis: it shares the "retain
+    // audit entries" atom with W2 (opposite polarity), so the decide tier can
+    // compare them and the coverage row reports participation.
+    const w1Row = report.coverage.requirements.find((r) => r.id === 'W1')
+    expect(w1Row?.participates).toBe(true)
+  })
+})
+
 describe('#5 hardening — a propose-only fuzzy finding must NOT flip verified (adversarial review)', () => {
   it('an opposition candidate (info) leaves verified:false when nothing decide-tier fired', async () => {
     // Two same-system responses sharing an object, different non-antonym verbs,
@@ -778,5 +1036,96 @@ describe('#5 hardening — a propose-only fuzzy finding must NOT flip verified (
     ])
     const report = await runCheck(doc, { semantic: { embedder: fake }, strict: true })
     expect(report.strictGate).toBe('fail')
+  })
+})
+
+describe('coverage — full-demotion verified predicate (Run 3 adversarial hardening)', () => {
+  it('a vocabulary-disjoint requirement demotes verified even when other pairs were checked', async () => {
+    // The Run 3 winning shape in miniature: two requirements form a checked
+    // pair (old predicate: verified=true for the whole doc), while a third is a
+    // vocabulary island the decide tier never constrained.
+    const trigger = 'the user submits valid credentials'
+    const island = randomUUID()
+    const doc = docOf([
+      req({ id: randomUUID(), trigger, systemResponse: 'issue a session token' }),
+      req({ id: randomUUID(), trigger, systemResponse: 'grant elevated access' }),
+      req({
+        id: island,
+        patternType: 'ubiquitous',
+        systemName: 'telemetry',
+        systemResponse: 'rotate the flux capacitor',
+      }),
+    ])
+    const report = await runCheck(doc, withSemantic)
+    expect(report.pairsChecked).toBeGreaterThan(0)
+    expect(report.verified).toBe(false)
+    const uncovered = report.coverage.demotions.filter((d) => d.reason === 'uncovered-requirement')
+    expect(uncovered).toHaveLength(1)
+    expect(uncovered[0]!.requirementIds).toEqual([island])
+    expect(uncovered[0]!.action).toContain('glossary add')
+    const row = report.coverage.requirements.find((r) => r.id === island)
+    expect(row?.participates).toBe(false)
+    expect(row?.unmatchedAtoms.length).toBeGreaterThan(0)
+    expect(report.residualRisk.uncoveredRequirements).toBe(1)
+  })
+
+  it('an open opposition candidate demotes verified; waiving it discharges the demotion (agent loop)', async () => {
+    // Same-trigger pair (so a candidate pair IS checked) whose responses share
+    // an object with different non-antonym verbs → opposition candidate fires.
+    const trigger = 'the operator presses the button'
+    const fake: import('../../formal/embed.js').Embedder = async (texts) =>
+      texts.map(() => Float32Array.from([1, 0.1]))
+    const build = () =>
+      docOf([
+        req({ id: randomUUID(), trigger, systemName: 'gate', systemResponse: 'admit the request' }),
+        req({ id: randomUUID(), trigger, systemName: 'gate', systemResponse: 'block the request' }),
+      ])
+
+    const before = await runCheck(build(), { semantic: { embedder: fake } })
+    expect(byCode(before.findings, 'FND_OPPOSITION_CANDIDATE')).toHaveLength(1)
+    expect(before.verified).toBe(false)
+    const opp = before.coverage.demotions.filter((d) => d.reason === 'open-opposition-candidate')
+    expect(opp).toHaveLength(1)
+    expect(opp[0]!.action).toContain('antonym add')
+    expect(opp[0]!.action).toContain('waive')
+
+    // Discharge by waiver: a triaged candidate stops demoting.
+    const waivedDoc = build()
+    waivedDoc.waivers = [{ code: 'FND_OPPOSITION_CANDIDATE', reason: 'reviewed: not opposites' }]
+    const after = await runCheck(waivedDoc, { semantic: { embedder: fake } })
+    expect(byCode(after.findings, 'FND_OPPOSITION_CANDIDATE')).toHaveLength(0)
+    expect(after.waived).toBeGreaterThan(0)
+    expect(
+      after.coverage.demotions.filter((d) => d.reason === 'open-opposition-candidate'),
+    ).toHaveLength(0)
+    expect(after.verified).toBe(true)
+  })
+
+  it('demotion-only: verified never true when the OLD predicate said false (monotone)', async () => {
+    // The old predicate: inconclusive when pairsChecked=0 ∧ ≥2 reqs ∧ nothing
+    // decide-tier fired. The new predicate must be at least as strict.
+    const { doc } = disjointDoc()
+    const report = await runCheck(doc, withSemantic)
+    expect(report.pairsChecked).toBe(0)
+    expect(report.verified).toBe(false)
+    expect(report.coverage.demotions.some((d) => d.reason === 'no-decide-tier-comparison')).toBe(
+      true,
+    )
+  })
+
+  it('coverage rows enumerate per-requirement singleton atoms (the rewrite targets)', async () => {
+    const { doc, ids } = disjointDoc()
+    const report = await runCheck(doc, withSemantic)
+    const rowA = report.coverage.requirements.find((r) => r.id === ids.a)
+    expect(rowA?.participates).toBe(false)
+    expect(rowA?.unmatchedAtoms.some((a) => a.includes('emit_a_photon'))).toBe(true)
+    expect(rowA?.suggestion).toContain('Rewrite')
+  })
+
+  it('vacuously verified single-requirement doc has empty demotions', async () => {
+    const { doc } = bareNumberDoc()
+    const report = await runCheck(doc)
+    expect(report.verified).toBe(true)
+    expect(report.coverage.demotions).toEqual([])
   })
 })

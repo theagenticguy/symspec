@@ -118,6 +118,41 @@ ${commandTable()}
 6. Optionally \`symspec certify\` for Lean-kernel-checked certificates
    (requires a Lean toolchain; never needed for \`check\`).
 
+## Recipe — prove a code-vs-intent (or spec-vs-spec) conflict
+
+The most common reason a real conflict hides: the two requirements never
+atomize to the same thing, so the solver never compares them. To make a
+divergence PROVABLE:
+
+1. **State both sides on a shared system + trigger.** Write the intended
+   invariant and the conflicting behavior as two requirements with the SAME
+   \`systemName\` and the SAME trigger/precondition, so they land in one context
+   group.
+2. **Make the responses collide on one atom.** Reduce both responses to a shared
+   object phrase differing only on the verb head (\`run the cycle\` vs
+   \`skip the cycle\`), then commit the relationship the solver needs:
+   - polar OPPOSITES → \`symspec antonym add run skip\` (collapses to one atom at
+     opposite polarity → \`FND_CONTRADICTION\`);
+   - same meaning, different words → \`symspec glossary add "…" "…"\` (collapses
+     to one atom → any bound/polarity conflict surfaces).
+3. **For numeric bounds on one quantity described two ways**
+   (\`complete … within at most 30 minutes\` vs \`run … for at least 60 minutes\`):
+   \`check\` emits \`FND_QUANTITY_ALIAS_CANDIDATE\` with the exact
+   \`symspec glossary add\` command to unify the two quantity keys; commit it and
+   the numeric tier proves the \`FND_NUMERIC_CONTRADICTION\`.
+4. **Re-run \`symspec check\`.** The alignment is what lets the prover SEE the
+   conflict — committing the link doesn't quiet a warning, it turns an
+   unprovable divergence into a named, evidence-carrying contradiction.
+
+symspec follows a DEMOTION-ONLY rule: fuzzy signals and coverage gaps
+(\`FND_QUANTITY_ALIAS_CANDIDATE\`, \`FND_RELATIONAL_UNCHECKED\`,
+\`FND_EXCLUDED_FROM_FORMAL\`) can only push \`data.verified\` toward \`false\` and
+list a discharging command in \`data.coverage.demotions\`; only the deterministic
+proof tier can produce \`verified: true\`. A requirement excluded from the formal
+tier by an error-severity lint is re-admitted either by fixing the lint or by
+waiving it (\`symspec waive add <code> --ref <id>\`) — waiving the
+\`FND_EXCLUDED_FROM_FORMAL\` disclosure alone never restores coverage.
+
 ## Honest scope — read before trusting a verdict
 
 > ${manifest.scope.soundness}

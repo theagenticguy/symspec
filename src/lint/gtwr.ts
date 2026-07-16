@@ -89,6 +89,192 @@ function isStandardIdentifierNumber(sentence: string, matchIndex: number): boole
 }
 
 /**
+ * The unit spellings R6 (missing-units) accepts immediately after a bare number,
+ * so `"5 kg"`, `"200 ms"`, or `"3 Mbps"` do NOT trip the rule. This is the
+ * lint-tier recognized-unit whitelist — a SEPARATE list from the arithmetic
+ * conflict tier's `DIMENSIONS` (src/formal/numeric.ts): R6 only asks "does a
+ * unit token follow this number?", while the numeric tier normalizes spellings
+ * to a shared base for comparison, so the two lists have different jobs and
+ * membership. Exported so the manifest can surface it (see the
+ * `TODO(coordination)` in src/cli/manifest.ts) and the two whitelists can be
+ * reconciled in one place.
+ *
+ * The field report (GitHub issue #2) flagged legitimate units R6 was
+ * error-flagging: mass, volume, electrical, data-rate, distance, and calendar
+ * units were all absent. The list below is grouped by dimension and kept
+ * deliberately CONSERVATIVE — only closed, well-known unit spellings, never an
+ * open "any trailing word" rule (that would gut R6's purpose of catching a
+ * genuinely units-less quantity like "respond in 200").
+ *
+ * Order matters inside the alternation: LONGER spellings precede the shorter
+ * ones they contain (e.g. `milliseconds` before `ms`, `kilograms` before `kg`,
+ * `millivolts` before `mV`/`V`) so the regex prefers the full word — otherwise a
+ * shorter alternative could match a prefix and leave a dangling suffix. The
+ * whole alternation is matched case-insensitively with a trailing word boundary,
+ * so `"5 Volts"` and `"5 volts"` both pass.
+ */
+export const R6_RECOGNIZED_UNITS: readonly string[] = [
+  // time — sub-second through days (singular + plural)
+  'milliseconds',
+  'millisecond',
+  'ms',
+  'seconds',
+  'second',
+  'minutes',
+  'minute',
+  'hours',
+  'hour',
+  'days',
+  'day',
+  's',
+  'Hz',
+  // calendar — week/month/year (singular + plural)
+  'weeks',
+  'week',
+  'months',
+  'month',
+  'years',
+  'year',
+  // mass
+  'milligrams',
+  'milligram',
+  'kilograms',
+  'kilogram',
+  'grams',
+  'gram',
+  'mg',
+  'kg',
+  'g',
+  // volume
+  'milliliters',
+  'milliliter',
+  'millilitres',
+  'millilitre',
+  'liters',
+  'liter',
+  'litres',
+  'litre',
+  'mL',
+  'ml',
+  'L',
+  // electrical
+  'millivolts',
+  'millivolt',
+  'volts',
+  'volt',
+  'amps',
+  'amp',
+  'mV',
+  'V',
+  'A',
+  // data size / rate — longest first so "Mbps"/"Gbps" beat "bps"
+  'Gbps',
+  'Mbps',
+  'kbps',
+  'bps',
+  // distance
+  'kilometers',
+  'kilometer',
+  'kilometres',
+  'kilometre',
+  'meters',
+  'meter',
+  'metres',
+  'metre',
+  'miles',
+  'mile',
+  'feet',
+  'ft',
+  'km/h',
+  'km',
+  'cm',
+  'mm',
+  'm',
+  // ratios / counts spelled out
+  'percent',
+  'units',
+  'attempts',
+  'times',
+  'iterations',
+]
+
+/**
+ * A multiword unit phrase R6 accepts after a bare number — one whose first token
+ * is not itself a self-contained unit, so it cannot live in
+ * {@link R6_RECOGNIZED_UNITS} (that list feeds a single-token lookahead). The
+ * lookahead below admits an OPTIONAL second word ONLY for these fixed phrases:
+ *   - `degrees celsius` / `degrees fahrenheit` — spelled-out temperature;
+ *   - `US dollars` / `US dollar` — currency phrased with a country prefix.
+ * Kept as an explicit closed set (never "digit + any two words") so R6 stays
+ * conservative: an arbitrary trailing phrase must not sneak a units-less number
+ * past the rule.
+ */
+const R6_MULTIWORD_UNITS: readonly string[] = [
+  'degrees\\s+celsius',
+  'degrees\\s+fahrenheit',
+  'US\\s+dollars?',
+]
+
+/**
+ * Single-token currency/temperature spellings that follow the number directly
+ * (no leading "degrees"/"US"): `"5 dollars"`, `"5 USD"`, `"20 °C"`. Symbols
+ * (`%`, `°C`, `°F`) are non-word characters, so they need their own alternation
+ * outside the `\b`-terminated word list.
+ */
+const R6_SYMBOL_UNITS: readonly string[] = ['%', '°C', '°F', 'dollars', 'dollar', 'USD']
+
+/**
+ * The compiled R6 bare-number pattern. A digit run is a FINDING unless it is
+ * immediately followed (allowing intervening spaces) by a recognized unit —
+ * either a word-boundary-terminated token from {@link R6_RECOGNIZED_UNITS}, one
+ * of the fixed multiword phrases in {@link R6_MULTIWORD_UNITS}, or a symbol from
+ * {@link R6_SYMBOL_UNITS}. Built once at module load from the named lists so the
+ * behavior stays sourced from the whitelist (not a hand-maintained inline
+ * alternation), which is what lets the manifest surface the same list.
+ *
+ * The word-token branch keeps its trailing `\b`; the symbol/multiword branches
+ * do not (a `%` or `°C` is not `\b`-terminable). Fixes a latent bug in the old
+ * inline pattern where the trailing `\b` after `%` never matched, so `"50%"`
+ * wrongly tripped R6.
+ *
+ * The leading `(?!\.\d)` after the digit run kills a subtle backtracking bug: on
+ * `"2.5 kg"` the engine first matches the full `"2.5"`, sees the recognized unit,
+ * fails the unit lookahead, then BACKTRACKS the optional fractional group to
+ * match just `"2"` — which, followed by `".5"`, would spuriously fire. Forbidding
+ * a match that is immediately followed by `.<digit>` means the integer part of a
+ * decimal is never flagged on its own (this also cleaned up the pre-existing
+ * `"2.0 seconds"` → `"2"` false positive in the prior inline pattern).
+ */
+const R6_UNIT_LOOKAHEAD =
+  `(?:${R6_RECOGNIZED_UNITS.join('|')})\\b` +
+  `|(?:${R6_MULTIWORD_UNITS.join('|')})` +
+  `|(?:${R6_SYMBOL_UNITS.join('|')})`
+const R6_BARE_NUMBER = new RegExp(
+  String.raw`\b(\d+(?:\.\d+)?)\b(?!\.\d)(?!\s*(?:${R6_UNIT_LOOKAHEAD}))`,
+  'gi',
+)
+
+/**
+ * A bare decimal in the closed interval [0, 1] (e.g. `0.3`, `0.7`, `1.0`,
+ * `0.95`) is a legitimately DIMENSIONLESS quantity — a probability, a score, a
+ * cosine/similarity threshold, or a fusion constant (RRF-style) — so it must NOT
+ * trip R6. Field report (issue #2): authors were degrading `"score ≥ 0.7"` to
+ * dodge a spurious missing-units error. This escape is deliberately narrow:
+ *   - it fires ONLY for a decimal WITH a fractional part (must contain a `.`),
+ *     so a bare integer like `"60"` (RRF k, account counts) is still flagged —
+ *     an integer with no unit noun is the class R6 exists to catch;
+ *   - the value must be ≤ 1.0, so `"1.5 seconds"` written as bare `"1.5"` still
+ *     trips (it is a dimensioned quantity that dropped its unit).
+ * A decimal strictly above 1 is NOT dimensionless-by-convention, so it stays a
+ * finding.
+ */
+function isDimensionlessRatio(numText: string): boolean {
+  if (!numText.includes('.')) return false
+  const value = Number.parseFloat(numText)
+  return Number.isFinite(value) && value >= 0 && value <= 1
+}
+
+/**
  * Check a single requirement's systemResponse field against GTWR rules.
  * Runs the ~24 T1 lexicon checks on the rendered sentence.
  *
@@ -247,17 +433,23 @@ function checkR5IndefiniteArticle(sentence: string, findings: GtWRFinding[]): vo
 // ============================================================================
 
 function checkR6MissingUnits(sentence: string, findings: GtWRFinding[]): void {
-  // Regex: standalone number (digit sequence) not followed by unit token or %
-  // Heuristic: `\b\d+(?:\.\d+)?\b(?![a-zA-Z%]|\s*(?:s|ms|Hz|m|km|km\/h|Mbps|%|°C|°F))`
-  // Simplified: look for bare numerics and flag unless followed by known unit patterns
-  const bareNumberPattern =
-    /\b(\d+(?:\.\d+)?)\b(?!\s*(?:s|ms|Hz|m|km|km\/h|Mbps|%|°C|°F|seconds|ms|hours|minutes|days|units|attempts|times|iterations|percent)\b)/gi
-  const matches = getMatches(sentence, bareNumberPattern)
+  // A bare number (digit run) is a finding unless it is immediately followed by
+  // a recognized unit — the whitelist lives in the exported R6_RECOGNIZED_UNITS
+  // / R6_MULTIWORD_UNITS / R6_SYMBOL_UNITS lists compiled into R6_BARE_NUMBER
+  // above, so a legitimate "5 kg" / "200 ms" / "20 degrees celsius" / "50%"
+  // does not error. `lastIndex` is reset because R6_BARE_NUMBER is a
+  // module-level /g regex shared across calls.
+  R6_BARE_NUMBER.lastIndex = 0
+  const matches = getMatches(sentence, R6_BARE_NUMBER)
   for (const match of matches) {
     // Skip numbers that are part of a standard's name (e.g. "RFC 9457",
     // "HTTP 401") — those are identifiers, not units-less quantities.
     if (isStandardIdentifierNumber(sentence, match.index)) continue
     const [matched, num] = match
+    // Dimensionless ratio/probability/threshold escape: a decimal in [0,1] is a
+    // score/cosine/fusion-constant, not a quantity missing a unit. Integers and
+    // decimals >1 stay flagged (see isDimensionlessRatio).
+    if (num !== undefined && isDimensionlessRatio(num)) continue
     findings.push({
       code: 'GTWR_R6_MISSING_UNITS',
       severity: 'error',

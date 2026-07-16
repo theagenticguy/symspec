@@ -256,3 +256,128 @@ describe('GtWR bare-number rules — standard-identifier allowlist (field-report
     expect(sentence.slice(finding.span[0], finding.span[1])).toBe('5')
   })
 })
+
+describe('GtWR R6 — broadened recognized-unit whitelist (issue #2 field report)', () => {
+  // Each spelling is a legitimate unit R6 must NOT error-flag. Grouped like the
+  // R6_RECOGNIZED_UNITS / R6_MULTIWORD_UNITS / R6_SYMBOL_UNITS lists in gtwr.ts.
+  const RECOGNIZED_UNIT_SENTENCES: ReadonlyArray<string> = [
+    // mass
+    'the pump shall dose 5 mg',
+    'the pump shall dose 250 milligrams',
+    'the loader shall lift 5 kg',
+    'the loader shall lift 5 kilograms',
+    'the scale shall weigh 5 g',
+    'the scale shall weigh 5 grams',
+    // volume
+    'the tank shall hold 250 mL',
+    'the tank shall hold 250 ml',
+    'the tank shall hold 2 L',
+    'the tank shall hold 2 liters',
+    'the tank shall hold 2 litres',
+    'the tank shall hold 250 milliliters',
+    // electrical
+    'the source shall emit 5 V',
+    'the source shall emit 5 volts',
+    'the source shall emit 50 mV',
+    'the source shall emit 50 millivolts',
+    'the source shall draw 2 A',
+    'the source shall draw 2 amps',
+    // data rate
+    'the link shall sustain 3 Mbps',
+    'the link shall sustain 3 Gbps',
+    'the link shall sustain 300 kbps',
+    'the link shall sustain 300 bps',
+    // distance
+    'the rover shall travel 5 miles',
+    'the rover shall travel 5 feet',
+    'the rover shall travel 5 ft',
+    'the rover shall travel 5 meters',
+    'the rover shall travel 5 metres',
+    'the rover shall travel 5 km',
+    'the rover shall travel 5 cm',
+    'the rover shall travel 5 mm',
+    // calendar
+    'the license shall expire in 3 weeks',
+    'the license shall expire in 6 months',
+    'the license shall expire in 2 years',
+    'the license shall expire in 1 day',
+    // multiword temperature + currency
+    'the oven shall reach 20 degrees celsius',
+    'the oven shall reach 400 degrees fahrenheit',
+    'the meter shall charge 5 US dollars',
+    'the meter shall charge 5 dollars',
+    'the meter shall charge 5 USD',
+    // percent symbol (regression: the old inline regex wrongly tripped on "50%")
+    'the cache shall retain 50%',
+    // decimal followed by a unit — must not backtrack-flag the integer part
+    'the api shall respond within 2.0 seconds',
+    'the loader shall lift 2.5 kg',
+  ]
+
+  for (const sentence of RECOGNIZED_UNIT_SENTENCES) {
+    it(`R6 does NOT fire on a recognized unit: "${sentence}"`, () => {
+      const findings = checkGtWRules(makeReq(sentence), sentence)
+      expect(findings.find((f) => f.code === 'GTWR_R6_MISSING_UNITS')).toBeUndefined()
+    })
+  }
+
+  // REGRESSION: broadening the whitelist must not stop R6 catching genuinely
+  // units-less quantities. A bare integer (even followed by a count noun) and a
+  // clause-final bare number stay findings — this is the deliberate choice NOT
+  // to add a following-noun escape (see gtwr.ts): existing fixtures depend on
+  // "42 records" / "128 blocks" tripping R6, and a plain count is exactly the
+  // "did you mean records-per-second?" case R6 exists to question.
+  const STILL_FLAGGED: ReadonlyArray<string> = [
+    'the system shall store 42 records',
+    'the buffer shall retain 128 blocks',
+    'the fusion stage shall combine with k of 60',
+    'the api shall respond in 200',
+    'the api shall respond within 1.5',
+  ]
+
+  for (const sentence of STILL_FLAGGED) {
+    it(`R6 STILL fires on a units-less quantity: "${sentence}"`, () => {
+      const findings = checkGtWRules(makeReq(sentence), sentence)
+      const r6 = findings.find((f) => f.code === 'GTWR_R6_MISSING_UNITS')
+      expect(r6, `R6 should fire on "${sentence}"`).toBeDefined()
+      if (!r6) return
+      expect(r6.severity).toBe('error')
+      assertSpanValid(r6, sentence)
+    })
+  }
+})
+
+describe('GtWR R6 — dimensionless ratio/probability escape ([0,1] decimals)', () => {
+  // A decimal in [0,1] is a score/probability/cosine-threshold/fusion-constant,
+  // not a quantity missing a unit — it must NOT trip R6 (issue #2: authors
+  // degraded "score >= 0.7" to dodge a spurious error).
+  const DIMENSIONLESS: ReadonlyArray<string> = [
+    'the ranker shall keep results scoring above 0.3',
+    'the matcher shall merge pairs above 0.7',
+    'the matcher shall accept a cosine of 0.95',
+    'the gain shall settle at 1.0',
+    'the filter shall drop below 0.0',
+  ]
+
+  for (const sentence of DIMENSIONLESS) {
+    it(`R6 does NOT fire on a [0,1] ratio: "${sentence}"`, () => {
+      const findings = checkGtWRules(makeReq(sentence), sentence)
+      expect(findings.find((f) => f.code === 'GTWR_R6_MISSING_UNITS')).toBeUndefined()
+    })
+  }
+
+  // A decimal ABOVE 1 is not dimensionless-by-convention, and a bare INTEGER is
+  // never a ratio — both stay findings so the escape cannot be abused.
+  const NOT_A_RATIO: ReadonlyArray<string> = [
+    'the api shall respond within 1.5', // decimal > 1 (dropped its unit)
+    'the api shall respond within 2.5', // decimal > 1
+    'the fusion stage shall use a constant of 60', // bare integer
+  ]
+
+  for (const sentence of NOT_A_RATIO) {
+    it(`R6 STILL fires (not a [0,1] ratio): "${sentence}"`, () => {
+      const findings = checkGtWRules(makeReq(sentence), sentence)
+      expect(findings.find((f) => f.code === 'GTWR_R6_MISSING_UNITS')).toBeDefined()
+    })
+  }
+})

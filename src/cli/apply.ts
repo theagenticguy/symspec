@@ -22,7 +22,8 @@
  *   {"op":"derive","from":"G1","to":"S3"}
  *   {"op":"satisfy","from":"S3","to":"G1"}
  *   {"op":"remove-edge","from":"G1","relation":"derives","to":"S3"}
- *   {"op":"delete","ref":"S3"}
+ *   {"op":"delete","ref":"S3"}      // `delete` also accepts `id` as an alias for `ref`:
+ *   {"op":"delete","id":"S3"}       // identical to the line above (both key-or-UUID).
  *
  * ## Atomicity (fixes the report's "no resume story")
  *
@@ -165,7 +166,11 @@ function toChange(
       }
     }
     case 'delete': {
-      const resolved = resolveRef(str(rec, 'ref'), 'ref')
+      // Accept EITHER `ref` OR `id` (both a key-or-UUID resolved the same way),
+      // so the batch delete op agrees with the single-command `delete <id>`:
+      // `{"op":"delete","ref":"S3"}` and `{"op":"delete","id":"S3"}` are
+      // identical. `ref` wins when both are present.
+      const resolved = resolveRef(str(rec, 'ref') ?? str(rec, 'id'), 'ref (or id)')
       if ('code' in resolved) return resolved
       return { change: { kind: 'DeleteRequirement', id: resolved.id }, id: resolved.id }
     }

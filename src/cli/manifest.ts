@@ -56,6 +56,7 @@ import {
   RequirementUpdateInputShape,
 } from '../core/schema.js'
 import { FndCodeMeta, FndCodes } from '../formal/codes.js'
+import { DIMENSIONS } from '../formal/numeric.js'
 import { DEFAULT_SEMANTIC_THRESHOLD } from '../formal/semantic.js'
 import { GtwrCodeMeta, GtwrCodes } from '../lint/codes.js'
 import { type BackendsReport, BackendsReportSchema, collectBackends } from './backends.js'
@@ -211,13 +212,13 @@ const CheckOptionShape = {
   semantic: z
     .boolean()
     .describe(
-      '`--semantic`: opt-in info-tier paraphrase pass. Embeds responses with a local ONNX model to PROPOSE glossary merges for near-duplicate wording (FND_SIMILAR_SEMANTIC, AC-9-5). Propose-only — it never emits a conflict verdict; needs the model (see `download-model`) or yields ERR_EMBED_MODEL_MISSING.',
+      '`--semantic`: DEPRECATED no-op — the semantic tier is always on. Every check embeds responses with the local ONNX model to PROPOSE glossary merges (FND_SIMILAR_SEMANTIC) and opposition candidates (FND_OPPOSITION_CANDIDATE). Propose-only — never a conflict verdict — but an untriaged opposition candidate demotes data.verified. A missing model fails the run closed (ERR_EMBED_MODEL_MISSING, exit 2); pre-warm with `download-model`.',
     )
     .optional(),
   'semantic-threshold': z
     .string()
     .describe(
-      `\`--semantic-threshold <n>\`: cosine threshold for --semantic paraphrase detection (default ${DEFAULT_SEMANTIC_THRESHOLD}); higher is stricter.`,
+      `\`--semantic-threshold <n>\`: cosine threshold for semantic paraphrase detection (default ${DEFAULT_SEMANTIC_THRESHOLD}); higher is stricter.`,
     )
     .optional(),
   temporal: z
@@ -233,7 +234,7 @@ const CheckOptionShape = {
   strict: z
     .boolean()
     .describe(
-      '`--strict`: opt-in coverage gate. Fails with exit 3 (EXIT_INCONCLUSIVE) when the run is INCONCLUSIVE — ≥2 requirements but nothing was verified across them (data.verified=false), the machine-readable form of "silence is not a consistency certificate" (#4).',
+      '`--strict`: opt-in coverage gate. Fails with exit 3 (EXIT_INCONCLUSIVE) when data.verified=false — any uncovered (vocabulary-disjoint) requirement, untriaged FND_OPPOSITION_CANDIDATE, or missing decide-tier comparison demotes it. data.coverage.demotions lists each reason with the exact discharging command (antonym add / glossary add / waive / rewrite), so the loop is: check --strict -> apply the listed ops -> re-check -> exit 0 (#4).',
     )
     .optional(),
   'fail-on-unmatched': z
@@ -268,6 +269,12 @@ const GlobalOptionsSchema = z
     evidence: z
       .boolean()
       .describe('`--evidence`: keep the heavy evidence/atom-table fields under --dense.')
+      .optional(),
+    field: z
+      .string()
+      .describe(
+        '`--field <paths>`: jq-style projection — comma-separated dotted paths (e.g. `data.verified,data.coverage.demotions`) that reduce the envelope to just those values, emitted as JSON. An OUTPUT projection only (never changes data or the exit code); unresolved paths are omitted, and no match yields `{}`. Composes with --dense (projects the densified envelope).',
+      )
       .optional(),
   })
   .describe('Global output-shaping flags inherited by every command (AC-6-2a / AC-6-4).')
@@ -358,6 +365,8 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
             'Path to a JSONL op file — one {"op":"add|update|derive|satisfy|remove-edge|delete", ...} record',
             'per line. Blank lines and #-comment lines are skipped. Requirement refs (ref/from/to) accept a',
             'stable key or a UUID; an `add` op may carry "key" so later ops in the SAME batch reference it.',
+            'The `delete` op also accepts "id" as an alias for "ref" (both key-or-UUID), so it agrees with',
+            'the single-command `delete <id>`.',
             'Omit and pass --stdin to read the op stream from standard input instead.',
           ),
         )
@@ -471,6 +480,32 @@ export const ManifestCodeSchema = z.object({
 })
 export type ManifestCode = z.infer<typeof ManifestCodeSchema>
 
+/**
+ * One unit dimension in the manifest's `units` section: the canonical base unit
+ * the numeric conflict tier normalizes to, plus every recognized alias spelling
+ * mapped to its multiplicative factor INTO that base. Derived from the exported
+ * `DIMENSIONS` table in `formal/numeric.ts` — never a hand-list — so a unit added
+ * to the numeric tier appears here automatically and the two can never disagree.
+ */
+export const ManifestUnitDimensionSchema = z.object({
+  base: z.string(),
+  units: z.record(z.string(), z.number()),
+})
+export type ManifestUnitDimension = z.infer<typeof ManifestUnitDimensionSchema>
+
+/**
+ * The manifest's units/dimensions disclosure: which unit spellings each tier
+ * recognizes. `numeric` is the arithmetic conflict tier's normalization table
+ * (AC-30-2, from `formal/numeric.ts` `DIMENSIONS`) — two bounds in different
+ * spellings of the same dimension normalize to the shared `base` before
+ * comparison, so an agent authoring numeric bounds sees exactly which units the
+ * solver will unify. An unrecognized unit stays unitless (a conservative miss).
+ */
+export const ManifestUnitsSchema = z.object({
+  numeric: z.array(ManifestUnitDimensionSchema),
+})
+export type ManifestUnits = z.infer<typeof ManifestUnitsSchema>
+
 /** The whole manifest blob. */
 export const ManifestSchema = z.object({
   name: z.string(),
@@ -520,6 +555,20 @@ export const ManifestSchema = z.object({
   conventions: z.object({
     docPath: z.literal(DOC_PATH_CONVENTION),
   }),
+  /**
+   * The unit spellings each tier recognizes (closes "the unit whitelist isn't
+   * exposed in the manifest"). `numeric` is the arithmetic conflict tier's
+   * normalization table, derived from `formal/numeric.ts` `DIMENSIONS`. An agent
+   * authoring numeric bounds reads which spellings unify to a shared base before
+   * comparison, instead of guessing.
+   *
+   * TODO(coordination): the lint tier's R6 bare-number rule keeps its own
+   * recognized-unit whitelist inline in `src/lint/gtwr.ts` (a separate list from
+   * DIMENSIONS). Once that agent exports it (expected `R6_RECOGNIZED_UNITS`),
+   * add a `lint`/`r6` field here sourced from that export so both tiers'
+   * recognized units are visible and the two lists are reconciled.
+   */
+  units: ManifestUnitsSchema,
   /**
    * Runtime backend availability report (AC-6-14). Optional and
    * forward-tolerant: `buildManifest()` (pure, byte-stable, environment-free)
@@ -580,6 +629,12 @@ export function buildManifest(): Manifest {
     // The cross-command doc-path convention (M2), single-sourced so an agent
     // learns positional/--file/--doc per command from one readable field.
     conventions: { docPath: DOC_PATH_CONVENTION },
+    // The numeric tier's recognized unit spellings, derived from the exported
+    // DIMENSIONS table (formal/numeric.ts) so the manifest and the normalizer
+    // can never disagree. See the schema's TODO for surfacing the R6 lint list.
+    units: {
+      numeric: DIMENSIONS.map((d) => ({ base: d.base, units: { ...d.units } })),
+    },
     codes: {
       error: toManifestCodes(errCodeCatalog()),
       gtwr: toManifestCodes(buildCodeCatalog(GtwrCodes, GtwrCodeMeta)),

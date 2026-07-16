@@ -53,8 +53,8 @@ export class EmbedModelMissingError extends Error {
     )
     this.name = 'EmbedModelMissingError'
     this.suggestions = [
-      `Pre-download the model into the symspec cache, or run with SYMSPEC_EMBED_ALLOW_REMOTE=1 once to fetch "${EMBED_MODEL}".`,
-      'The semantic tier is opt-in (`check --semantic`); the structural, lint, and SMT tiers run without it.',
+      `Run \`symspec download-model\` once to pre-fetch "${EMBED_MODEL}" (air-gapped hosts: run it wherever the cache dir is provisioned), or set SYMSPEC_EMBED_ALLOW_REMOTE=1 for this run.`,
+      'The semantic tier is a core part of every check — a missing model fails the run closed rather than silently skipping opposition detection.',
     ]
     if (cause !== undefined) this.cause = cause
   }
@@ -198,11 +198,47 @@ const defaultPipelineFactory: PipelineFactory = async (_model, allowRemote) => {
 }
 
 /**
- * Load an {@link Embedder}. Lazy + offline by default (AC-9-4): the model must
- * be cached unless `allowRemote` (or `SYMSPEC_EMBED_ALLOW_REMOTE=1`) is set.
- * Throws {@link EmbedModelMissingError} when the model cannot be loaded.
+ * Deterministic hash-based stub embedder, enabled ONLY by
+ * `SYMSPEC_EMBED_STUB=1` — a TEST-ONLY escape hatch so spawned-CLI tests can
+ * exercise the always-on semantic tier without the ~110 MB model. It hashes
+ * each text into a fixed pseudo-vector (pure function of the text bytes), so
+ * runs are reproducible but the cosines are meaningless — it must NEVER be
+ * set in production, and it is not a fallback: without the env var a missing
+ * model still fails closed with {@link EmbedModelMissingError}.
+ */
+function stubEmbedder(): Embedder {
+  const DIM = 16
+  return async (texts) =>
+    texts.map((t) => {
+      const v = new Float32Array(DIM)
+      let h = 2166136261
+      for (let i = 0; i < t.length; i++) {
+        h ^= t.charCodeAt(i)
+        h = Math.imul(h, 16777619)
+      }
+      for (let d = 0; d < DIM; d++) {
+        h ^= h << 13
+        h ^= h >>> 17
+        h ^= h << 5
+        v[d] = ((h >>> 0) % 2000) / 1000 - 1
+      }
+      let norm = 0
+      for (let d = 0; d < DIM; d++) norm += (v[d] as number) ** 2
+      norm = Math.sqrt(norm) || 1
+      for (let d = 0; d < DIM; d++) v[d] = (v[d] as number) / norm
+      return v
+    })
+}
+
+/**
+ * Load an {@link Embedder}. Offline by default: the model must be cached
+ * unless `allowRemote` (or `SYMSPEC_EMBED_ALLOW_REMOTE=1`) is set. Throws
+ * {@link EmbedModelMissingError} when the model cannot be loaded — the
+ * semantic tier is a core part of every CLI `check`, so a missing model fails
+ * the run closed (exit 2) rather than silently skipping the tier.
  */
 export async function loadEmbedder(options: LoadEmbedderOptions = {}): Promise<Embedder> {
+  if (process.env.SYMSPEC_EMBED_STUB === '1') return stubEmbedder()
   const allowRemote = options.allowRemote ?? process.env.SYMSPEC_EMBED_ALLOW_REMOTE === '1'
   const model = options.model ?? EMBED_MODEL
   const factory = options.pipelineFactory ?? defaultPipelineFactory
