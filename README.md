@@ -128,6 +128,63 @@ That honest limit is exactly what the next section closes.
 
 ---
 
+## Why a prover beats reading it yourself
+
+The grant/revoke example above is easy — the two requirements sit side by side and
+plainly disagree. Real conflicts don't. They emerge from a *chain* of
+individually-reasonable requirements whose combination is impossible, and no human
+reviewer holds the whole chain in their head. Here is one from symspec's own
+red-team eval — a reactor controller, four requirements, each of which any engineer
+would wave through:
+
+```console
+$ symspec add reactor.symspec.json --pattern event-driven --system "controller" \
+    --response "mark the coolant pump engaged" --trigger "the temperature sensor reports overheating"
+$ symspec add reactor.symspec.json --pattern state-driven --system "controller" \
+    --response "keep the reactor online" --pre "the coolant pump is engaged"
+$ symspec add reactor.symspec.json --pattern state-driven --system "controller" \
+    --response "grant power to the distribution grid" --pre "the reactor is online"
+$ symspec add reactor.symspec.json --pattern event-driven --system "controller" \
+    --response "deny power to the distribution grid" --trigger "the temperature sensor reports overheating"
+```
+
+Rendered, the four read:
+
+> 1. *"When the temperature sensor reports overheating, the controller shall mark the coolant pump engaged."*
+> 2. *"While the coolant pump is engaged, the controller shall keep the reactor online."*
+> 3. *"While the reactor is online, the controller shall grant power to the distribution grid."*
+> 4. *"When the temperature sensor reports overheating, the controller shall deny power to the distribution grid."*
+
+Read them one at a time and nothing looks wrong — a safety interlock, a normal
+state cascade, two power rules. But follow the chain: an overheat event (1) engages
+the pump, which (2) keeps the reactor online, which (3) grants power to the grid —
+*on the same overheat event* where requirement 4 demands power be **denied**. The
+spec requires the grid to be powered and unpowered simultaneously. It's
+unsatisfiable, and the impossibility only exists three hops away from where it's
+introduced.
+
+`symspec check` proves it and names the **entire** chain, not just the two endpoints:
+
+```jsonc
+{
+  "code": "FND_CONTRADICTION",
+  "severity": "error",
+  "requirementIds": ["63bd5b73-…", "65e09308-…", "77982f25-…", "97c5394b-…"],
+  "message": "Requirements 63bd5b73-…, 65e09308-…, 77982f25-…, 97c5394b-… cannot all hold: their responses resolve to the same atom with opposite polarity under a reachable context.",
+  "evidence": { "core": ["63bd5b73-…", "65e09308-…", "77982f25-…", "97c5394b-…"] }
+}
+# exits 1
+```
+
+Delete requirement 2 or 3 — the bridge — and the same `check` exits `0`: the two
+power rules alone are genuinely consistent. The conflict *is* the chain. That's the
+class of defect a prover catches and a careful human reader does not, because the
+prover composes every reachable state transition and asks Z3 whether any assignment
+survives. This is symspec's core job; the next section is about the case where even
+the chain is hidden behind mismatched *words*.
+
+---
+
 ## Encoding meaning into a spec — the neurosymbolic core
 
 Here's the problem a pure logic checker can't solve alone. Consider one infusion
