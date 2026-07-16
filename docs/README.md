@@ -1,9 +1,14 @@
 # symspec · Documentation
 
 Generated codebase documentation for `symspec` — a neurosymbolic EARS
-requirements spec validator for coding agents. Prose is generated; structure is
+requirements spec checker for coding agents. Prose is generated; structure is
 mechanical. Cross-references are deterministic (docs sharing ≥ 2 source
 citations link to each other under `## See also`).
+
+Refreshed at the issue-#2 adversarial-hardening merge (`fabc156`): the
+propose/decide + demotion-only doctrine is documented as the spine, and the new
+`quantity-alias`, `relational`, and loud-coverage surfaces (`FND_QUANTITY_ALIAS_CANDIDATE`,
+`FND_RELATIONAL_UNCHECKED`, `FND_EXCLUDED_FROM_FORMAL`) are covered throughout.
 
 Start with [Architecture · System overview](architecture/system-overview.md) for
 the two-paragraph orientation, then follow the map below.

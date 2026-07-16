@@ -2,39 +2,34 @@
 
 ## 1. `symspec check` end to end (all tiers)
 
-`runCheck` runs the tiers in a forced order: Tier-0 structural analyze, GtWR lint, the always-on deterministic ambiguity family, then the AC-3-7 gate partition, then the free + formal tiers inside `runSolvers` (`src/pipeline/check.ts:311-459`). Inside the formal callback it atomizes through the committed glossary, gets the shared Z3 context, and runs contradiction/subsumption/vacuity/completeness/similar/needs-review over the gate-included subset (`src/pipeline/check.ts:372-386`). The numeric tier runs over ALL requirements, not the gate subset, because numeric conflict is independent of the propositional-encoding soundness the gate protects (`src/pipeline/check.ts:396-406`). The temporal tier runs only when `--temporal` is set, mapping EARS→LTL and proving bounded contradictions on the same context (`src/pipeline/check.ts:412-419`); the semantic + graph passes run only when `--semantic` is set and are propose-only (`src/pipeline/check.ts:425-453`). Finally unsat-triggered findings gain atom-table + core evidence (`src/pipeline/check.ts:456`) and the report is wrapped in a `success('check', ...)` envelope with the AC-6-2b exit code (`src/cli/index.ts:412`, `src/cli/index.ts:97`).
+`runCheck` runs the tiers in a forced order: Tier-0 structural analyze, GtWR lint, the always-on deterministic ambiguity family, then the waiver-aware AC-3-7 gate partition, then the free + formal tiers inside `runSolvers` (`src/pipeline/check.ts:682-1006`). Inside the formal callback it atomizes through the committed glossary + antonyms, gets the shared Z3 context, and runs contradiction/subsumption/vacuity/completeness/similar/needs-review over the gate-included subset (`src/pipeline/check.ts:781-795`). The numeric tier and the two propose-only signals (quantity-alias, relational-unchecked) run over ALL requirements, because those are independent of the propositional-encoding soundness the gate protects (`src/pipeline/check.ts:822`, `src/pipeline/check.ts:835`, `src/pipeline/check.ts:856`). The temporal tier runs only when `--temporal` is set, and the semantic + opposition + graph passes only when `--semantic` is set — all propose-only (`src/pipeline/check.ts:871`, `src/pipeline/check.ts:884-927`). Back in `runCheck`, one `FND_EXCLUDED_FROM_FORMAL` per gate-excluded requirement is emitted (`src/pipeline/check.ts:1030`), waivers are dropped, and `verified` is computed as `demotions.length === 0` — a demotion-only verdict where propose signals and coverage gaps can only push it FALSE (`src/pipeline/check.ts:1289`). The report is wrapped in a `success('check', ...)` envelope with the exit code from `exitCodeForEnvelope` (`src/cli/index.ts:632`, `src/cli/index.ts:161`).
 
 ```mermaid
 sequenceDiagram
     participant CLI as check action (cli/index.ts)
     participant Pipe as runCheck (pipeline/check.ts)
-    participant Gate as gateRequirements
+    participant Gate as gateRequirements (waiver-aware)
     participant Solv as runSolvers
     participant Z3 as Z3 context (SMT)
-    participant Num as numeric tier
-    participant Tmp as temporal tier
-    participant Sem as semantic + graph
+    participant Num as numeric + propose signals
+    participant OptTier as temporal / semantic (opt-in)
     CLI->>Pipe: runCheck(doc, checkOpts)
-    Pipe->>Pipe: analyze (structural) + GtWR lint
-    Pipe->>Pipe: detectAmbiguity (always-on)
-    Pipe->>Gate: gateRequirements → excludedIds
-    Gate-->>Pipe: included / excluded partition
+    Pipe->>Pipe: analyze + GtWR lint + detectAmbiguity
+    Pipe->>Gate: gateRequirements(reqs, waivers) → excludedIds
+    Gate-->>Pipe: included / excluded (waived lint re-admits)
     Pipe->>Solv: runSolvers(doc, { formal })
     Solv->>Z3: getContext + encode(included)
     Z3-->>Solv: contradiction/subsumption/vacuity/completeness/similar/review
-    Solv->>Num: findNumericContradictions(ALL reqs)
-    Num-->>Solv: FND_NUMERIC_CONTRADICTION
-    alt --temporal
-        Solv->>Tmp: findTemporalContradictions(ALL, bound)
-        Tmp-->>Solv: FND_TEMPORAL_CONTRADICTION (sound-for-UNSAT)
-    end
-    alt --semantic
-        Solv->>Sem: findSimilarSemantic + buildSimilarityGraph(included)
-        Sem-->>Solv: FND_SIMILAR_SEMANTIC / MISSING_TRACE_LINK / DUPLICATE_CLUSTER (propose)
+    Solv->>Num: findNumericContradictions(ALL) + quantity-alias + relational
+    Num-->>Solv: FND_NUMERIC_CONTRADICTION (decide) / *_CANDIDATE, *_UNCHECKED (propose)
+    opt --temporal / --semantic
+        Solv->>OptTier: temporal / semantic+opposition+graph
+        OptTier-->>Solv: FND_TEMPORAL_CONTRADICTION / propose-only findings
     end
     Solv-->>Pipe: FormalTierResult
-    Pipe->>Pipe: attachEvidenceToAll + sort + counts
-    Pipe-->>CLI: CheckReport
+    Pipe->>Pipe: emit FND_EXCLUDED_FROM_FORMAL, drop waivers, sort + counts
+    Pipe->>Pipe: demotions[] → verified = demotions.length === 0
+    Pipe-->>CLI: CheckReport (verified, coverage.demotions)
     CLI->>CLI: emit(success('check', report))
 ```
 
@@ -60,37 +55,38 @@ sequenceDiagram
     end
 ```
 
-## 3. `symspec certify` (Lean 4, opt-in)
+## 3. The PROPOSE → DECIDE author loop (issue #2)
 
-`certify` is the only command touching `src/certify/*`; it loads the document, discovers the Lean toolchain (raising `ERR_LEAN_TOOLCHAIN_MISSING` on a miss), emits a `.lean` file, and runs Lean over it as an NDJSON stream (`src/cli/index.ts:434`, `src/certify/run.ts:305`, `src/certify/run.ts:310`, `src/certify/run.ts:322`). Each requirement is emitted as a placeholder `True` theorem — this attests the toolchain elaborates, NOT requirement semantics (`src/cli/index.ts:794-807`). It emits `FND_CERTIFIED` / `FND_CERTIFY_FAILED`.
+The two-pass loop that closes reproducer-a. Pass 1: one physical quantity phrased two ways ("complete the infusion within ≤30 min" vs "run the infusion for ≥60 min") splits onto two quantity keys, so the numeric tier never compares them; `findQuantityAliasCandidates` fires a propose-only `FND_QUANTITY_ALIAS_CANDIDATE` that DEMOTES `verified` and carries the exact `glossary add` command (`src/formal/quantity-alias.ts:160`, `src/pipeline/check.ts:835`). The author commits the alias via `glossaryAdd` (`src/cli/glossary.ts:58`) — the only step that touches the decide-tier surface. Pass 2: the committed glossary is passed as the numeric quantity-alias map, `quantityKey` canonicalizes both labels to one key (`src/pipeline/check.ts:809`, `src/formal/numeric.ts:170`), and the LIA/LRA solver proves `FND_NUMERIC_CONTRADICTION` (≤30 ∧ ≥60 UNSAT). A fuzzy signal only proposed; only the sound solver decided. Pinned as a regression fixture (`adversarial/eval-rounds.ts:589`).
 
 ```mermaid
 sequenceDiagram
-    participant CLI as certify action (cli/index.ts)
-    participant Disc as discoverLeanToolchain
-    participant Emit as emitLeanFile
-    participant Run as runLean (NDJSON)
-    participant Lean as lean toolchain
-    CLI->>Disc: discoverLeanToolchain()
-    alt toolchain missing
-        Disc-->>CLI: LeanDiscoveryError → ERR_LEAN_TOOLCHAIN_MISSING
-    else discovered
-        Disc-->>CLI: toolchain pin
-        CLI->>Emit: emitLeanFile(placeholder True theorems)
-        Emit-->>CLI: .lean source
-        CLI->>Run: runLean(source, opts)
-        Run->>Lean: elaborate + parse NDJSON
-        Lean-->>Run: per-theorem results + axiom provenance
-        Run-->>CLI: FND_CERTIFIED / FND_CERTIFY_FAILED
-    end
-    CLI->>CLI: emit(success('certify', report))
+    participant Author as author / agent
+    participant Check as symspec check
+    participant Alias as findQuantityAliasCandidates
+    participant Gloss as glossaryAdd (cli)
+    participant Num as numeric tier (LIA/LRA)
+    Note over Author,Num: Pass 1 — abstain (PROPOSE)
+    Author->>Check: symspec check
+    Check->>Num: findNumericContradictions (two verb-phrasings, split keys)
+    Num-->>Check: no same-quantity conflict found
+    Check->>Alias: same-system+trigger, opposed bounds, shared object
+    Alias-->>Check: FND_QUANTITY_ALIAS_CANDIDATE (+ glossary add cmd)
+    Check-->>Author: verified=false, demotion: quantity-alias-candidate
+    Note over Author,Num: commit the DECIDE-tier artifact
+    Author->>Gloss: symspec glossary add "infusion within" "run the infusion"
+    Gloss-->>Author: alias committed to doc.glossary
+    Note over Author,Num: Pass 2 — prove (DECIDE)
+    Author->>Check: symspec check (re-run)
+    Check->>Num: findNumericContradictions (alias map → one key)
+    Num-->>Check: FND_NUMERIC_CONTRADICTION (≤30 ∧ ≥60 UNSAT) naming both
+    Check-->>Author: error finding, candidate stops firing
 ```
-
 
 ## See also
 
-- [symspec · Data flow](../../architecture/data-flow.md) — 6 shared source citations
-- [symspec · Module map](../../architecture/module-map.md) — 6 shared source citations
-- [symspec · Component diagram](../architecture/components.md) — 5 shared source citations
-- [symspec · Contract map](../../insights/contract-map.md) — 5 shared source citations
-- [symspec · Public API](../../reference/public-api.md) — 5 shared source citations
+- [Module map](../../architecture/module-map.md) — 8 shared source citations
+- [Processes](../../behavior/processes.md) — 8 shared source citations
+- [System overview](../../architecture/system-overview.md) — 4 shared source citations
+- [Component diagram](../architecture/components.md) — 4 shared source citations
+- [Business logic](../../insights/business-logic.md) — 4 shared source citations

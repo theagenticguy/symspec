@@ -126,7 +126,7 @@ export const ErrCodeMeta = { /* z.literal(code).describe(meaning) per code */ }
 export function errCodeCatalog(): CodeCatalogEntry<ErrCode>[]
 ```
 
-The closed, append-only `ERR_*` enum (20 codes: `ERR_USAGE`, `ERR_DOC_NOT_FOUND`, `ERR_DOC_PARSE`, `ERR_SCHEMA_VERSION`, `ERR_IO`, `ERR_DUPLICATE_ID`, `ERR_NOT_FOUND`, `ERR_INVALID_RELATION`, `ERR_INVALID_ATTR`, `ERR_NULL_REQUIRED`, `ERR_PARSE_NO_MODAL`, `ERR_PARSE_AMBIGUOUS_CLAUSES`, `ERR_PARSE_COMPOUND`, `ERR_PARSE_NOT_A_REQUIREMENT`, `ERR_SOLVER_MISSING`, `ERR_SOLVER_TIMEOUT`, `ERR_SOLVER_INCONCLUSIVE`, `ERR_LEAN_TOOLCHAIN_MISSING`, `ERR_DOC_EXISTS`, `ERR_EMBED_MODEL_MISSING`) plus its per-code `.describe()` corpus, which the manifest reads to build its error-code table. `src/core/codes.ts:48`, `src/core/codes.ts:86`, `src/core/codes.ts:95`, `src/core/codes.ts:225`.
+The closed, append-only `ERR_*` enum (21 codes: `ERR_USAGE`, `ERR_DOC_NOT_FOUND`, `ERR_DOC_PARSE`, `ERR_SCHEMA_VERSION`, `ERR_IO`, `ERR_DUPLICATE_ID`, `ERR_NOT_FOUND`, `ERR_INVALID_RELATION`, `ERR_INVALID_ATTR`, `ERR_NULL_REQUIRED`, `ERR_PARSE_NO_MODAL`, `ERR_PARSE_AMBIGUOUS_CLAUSES`, `ERR_PARSE_COMPOUND`, `ERR_PARSE_NOT_A_REQUIREMENT`, `ERR_SOLVER_MISSING`, `ERR_SOLVER_TIMEOUT`, `ERR_SOLVER_INCONCLUSIVE`, `ERR_LEAN_TOOLCHAIN_MISSING`, `ERR_DOC_EXISTS`, `ERR_EMBED_MODEL_MISSING`, `ERR_DUPLICATE_KEY`) plus its per-code `.describe()` corpus, which the manifest reads to build its error-code table. `ERR_DUPLICATE_KEY` is the newest tail code: an `add`/`apply` supplied a `--key`/`"key"` another requirement already uses (`src/core/codes.ts:82-84`). `src/core/codes.ts:48`, `src/core/codes.ts:87`, `src/core/codes.ts:90`, `src/core/codes.ts:99`, `src/core/codes.ts:234`.
 
 ---
 
@@ -140,7 +140,7 @@ The full `check`-command pipeline that wires Tier-0 structural, lint, ambiguity,
 export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<CheckReport>
 ```
 
-Runs the default `check` pipeline over a loaded document in this order: structural analysis → GtWR lint (per-statement + set-level) → the always-on deterministic ambiguity family → the gate partition → the free + SMT formal tier via `runSolvers`. The formal closure runs contradiction / subsumption / vacuity / completeness / similarity / needs-review over the gate-INCLUDED subset, the numeric/arithmetic conflict tier over ALL requirements, the bounded temporal tier over ALL requirements when `options.temporal` is set, and the semantic paraphrase pass + embedding similarity graph when `options.semantic` is set. Returns a `CheckReport` with normalized `findings[]`, `excluded[]`, `pairsChecked`, and severity `counts`. `src/pipeline/check.ts:311`.
+Runs the default `check` pipeline over a loaded document in this order: structural analysis → GtWR lint (per-statement + set-level) → the always-on deterministic ambiguity family → the gate partition → the free + SMT formal tier via `runSolvers`. The formal closure runs contradiction / subsumption / vacuity / completeness / similarity / needs-review over the gate-INCLUDED subset, the numeric/arithmetic conflict tier over ALL requirements, the bounded temporal tier over ALL requirements when `options.temporal` is set, and the semantic paraphrase pass + embedding similarity graph + opposition-candidate proposals when `options.semantic` is set (the `symspec` CLI always supplies an embedder, so the semantic tier is effectively core there; at the library level it stays opt-in). It also runs the issue-#2 coverage disclosures — quantity-alias candidates (`findQuantityAliasCandidates`, `src/formal/quantity-alias.ts`) and relational-unchecked detection (`findRelationalUnchecked`, `src/formal/relational.ts`), neither re-exported from the barrel — and the lint→formal exclusion signal, each of which DEMOTES `verified`. Returns a `CheckReport` carrying normalized `findings[]`, `excluded[]`, `pairsChecked`, `waived`, severity `counts`, a `residualRisk` roll-up, a per-requirement `coverage` report with the actionable `demotions[]` work list, the first-class `verified` boolean, and (when a strict gate was requested) `strictGate`. `src/pipeline/check.ts:678`.
 
 ### CheckOptions
 
@@ -168,7 +168,12 @@ export interface CheckReport {
   findings: CheckFinding[]
   excluded: Exclusion[]
   pairsChecked: number
+  waived: number
   counts: { error: number; warn: number; info: number }
+  residualRisk: ResidualRisk
+  coverage: CoverageReport
+  verified: boolean
+  strictGate?: 'pass' | 'fail'
 }
 export interface CheckFinding {
   code: string
@@ -182,7 +187,9 @@ export interface CheckFinding {
 }
 ```
 
-Every tier's native finding shape projects into one normalized `CheckFinding` — a stable `code` (`FND_*` / `GTWR_*`), a `severity` the exit-code contract keys on, `tier` (`'structural' | 'lint' | 'formal'`), `requirementIds[]`, `message`, and optional `span` / `suggestion` (lint) / `evidence` (formal). `src/pipeline/check.ts:150`, `src/pipeline/check.ts:103`, `src/pipeline/check.ts:91`.
+Every tier's native finding shape projects into one normalized `CheckFinding` — a stable `code` (`FND_*` / `GTWR_*`), a `severity` the exit-code contract keys on, `tier` (`'structural' | 'lint' | 'formal'`), `requirementIds[]`, `message`, and optional `span` / `suggestion` (lint) / `evidence` (formal). `src/pipeline/check.ts:111`, `src/pipeline/check.ts:324`, `src/pipeline/check.ts:102`.
+
+`verified` is the load-bearing first-class boolean, hardened by the issue-#2 adversarial eval: it is `true` only when every gate-included requirement participates in a cross-requirement comparison, no `FND_OPPOSITION_CANDIDATE` is untriaged, a decide-tier comparison actually happened, and (with ≥2 requirements) the semantic tier ran. A spec with <2 requirements is vacuously verified. `CoverageReport.demotions[]` enumerates each reason `verified` is `false` with the exact discharging op (`antonym add` / `glossary add` / `waive` / rewrite), so `verified: false` reads as a finite work list rather than a dead end. This encodes the DEMOTION-ONLY rule: propose-only findings and coverage stats can only push `verified` toward `false`, never toward `true`. `src/pipeline/check.ts:344-368`, `src/pipeline/check.ts:251-321`.
 
 ### encodeIncluded / toEncodable
 
@@ -256,7 +263,7 @@ export interface NumericPredicate {
 }
 ```
 
-Lifts every `(quantity, comparator, value, unit)` numeric predicate in one slot, deterministically, with unit normalization (seconds→ms, kb→B, …) and a canonical per-system quantity key. Returns `[]` when no predicate is present — a missed extraction is a false negative, never a fabricated constraint. `src/formal/numeric.ts:196`, `src/formal/numeric.ts:33`.
+Lifts every `(quantity, comparator, value, unit)` numeric predicate in one slot, deterministically, with unit normalization (seconds→ms, kb→B, …) and a canonical per-system quantity key. Returns `[]` when no predicate is present — a missed extraction is a false negative, never a fabricated constraint. `src/formal/numeric.ts:196`, `src/formal/numeric.ts:33`. The module also exports the `DIMENSIONS` table (`Dimension[]`, two dimensions: a `ms` base spanning ms…hours and a `B` base spanning b…GiB) and its `Dimension` type, so the manifest can surface the tier's recognized unit spellings from the same source the normalizer uses. `src/formal/numeric.ts:64`, `src/formal/numeric.ts:52`. Not re-exported through the top-level barrel (`src/index.ts:132` re-exports only `extractNumericPredicates` + `NumericPredicate`); the manifest imports `DIMENSIONS` directly from `formal/numeric.ts`.
 
 ### findNumericContradictions
 
@@ -320,7 +327,7 @@ export async function findSimilarSemantic(
 ): Promise<SimilarSemanticFinding[]>
 ```
 
-Embeds response phrasings and reports high-cosine pairs that did NOT already unify to one atom, as `FND_SIMILAR_SEMANTIC` propose-only findings suggesting glossary merges. Requires an injected `Embedder` (the `check --semantic` path loads it lazily). `src/formal/semantic.ts:76`.
+Embeds response phrasings and reports high-cosine pairs that did NOT already unify to one atom, as `FND_SIMILAR_SEMANTIC` propose-only findings suggesting glossary merges; a same-trigger high-cosine pair also carries an inline antonym suggestion. Requires an injected `Embedder` (the CLI `check` path always loads it). `DEFAULT_SEMANTIC_THRESHOLD = 0.72` (`src/formal/semantic.ts:110`); `SemanticRequirement.trigger` is `string | undefined`. `src/formal/semantic.ts:135`, `src/formal/semantic.ts:36`. The sibling `findOppositionCandidates` (also barrel-exported via `export *`) proposes `FND_OPPOSITION_CANDIDATE` findings — same-system responses that share an object phrase but differ on the leading verb — each suggesting a concrete `symspec antonym add`; `DEFAULT_OPPOSITION_COSINE_FLOOR = 0.5` is only a topical-relatedness gate, the shared-object/different-verb structure is the signal. `src/formal/semantic.ts:307`, `src/formal/semantic.ts:248`, `src/formal/semantic.ts:220`.
 
 ### loadEmbedder / Embedder / cosine / EmbedModelMissingError
 
@@ -387,7 +394,7 @@ export const solverKindToFndCode: Record<string, FndCode>
 export function certifiedToFndCode(certified: boolean): FndCode
 ```
 
-The single closed `FND_*` enum spanning every tier — structural, free-lint, formal-SMT, completeness, certify, semantic, numeric, DAG, embedding-graph, ambiguity, and temporal codes — plus its per-code `.describe()` corpus (which the manifest reads) and the reachability bridges mapping each producer's discriminant to its code. `src/formal/codes.ts:54`, `src/formal/codes.ts:96`, `src/formal/codes.ts:103`, `src/formal/codes.ts:223`, `src/formal/codes.ts:237`, `src/formal/codes.ts:242`.
+The single closed `FND_*` enum (30 codes) spanning every tier — structural, free-lint, formal-SMT, completeness, certify, semantic, numeric, DAG, embedding-graph, ambiguity, and temporal codes — plus its per-code `.describe()` corpus (which the manifest reads) and the reachability bridges mapping each producer's discriminant to its code. The three newest tail codes are the issue-#2 adversarial-hardening coverage disclosures, all `info`-severity and all propose-only (they DEMOTE `data.verified`, never assert a conflict): `FND_EXCLUDED_FROM_FORMAL` (a requirement dropped from the SMT tier by a blocking lint/parse finding; fix the finding to re-admit it — waiving alone does not restore coverage), `FND_QUANTITY_ALIAS_CANDIDATE` (two same-system/same-trigger numeric bounds landed on different quantity keys that share a noun token — suggests `symspec glossary add` to unify them), and `FND_RELATIONAL_UNCHECKED` (a shared trigger carries numeric bounds plus singleton atoms — the aggregate/cross-quantity shape the pairwise numeric tier does not attempt). `src/formal/codes.ts:54`, `src/formal/codes.ts:101-121`, `src/formal/codes.ts:127`, `src/formal/codes.ts:134`, `src/formal/codes.ts:252-266`, `src/formal/codes.ts:279`, `src/formal/codes.ts:293`, `src/formal/codes.ts:298`.
 
 ---
 
@@ -488,11 +495,11 @@ export type Envelope<T = unknown> = SuccessEnvelope<T> | ErrorEnvelope
 export const EnvelopeTypeSchema = z.enum([
   'manifest', 'init', 'add', 'update', 'parse', 'check', 'certify', 'list',
   'show', 'derive', 'satisfy', 'remove-edge', 'delete', 'export', 'error',
-  'glossary', 'download-model',
+  'glossary', 'download-model', 'apply', 'waive', 'install', 'antonym',
 ])
 ```
 
-The closed, append-only enum of envelope `type` discriminants — one per result-bearing command (the success `type` equals the command name) plus the reserved `'error'`. `EnvelopeTypes` is the inner tuple. `src/index.ts:71`.
+The closed, append-only enum of envelope `type` discriminants (21 members) — one per result-bearing command (the success `type` equals the command name) plus the reserved `'error'`. The four tail members `apply` / `waive` / `install` / `antonym` were appended for the corresponding commands. `EnvelopeTypes` is the inner tuple. Re-exported at `src/index.ts:71`; declared in `src/cli/types-enum.ts:54`.
 
 ### buildManifest / Manifest
 
@@ -514,11 +521,10 @@ export type Manifest = z.infer<typeof ManifestSchema>
 
 `buildManifest` builds the self-describing manifest an agent fetches once to learn symspec's entire surface — command inventory, each command's JSON-Schema argument shape, the closed `types` set, and the `error`/`gtwr`/`fnd` code catalogs. Pure and byte-stable. The CLI's `buildManifestWithBackends()` attaches a live backend-availability probe. `src/index.ts:70`.
 
-
 ## See also
 
-- [symspec · Module map](../architecture/module-map.md) — 25 shared source citations
-- [symspec · Business logic](../insights/business-logic.md) — 10 shared source citations
-- [symspec · Component diagram](../diagrams/architecture/components.md) — 9 shared source citations
-- [symspec · Data flow](../architecture/data-flow.md) — 8 shared source citations
-- [symspec · Processes](../behavior/processes.md) — 8 shared source citations
+- [Module map](../architecture/module-map.md) — 31 shared source citations
+- [Business logic](../insights/business-logic.md) — 18 shared source citations
+- [Processes](../behavior/processes.md) — 16 shared source citations
+- [Impact analysis](../insights/impact-analysis.md) — 16 shared source citations
+- [Contract map](../insights/contract-map.md) — 12 shared source citations

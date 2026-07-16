@@ -36,7 +36,7 @@ The doc shape everything reads (573 LOC). **23 non-test files, 19 test files** r
 | Rename/remove a field in `f` (e.g. `systemResponse`) (`src/core/schema.ts:218`) | Every composed schema and all product importers fail to compile; `earsToTemporal` and `extractNumericPredicates` both read `systemResponse`/`trigger`/`preCondition` off the view | `tsc --noEmit`; manifest byte-stability + description-propagation tests (`src/cli/__tests__/manifest.test.ts:62-97`) |
 | Edit a field's `.describe()` text (`src/core/schema.ts:214-218`) | The manifest argument description and the generated `AGENTS.md` change byte-for-byte — intended single-source propagation, not a bug | `AGENTS.md` drift gate (`pnpm check:agents`, `package.json:49`) |
 | Bump `SCHEMA_VERSION` (`src/core/schema.ts:573`) | Every existing on-disk document loads as `ERR_SCHEMA_VERSION`; there is no migrator — the contract is re-create via `init`+`parse`/`add` | `load.ts` version check; `src/core/__tests__/load.test.ts` |
-| Add a `Finding` kind to the union (`src/core/schema.ts:519-546`) | `analyze.ts` must emit it and `pipeline/check.ts`'s `STRUCTURAL_SEVERITY` map (`src/pipeline/check.ts:235`) — a `Record<FndCode & 'FND_${string}', …>` — must map its FND code, or it fails to type-check | `tsc --noEmit`; `src/core/__tests__/schema.test.ts` |
+| Add a `Finding` kind to the union (`src/core/schema.ts:519-546`) | `analyze.ts` must emit it and `pipeline/check.ts`'s `STRUCTURAL_SEVERITY` map (`src/pipeline/check.ts:604`) — a `Record<FndCode & 'FND_${string}', …>` — must map its FND code, or it fails to type-check | `tsc --noEmit`; `src/core/__tests__/schema.test.ts` |
 
 The `RequirementsDoc` TypeScript type (`src/core/schema.ts:567`) and the Zod `RequirementsDocSchema` are two hand-maintained views of one shape, kept identical by `load.test.ts`/`schema.test.ts`.
 
@@ -62,7 +62,7 @@ The guarded-implication encoder (293 LOC): turns an EARS requirement into `REQ-i
 | Change the `guard` from the verbatim requirement id (`src/formal/encode.ts:239`) | The unsat core no longer maps back to culprit ids — this contract is shared by the numeric and temporal tiers, which reuse the identical assumption-literal-guard technique (`src/formal/numeric-contradiction.ts:84-89`, `src/formal/temporal.ts:126-131`) | `src/formal/__tests__/encode.test.ts`; contradiction/numeric/temporal tier tests |
 | Add or change a `Formula` op (`src/formal/encode.ts:97-113`) | `materialize()`'s switch is exhaustive; the `cmp` arithmetic node lowers to a `z3-solver` `Real` comparison (`src/formal/encode.ts:272-290`) — a new op without a case fails to compile | `tsc --noEmit` (exhaustiveness) |
 | Change `NumericComparator` (`src/formal/encode.ts:116`) | `numeric.ts`'s comparator lexicon, `cmp()`, and `materialize`'s comparator switch (`src/formal/encode.ts:277-289`) all key on it | `tsc --noEmit`; `src/formal/__tests__/numeric.test.ts` |
-| Change the injected `Atomize` signature (`src/formal/encode.ts:81`) | `atomize.ts`'s adapter and `pipeline/check.ts`'s `makeAtomize` wiring (`src/pipeline/check.ts:178-189`) | `tsc --noEmit` |
+| Change the injected `Atomize` signature (`src/formal/encode.ts:81`) | `atomize.ts`'s adapter and `pipeline/check.ts`'s `makeAtomize` wiring (`src/pipeline/check.ts:518`, `:596`, `:746`) | `tsc --noEmit` |
 
 The encoder is deliberately Z3-free and pure (`src/formal/encode.ts:31-46`); atomization is injected as a function type, never imported.
 
@@ -91,15 +91,18 @@ The Embedder contract and the pinned model. `embed.ts` (240 LOC, **5 non-test / 
 
 ## src/pipeline/check.ts
 
-The tier orchestrator (533 LOC): `runCheck(doc, options)` wires Tier-0 structural → GtWR lint → always-on ambiguity → the AC-3-7 gate → free tier + the injected formal closure → evidence attach, into one `CheckReport` (`src/pipeline/check.ts:311-533`). **2 non-test (`src/index.ts`, `src/cli/index.ts`), 1 test** references. This file is where every v3 tier is turned on or off and where the gate-scope decision per tier lives.
+The tier orchestrator (1350 LOC): `runCheck(doc, options)` wires Tier-0 structural → GtWR lint → always-on ambiguity → the waiver-aware AC-3-7 gate → free tier + the injected formal closure → the propose-only quantity-alias/relational detectors → coverage + demotion computation → `verified`, into one `CheckReport` (`src/pipeline/check.ts:311`). **2 non-test (`src/index.ts`, `src/cli/index.ts`), 1 test** references. This file is where every v3 tier is turned on or off, where the gate-scope decision per tier lives, and — since the issue-#2 hardening — where `verified` is computed as `demotions.length === 0` and every propose-only coverage finding is classified into a demotion. It is the single highest-leverage change surface for the doctrine: the demotion-only invariant lives entirely in this file.
 
 | Change | What breaks | Guard that catches it |
 |---|---|---|
-| Reorder the tier sequence (`src/pipeline/check.ts:314-527`) | The forced parse → lint → gate → symbolize → solve order is a soundness invariant — the SMT layer must never see gate-excluded input | `src/pipeline/__tests__/check.test.ts`, `gate.test.ts` |
-| Change which set a tier runs over | The numeric and temporal tiers deliberately run over ALL requirements, not the gate-included subset (`src/pipeline/check.ts:396-419`); moving them behind the gate would let a lint-blocking finding hide a real numeric/temporal contradiction | `src/pipeline/__tests__/check-numeric.test.ts` |
-| Change the formal-closure contract (`FormalTierInput`/`FormalTierResult`) | `runSolvers`'s injected `formal` closure (`src/solvers/index.ts:32-52`); the closure reports `findings: []` back and pushes rich findings into `check.ts`'s own array to avoid double-counting (`src/pipeline/check.ts:344`, `:508`) | `tsc --noEmit`; `src/pipeline/__tests__/check.test.ts` |
-| Alter `CheckReport` shape (`src/pipeline/check.ts:150-159`) | The CLI wraps it verbatim; `counts` feeds the exit-code contract (`src/cli/index.ts:97`) | `src/cli/__tests__/integration.test.ts` |
-| Gate a new tier's opt-in flag wrong (`--semantic`/`--temporal`, `src/pipeline/check.ts:412-453`) | Semantic + graph load the embedding model; temporal boots a bounded LTL→SMT check — a default-on mistake makes base `check` load the model or pay solver cost | `src/pipeline/__tests__/check-semantic.test.ts` |
+| Reorder the tier sequence (`src/pipeline/check.ts:311`) | The forced parse → lint → gate → symbolize → solve order is a soundness invariant — the SMT layer must never see gate-excluded input | `src/pipeline/__tests__/check.test.ts`, `gate.test.ts` |
+| Change which set a tier runs over | The numeric and temporal tiers deliberately run over ALL requirements, not the gate-included subset (`src/pipeline/check.ts:822`, `:871`); moving them behind the gate would let a lint-blocking finding hide a real numeric/temporal contradiction | `src/pipeline/__tests__/check-numeric.test.ts` |
+| Add a propose-only code without adding it to `PROPOSE_ONLY_FND_CODES` (`src/pipeline/check.ts:413`) | The fuzzy finding would count toward `verified` — a false promotion, the demotion-only violation. `COVERAGE_GAP_FND_CODES` (`:441`) additionally governs whether it suppresses the `FND_NO_PAIRS_CHECKED` disclaimer | `adversarial/__tests__/eval-rounds.test.ts`; `src/pipeline/__tests__/check.test.ts` |
+| Change the `verified = demotions.length === 0` computation or the `CoverageDemotion.reason` union (`src/pipeline/check.ts:252`, `:1289`) | The agent iteration loop (each demotion is a work-list entry with a discharging action); the `--strict` exit-3 gate reads `verified` | `adversarial/__tests__/eval-rounds.test.ts` (abstention cases assert demote + actionable) |
+| Key the `excluded-from-formal` demotion off the post-waiver set instead of `gateResult.excluded` (`src/pipeline/check.ts:1191`, `:1219`) | Waiving the disclosure would promote `verified` over a requirement the solver never saw — a demotion-only violation the adversarial critic caught | `src/pipeline/__tests__/check.test.ts` |
+| Change the formal-closure contract (`FormalTierInput`/`FormalTierResult`) | `runSolvers`'s injected `formal` closure (`src/solvers/index.ts:32-52`); the closure reports `findings: []` back and pushes rich findings into `check.ts`'s own array to avoid double-counting (`src/pipeline/check.ts:344`, `:1004`) | `tsc --noEmit`; `src/pipeline/__tests__/check.test.ts` |
+| Alter `CheckReport` shape (`src/pipeline/check.ts:324`) | The CLI wraps it verbatim; `counts` feeds the exit-code contract, `coverage`/`verified`/`strictGate` feed exit-3 and `--field` projections (`src/cli/index.ts:97`) | `src/cli/__tests__/integration.test.ts` |
+| Gate a new tier's opt-in flag wrong (`--semantic`/`--temporal`, `src/pipeline/check.ts:871`, `:884`) | Semantic + graph load the embedding model; temporal boots a bounded LTL→SMT check — a default-on mistake makes base `check` load the model or pay solver cost | `src/pipeline/__tests__/check-semantic.test.ts` |
 
 ## src/formal/numeric.ts + src/formal/numeric-contradiction.ts
 
@@ -142,17 +145,17 @@ Two v3.1/v3.2 tiers. `graph.ts` (238 LOC, **2 non-test / 1 test** refs) builds a
 
 Three sibling enums, each the closed set its envelope field validates against, each with a per-code `.describe()` corpus the manifest derives from, each with a prefix-equality snapshot test.
 
-- **`src/core/codes.ts` — ERR_\*** (227 LOC). `ErrCodeSchema` (20 codes, `src/core/codes.ts:48`); `ErrCodeMeta satisfies Record<ErrCode, …>` so enum and corpus cover exactly the same codes at compile time (`src/core/codes.ts:194`). 4 non-test files reference `ErrCode*`; it is the type of the error envelope's `code` (`src/cli/envelope.ts:127`).
+- **`src/core/codes.ts` — ERR_\*** (227 LOC). `ErrCodeSchema` (20 codes, `src/core/codes.ts:48`); `ErrCodeMeta satisfies Record<ErrCode, …>` so enum and corpus cover exactly the same codes at compile time (`src/core/codes.ts:203`). 4 non-test files reference `ErrCode*`; it is the type of the error envelope's `code` (`src/cli/envelope.ts:127`).
 - **`src/lint/codes.ts` — GTWR_\*** (147 LOC). `GtwrCodeSchema` (24 INCOSE GtWR rules, `src/lint/codes.ts:33`); `GtwrCodeMeta satisfies Record<GtwrCode, …>` (`src/lint/codes.ts:147`). 2 non-test refs.
-- **`src/formal/codes.ts` — FND_\*** (244 LOC). `FndCodeSchema` (**25 codes**, `src/formal/codes.ts:54-90`); `FndCodeMeta satisfies Record<FndCode, …>` (`src/formal/codes.ts:211`). 20 non-test files reference `FndCode*`/`FND_` — the findings vocabulary the whole structural/lint/formal/numeric/temporal/graph/ambiguity pipeline emits. The 25 members now include the v3 additions `FND_NUMERIC_CONTRADICTION`, `FND_LEAF_UNVERIFIABLE`, `FND_MISSING_TRACE_LINK`, `FND_DUPLICATE_CLUSTER`, the four `FND_AMBIGUOUS_*`/`FND_AMBIGUITY_NEEDS_JUDGMENT` codes, and `FND_TEMPORAL_CONTRADICTION` (`src/formal/codes.ts:78-90`).
+- **`src/formal/codes.ts` — FND_\*** . `FndCodeSchema` (**30 codes**, `src/formal/codes.ts:54-122`); `FndCodeMeta` (`src/formal/codes.ts:134`) `satisfies Record<FndCode, …>` (`src/formal/codes.ts:267`). 20 non-test files reference `FndCode*`/`FND_` — the findings vocabulary the whole structural/lint/formal/numeric/temporal/graph/ambiguity pipeline emits. The 30 members include the v3 tier codes (`FND_NUMERIC_CONTRADICTION`, `FND_LEAF_UNVERIFIABLE`, `FND_MISSING_TRACE_LINK`, `FND_DUPLICATE_CLUSTER`, the four `FND_AMBIGUOUS_*`/`FND_AMBIGUITY_NEEDS_JUDGMENT`, `FND_TEMPORAL_CONTRADICTION`) and the issue-#2 hardening's three append-only additions: `FND_EXCLUDED_FROM_FORMAL`, `FND_QUANTITY_ALIAS_CANDIDATE`, `FND_RELATIONAL_UNCHECKED`, all info-severity (`src/formal/codes.ts:106`, `:114`, `:121`). Adding or reordering an FND code trips the append-only snapshot AND the reachability scan in `src/formal/__tests__/codes.test.ts` (`:104` prefix-equality, `:232` every code must be produced by an emitter).
 
 | Change | What breaks | Guard that catches it |
 |---|---|---|
-| Remove or rename a shipped code | An agent already switching on it breaks | Append-only snapshot — the frozen prefix must equal `<Codes>.slice(0, N)`: `src/core/__tests__/codes.test.ts:49`, `src/lint/__tests__/codes.test.ts:46`, `src/formal/__tests__/codes.test.ts:102` |
+| Remove or rename a shipped code | An agent already switching on it breaks | Append-only snapshot — the frozen prefix must equal `<Codes>.slice(0, N)`: `src/core/__tests__/codes.test.ts:49`, `src/lint/__tests__/codes.test.ts:46`, `src/formal/__tests__/codes.test.ts:104` |
 | Reorder codes | Same as removal — prefix equality fails | Same snapshot tests |
-| Add a code to the enum but not the `*CodeMeta` corpus | The `satisfies Record<Code, …>` bound fails to type-check (`src/core/codes.ts:194`, `src/lint/codes.ts:147`, `src/formal/codes.ts:211`) | `tsc --noEmit` |
+| Add a code to the enum but not the `*CodeMeta` corpus | The `satisfies Record<Code, …>` bound fails to type-check (`src/core/codes.ts:203`, `src/lint/codes.ts:147`, `src/formal/codes.ts:267`) | `tsc --noEmit` |
 | Edit a code's `.describe()` text | The manifest code table and `AGENTS.md` change byte-for-byte — intended single-source propagation (`src/cli/manifest.ts:18-27`) | Manifest code-table tests (`src/cli/__tests__/manifest.test.ts:103`); `AGENTS.md` drift gate (`package.json:49`) |
-| Add an FND code with no emitter | Dead vocabulary | Reachability test — unreachable FND codes must be empty (`src/formal/__tests__/codes.test.ts:225`) |
+| Add an FND code with no emitter | Dead vocabulary | Reachability test — unreachable FND codes must be empty (`src/formal/__tests__/codes.test.ts:232`) |
 
 Add-a-code is safe by design: append to the END of the enum, add its `.describe()`, and both the manifest and `AGENTS.md` pick it up automatically with zero hand-transcription.
 
@@ -164,8 +167,8 @@ Adding a command requires four in-lockstep edits: a `COMMAND_SPECS` entry (`src/
 
 ## See also
 
-- [symspec · Module map](../architecture/module-map.md) — 20 shared source citations
-- [symspec · Contract map](contract-map.md) — 17 shared source citations
-- [symspec · Public API](../reference/public-api.md) — 15 shared source citations
-- [symspec · Processes](../behavior/processes.md) — 12 shared source citations
-- [symspec · Business logic](business-logic.md) — 10 shared source citations
+- [Module map](../architecture/module-map.md) — 18 shared source citations
+- [Public API](../reference/public-api.md) — 16 shared source citations
+- [Contract map](contract-map.md) — 15 shared source citations
+- [Processes](../behavior/processes.md) — 11 shared source citations
+- [Business logic](business-logic.md) — 10 shared source citations
