@@ -82,6 +82,11 @@ export const EnvelopeTypeSchema = z.enum([
   // Committed antonym-pair management (appended — #1, the opposition analogue
   // of `glossary`).
   'antonym',
+  // The two edge relations that were representable and removable but not
+  // creatable (appended — AC-1-8). APPEND-ONLY: these go at the END, never
+  // beside `derive`/`satisfy`, so the frozen ordinal snapshot stays valid.
+  'verify',
+  'refine',
 ])
 
 /** A single envelope `type` discriminant. */

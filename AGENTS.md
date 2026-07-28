@@ -38,7 +38,7 @@ Failure:
 ```
 
 - `type` is a closed discriminant set (see the manifest `types` array):
-  `manifest`, `init`, `add`, `update`, `parse`, `check`, `certify`, `list`, `show`, `derive`, `satisfy`, `remove-edge`, `delete`, `export`, `error`, `glossary`, `download-model`, `apply`, `waive`, `install`, `antonym`.
+  `manifest`, `init`, `add`, `update`, `parse`, `check`, `certify`, `list`, `show`, `derive`, `satisfy`, `remove-edge`, `delete`, `export`, `error`, `glossary`, `download-model`, `apply`, `waive`, `install`, `antonym`, `verify`, `refine`.
 - Exit codes: **0** clean (warn/info findings do not fail), **1** at least one
   error-severity finding (success envelope still on stdout), **2** an
   `ERR_*` operational failure (error envelope on stdout).
@@ -56,11 +56,13 @@ Failure:
 | `symspec update` | Patch one or more typed attributes on an existing requirement (by UUID or stable key). |
 | `symspec parse` | Parse natural-language requirement prose into structured EARS slots. |
 | `symspec check` | Run the full linter loop over the document and return findings in one envelope. |
-| `symspec certify` | Emit and kernel-check an optional Lean 4 proof artifact for the document. |
+| `symspec certify` | Exercise the Lean 4 toolchain on the document. NOT YET A PROOF ABOUT YOUR SPEC. |
 | `symspec list` | List all current requirements in the document. |
 | `symspec show` | Print the full record of one requirement by UUID. |
 | `symspec derive` | Add a derives edge — the source requirement decomposes into the target. |
 | `symspec satisfy` | Add a satisfies edge — the source requirement satisfies the goal expressed by the target. |
+| `symspec verify` | Add a verifies edge — the source requirement verifies the target. |
+| `symspec refine` | Add a refines edge — the source requirement is a more detailed restatement of the target. |
 | `symspec remove-edge` | Remove a typed directional edge between two requirements (derives | satisfies | verifies | refines). |
 | `symspec delete` | Tombstone a requirement, removing it from the document. |
 | `symspec export` | Export the requirements graph to SysML-v2-flavored JSON for interchange with other tools. |
@@ -96,8 +98,11 @@ Failure:
       `FND_NEEDS_REVIEW` explicitly means "not proven either way".
 5. Re-run `symspec check` after every edit batch; exit 0 = conflict-free
    modulo the scope statement below.
-6. Optionally `symspec certify` for Lean-kernel-checked certificates
-   (requires a Lean toolchain; never needed for `check`).
+6. Do NOT use `symspec certify` as a consistency gate. It emits placeholder
+   `True` theorems, so it returns the same result for a document `check`
+   proves contradictory; `data.certified` is always `false` and
+   `data.toolchainElaborated` reports only that Lean ran. `check` is the
+   load-bearing conflict detector.
 
 ## Recipe — prove a code-vs-intent (or spec-vs-spec) conflict
 
@@ -216,7 +221,7 @@ waiving it (`symspec waive add <code> --ref <id>`) — waiving the
 | `FND_SIMILAR_UNUNIFIED` | info — responses with Jaccard ≥ 0.7 that did not unify to one atom; an over-unification-adjacent review prompt (suggests rewording one response via `symspec update`). |
 | `FND_NEEDS_REVIEW` | info — a per-group solver `unknown`/timeout/unencodable result; explicitly NOT a "no conflict". |
 | `FND_INCOMPLETE` | info — a heuristic guard-coverage gap over a same-trigger-family group; NOT a formal completeness guarantee. |
-| `FND_CERTIFIED` | info — kernel-checked by Lean; carries `#print axioms` provenance. |
+| `FND_CERTIFIED` | info — the Lean toolchain elaborated the generated file; carries `#print axioms` provenance. NOT a proof about the spec: every requirement is emitted as a placeholder `True` theorem, so this fires identically for a document `check` proves contradictory. Never gate a consistency claim on it. |
 | `FND_CERTIFY_FAILED` | error — Lean produced a `severity:"error"` diagnostic; certification failed. |
 | `FND_SIMILAR_SEMANTIC` | info — two responses embed with cosine ≥ threshold but did not unify to one atom; a PROPOSE-only prompt to add a `symspec glossary` entry. Never a verdict. |
 | `FND_NUMERIC_CONTRADICTION` | error — two+ requirements place jointly unsatisfiable linear numeric constraints (LIA/LRA) on the same per-system quantity; ids are the minimal unsat core, evidence lists the conflicting predicates (unit-normalized). |

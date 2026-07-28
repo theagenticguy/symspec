@@ -41,6 +41,8 @@ export type CommandName =
   | 'show'
   | 'derive'
   | 'satisfy'
+  | 'verify'
+  | 'refine'
   | 'remove-edge'
   | 'delete'
   | 'export'
@@ -128,12 +130,17 @@ export const COMMAND_DESCRIPTIONS: Record<CommandName, string> = {
     'strict coverage gate tripped on an otherwise error-free run. Read-only.',
   ),
   certify: lines(
-    'Emit and kernel-check an optional Lean 4 proof artifact for the document.',
-    'Use when you need a durable, kernel-checked certificate beyond the default SMT tier. Generates one batched',
-    'core-Lean file (no Mathlib, no lake), runs it through `lean --json`, and maps the result to FND_CERTIFIED with',
-    '`#print axioms` provenance or FND_CERTIFY_FAILED. Requires a Lean toolchain: if none is discoverable it returns',
-    'ERR_LEAN_TOOLCHAIN_MISSING and never affects any prior SMT result. Strictly opt-in — the default `symspec check`',
-    'never invokes Lean. On success, retains the .lean file plus a pinned lean-toolchain as a re-checkable artifact.',
+    'Exercise the Lean 4 toolchain on the document. NOT YET A PROOF ABOUT YOUR SPEC.',
+    'SCOPE LIMIT — read before using: every requirement is emitted as a placeholder `True` theorem, so the file Lean',
+    'kernel-checks is a tautology. It returns the same result for a spec `symspec check` proves contradictory. It',
+    'attests ONLY that a Lean toolchain is present and the generated file elaborates; `data.certified` is therefore',
+    'always false and `data.toolchainElaborated` carries the real outcome. Never gate a consistency claim on this',
+    'command — `symspec check` is the load-bearing conflict detector. A semantic EARS→Lean encoding is planned',
+    'successor work. Generates one batched core-Lean file (no Mathlib, no lake), runs `lean --json`, and maps the',
+    'result to FND_CERTIFIED with `#print axioms` provenance or FND_CERTIFY_FAILED. Requires a Lean toolchain: if',
+    'none is discoverable it returns ERR_LEAN_TOOLCHAIN_MISSING and never affects any prior SMT result. Strictly',
+    'opt-in — the default `symspec check` never invokes Lean. On success, retains the .lean file plus a pinned',
+    'lean-toolchain.',
   ),
   list: lines(
     'List all current requirements in the document.',
@@ -157,6 +164,19 @@ export const COMMAND_DESCRIPTIONS: Record<CommandName, string> = {
     'Add a satisfies edge — the source requirement satisfies the goal expressed by the target.',
     'Use to link an implementation-level requirement back to a higher-level goal.',
     'Idempotent — adding the same edge twice produces a single edge, so retries are safe.',
+    'Errors when the source requirement does not exist. A later-deleted target leaves a dangling reference for `symspec check`.',
+  ),
+  verify: lines(
+    'Add a verifies edge — the source requirement verifies the target.',
+    'Use to link a verification requirement to the requirement it confirms. This is what discharges the',
+    'FND_LEAF_UNVERIFIABLE finding, which fires on a refinement leaf that no requirement verifies.',
+    'Idempotent — adding the same edge twice produces a single edge, so retries are safe.',
+    'Errors when the source requirement does not exist. A later-deleted target leaves a dangling reference for `symspec check`.',
+  ),
+  refine: lines(
+    'Add a refines edge — the source requirement is a more detailed restatement of the target.',
+    'Use when a requirement restates another at finer granularity, as opposed to decomposing it (use `derive` for',
+    'decomposition). Idempotent — adding the same edge twice produces a single edge, so retries are safe.',
     'Errors when the source requirement does not exist. A later-deleted target leaves a dangling reference for `symspec check`.',
   ),
   'remove-edge': lines(

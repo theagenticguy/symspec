@@ -28,7 +28,7 @@
  * SC-1/SC-2 (v2 on its own terms).
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, writeSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { Command } from 'commander'
 import type { z } from 'zod'
@@ -47,6 +47,7 @@ import {
   discoverSolverBinary,
   runSolverBinary,
 } from '../formal/binary-backend.js'
+import { planContextGroups } from '../formal/contradiction.js'
 import { emitSmt2 } from '../formal/emit-smt2.js'
 import { downloadModelAssets } from '../formal/model-cache.js'
 import { SolverBudgetExceededError } from '../formal/needs-review.js'
@@ -130,10 +131,58 @@ function globalFlags(cmd: Command): GlobalFlags {
 }
 
 /**
+ * Write `text` to stdout COMPLETELY, then terminate with `code`.
+ *
+ * AC-1-2. The obvious `process.stdout.write(text); process.exit(code)` LOSES
+ * DATA: when stdout is a pipe (the primary agent integration path) Node's
+ * stream is asynchronous, so `process.exit` tears the process down with the
+ * tail of the buffer still queued. Measured on a 100-requirement `check
+ * --dense`: a pipe received exactly 65536 bytes (one pipe buffer) of TRUNCATED,
+ * unparseable JSON while the same command redirected to a file — a synchronous
+ * fd — received all 352036 bytes. An agent switching on `type` or reading
+ * `data.verified` got a JSON parse error instead of a verdict.
+ *
+ * `writeSync` on fd 1 bypasses the stream and blocks until the bytes are
+ * handed over, so the envelope is intact before we exit. Two wrinkles it must
+ * handle:
+ *   - PARTIAL WRITES. A pipe accepts at most its buffer per call, so `writeSync`
+ *     returns a short count and we loop from the new offset. Writing bytes (not
+ *     the string) is what makes the offset arithmetic correct for multi-byte
+ *     UTF-8 — a character could otherwise be split across calls.
+ *   - EAGAIN. If fd 1 is a non-blocking pipe, `writeSync` throws instead of
+ *     blocking; retry the same offset. EPIPE (reader closed, e.g. `| head`) is
+ *     not an error worth reporting — the caller stopped listening on purpose.
+ *
+ * Kept separate from {@link emit} so the arity/usage path at the bottom of the
+ * file shares the identical guarantee.
+ */
+function writeStdoutAndExit(text: string, code: number): never {
+  const buf = Buffer.from(text, 'utf8')
+  let offset = 0
+  while (offset < buf.length) {
+    try {
+      offset += writeSync(1, buf, offset, buf.length - offset)
+    } catch (e) {
+      const errno = (e as { code?: string }).code
+      // Non-blocking pipe not ready: retry the same offset.
+      if (errno === 'EAGAIN') continue
+      // Reader hung up (`symspec check | head`). Nothing left to say.
+      if (errno === 'EPIPE') break
+      throw e
+    }
+  }
+  process.exit(code)
+}
+
+/**
  * Render an envelope to stdout honoring the output flags, then exit with the
  * AC-6-2b code. `--dense` (with optional `--evidence`) minifies; otherwise the
  * default is pretty JSON, with `--pretty`/`--human` opting into prose. The
  * envelope is ALWAYS written regardless of exit code; flags never change it.
+ *
+ * Returns `never` — 76 call sites rely on that for control flow (`if (bad)
+ * emit(…)` and then fall through), so the write must be synchronous rather
+ * than awaiting a drain callback.
  */
 function emit(env: Envelope, flags: GlobalFlags): never {
   // `--field` projection (jq-style): reduce the envelope to just the requested
@@ -150,15 +199,13 @@ function emit(env: Envelope, flags: GlobalFlags): never {
     const projected = projectFields(base, parseFieldPaths(flags.field))
     const rendered =
       flags.dense === true ? minifyJson(projected) : JSON.stringify(projected, null, 2)
-    process.stdout.write(`${rendered}\n`)
-    process.exit(exitCodeForEnvelope(env))
+    writeStdoutAndExit(`${rendered}\n`, exitCodeForEnvelope(env))
   }
   const rendered =
     flags.dense === true
       ? denseEnvelope(env, undefined, { keepEvidence: flags.evidence === true })
       : formatEnvelope(env, flags)
-  process.stdout.write(`${rendered}\n`)
-  process.exit(exitCodeForEnvelope(env))
+  writeStdoutAndExit(`${rendered}\n`, exitCodeForEnvelope(env))
 }
 
 /**
@@ -604,30 +651,61 @@ program
               })
             : fullReport
 
-        // AC-4-8: export the portable .smt2 artifact for the included set.
+        // AC-4-8 / AC-1-3: export the portable .smt2 artifact for the included
+        // set. The artifact sweeps EVERY context group (one push/pop block
+        // each), because the guarded formulas alone encode a different question:
+        // `(X ⇒ Y) ∧ (X ⇒ ¬Y)` is satisfiable with `X` false, so an artifact
+        // that asserts no context reports `sat` on exactly the conflicts the
+        // in-process tier proves. Verified before the fix: `z3` said `sat` where
+        // `check` said FND_CONTRADICTION.
         let emittedSmt2: string | undefined
         if (opts.emitSmt2 !== undefined) {
-          const smt2 = emitSmt2(encodeIncluded(doc))
+          const encodedForExport = encodeIncluded(doc)
+          const smt2 = emitSmt2(encodedForExport, {
+            contextGroups: planContextGroups(encodedForExport),
+          })
           const { writeFile } = await import('node:fs/promises')
           await writeFile(opts.emitSmt2, smt2, 'utf8')
           emittedSmt2 = opts.emitSmt2
         }
 
-        // AC-4-9: run the same included-requirement artifact through the
-        // discovered external binary as a cross-check.
-        let binaryCrossCheck: (BinaryCheckResult & { solver: string; version: string }) | undefined
+        // AC-4-9 / AC-1-3: run the included set through the discovered external
+        // binary as a cross-check. One artifact PER context group, because
+        // `runSolverBinary` parses a single verdict — and because a per-group
+        // verdict is what is comparable with the in-process tier. The run's
+        // verdict is `unsat` if ANY group is unsat (that group's core names the
+        // culprits), mirroring `findContradictions`' per-group sweep.
+        let binaryCrossCheck:
+          | (BinaryCheckResult & { solver: string; version: string; groupsChecked: number })
+          | undefined
         if (wantsBinary) {
           const discovered = discoverSolverBinary(
             opts.solverPath !== undefined ? { solverPath: opts.solverPath } : {},
           )
-          const smt2 = emitSmt2(encodeIncluded(doc))
+          const encodedForBinary = encodeIncluded(doc)
+          const groups = planContextGroups(encodedForBinary)
           const timeoutMs = checkOpts?.timeoutMs
-          const result = runSolverBinary(
-            smt2,
-            discovered,
-            timeoutMs !== undefined ? { timeoutMs } : {},
-          )
-          binaryCrossCheck = { ...result, solver: discovered.bin, version: discovered.version }
+          let aggregate: BinaryCheckResult = { status: 'sat', core: [] }
+          for (const group of groups) {
+            const groupResult = runSolverBinary(
+              emitSmt2(encodedForBinary, { contextAtoms: group.contextAtoms }),
+              discovered,
+              timeoutMs !== undefined ? { timeoutMs } : {},
+            )
+            if (groupResult.status === 'unsat') {
+              // First proven conflict wins: its core is the evidence.
+              aggregate = groupResult
+              break
+            }
+            // `unknown` is not "no conflict" — remember it, keep looking.
+            if (groupResult.status === 'unknown') aggregate = { status: 'unknown', core: [] }
+          }
+          binaryCrossCheck = {
+            ...aggregate,
+            solver: discovered.bin,
+            version: discovered.version,
+            groupsChecked: groups.length,
+          }
         }
 
         emit(
@@ -684,12 +762,14 @@ program
             code: 'FND_CERTIFIED' as const,
             severity: 'info' as const,
             message:
-              'Lean kernel-checked the batched spec file. NOTE (v2 scope): each ' +
-              'requirement is emitted as a placeholder `True` theorem, so this ' +
-              'certificate attests only that the Lean toolchain ran and the file ' +
-              'elaborates — it does NOT yet encode requirement semantics. A ' +
-              'semantic EARS→Lean encoding is a planned successor; the SMT `check` ' +
-              'tier is the load-bearing conflict detector today.',
+              'Lean elaborated the batched file, but this is NOT a proof about your ' +
+              'spec. Every requirement is emitted as a placeholder `True` theorem ' +
+              '(`theorem req_<id> : True := by decide`), so what was kernel-checked ' +
+              'is a tautology: the same result is returned for a spec `check` proves ' +
+              'contradictory. It attests ONLY that the Lean toolchain ran and the ' +
+              'file elaborates. Do not gate on this as a consistency certificate — ' +
+              '`symspec check` is the load-bearing conflict detector. A semantic ' +
+              'EARS→Lean encoding is planned successor work.',
             axioms: result.axioms,
             ...(result.artifact !== undefined ? { artifact: result.artifact } : {}),
           }
@@ -699,7 +779,24 @@ program
             message: 'Lean reported an error-severity diagnostic; the spec did not certify.',
             diagnostics: result.errors,
           }
-      emit(success('certify', { certified: result.certified, findings: [finding] }), flags)
+      // AC-1-4 — `certified` USED to be the top-level verdict field, which made
+      // the placeholder tautology look like a document-level certificate: an
+      // agent switching on `data.certified` was told `true` for a spec `check`
+      // proves contradictory (verified live). The honest name for what actually
+      // held is "the toolchain elaborated the file", so that is what the field
+      // is called. `certified` remains, pinned to `false`, because it is a
+      // published field an agent may already switch on — and `false` is the
+      // truthful answer to "did Lean certify this document?" until the semantic
+      // encoding lands.
+      emit(
+        success('certify', {
+          certified: false as const,
+          toolchainElaborated: result.certified,
+          encodesRequirementSemantics: false as const,
+          findings: [finding],
+        }),
+        flags,
+      )
     } catch (e) {
       // A spawn failure that slipped past discovery still maps to the missing
       // toolchain code rather than escaping as a stack trace.
@@ -765,6 +862,32 @@ program
   .option('--file <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
   .action(async (fromId: string, toId: string, opts: { file?: string }, cmd: Command) => {
     await runEdgeAdd(opts.file, fromId, 'satisfies', toId, 'satisfy', cmd)
+  })
+
+// --- verify ----------------------------------------------------------------
+// AC-1-8. `verifies`/`refines` were representable in the schema, removable via
+// `remove-edge`, and honored by `analyze`/`export` — but creatable by NOTHING.
+// That made `analyze`'s own FND_LEAF_UNVERIFIABLE advice ("add a verify link")
+// impossible to carry out. These two commands close that.
+program
+  .command('verify')
+  .description(COMMAND_DESCRIPTIONS.verify)
+  .argument('<fromId>', 'source requirement UUID (the verification requirement)')
+  .argument('<toId>', 'target requirement UUID it verifies')
+  .option('--file <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
+  .action(async (fromId: string, toId: string, opts: { file?: string }, cmd: Command) => {
+    await runEdgeAdd(opts.file, fromId, 'verifies', toId, 'verify', cmd)
+  })
+
+// --- refine ----------------------------------------------------------------
+program
+  .command('refine')
+  .description(COMMAND_DESCRIPTIONS.refine)
+  .argument('<fromId>', 'source requirement UUID (the more detailed restatement)')
+  .argument('<toId>', 'target requirement UUID it refines')
+  .option('--file <path>', 'path to the requirements document (overrides SYMSPEC_DOC / default)')
+  .action(async (fromId: string, toId: string, opts: { file?: string }, cmd: Command) => {
+    await runEdgeAdd(opts.file, fromId, 'refines', toId, 'refine', cmd)
   })
 
 // --- remove-edge -----------------------------------------------------------
@@ -1257,9 +1380,9 @@ function docToTheorems(doc: RequirementsDoc): Parameters<typeof runCertify>[0] {
 async function runEdgeAdd(
   file: string | undefined,
   fromId: string,
-  relation: 'derives' | 'satisfies',
+  relation: 'derives' | 'satisfies' | 'verifies' | 'refines',
   toId: string,
-  type: 'derive' | 'satisfy',
+  type: 'derive' | 'satisfy' | 'verify' | 'refine',
   cmd: Command,
 ): Promise<never> {
   const flags = globalFlags(cmd)
@@ -1328,8 +1451,7 @@ async function main(): Promise<void> {
       'symspec <command> [args] — run `symspec manifest` for the full command surface',
       extra,
     )
-    process.stdout.write(`${formatEnvelope(env)}\n`)
-    process.exit(exitCodeForEnvelope(env))
+    writeStdoutAndExit(`${formatEnvelope(env)}\n`, exitCodeForEnvelope(env))
   }
 }
 

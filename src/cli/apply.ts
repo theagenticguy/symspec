@@ -51,8 +51,34 @@ import { failure, success } from './envelope.js'
 export const APPLY_USAGE = 'symspec apply [file] [--stdin] [--continue-on-error]'
 
 /** The op verbs `apply` accepts, mapped to core Change kinds internally. */
-export const APPLY_OPS = ['add', 'update', 'derive', 'satisfy', 'remove-edge', 'delete'] as const
+export const APPLY_OPS = [
+  'add',
+  'update',
+  'derive',
+  'satisfy',
+  // AC-1-8 — `verify`/`refine` join the batch op set so `apply` has parity with
+  // the single-edge commands. Previously `remove-edge` accepted all four
+  // relations while only two could ever be created, in either surface.
+  'verify',
+  'refine',
+  'remove-edge',
+  'delete',
+] as const
 export type ApplyOp = (typeof APPLY_OPS)[number]
+
+/**
+ * Edge-creating op → the schema relation it adds. One table so the op set and
+ * the relation set cannot drift (AC-1-8).
+ */
+const EDGE_OP_RELATION: Record<
+  'derive' | 'satisfy' | 'verify' | 'refine',
+  'derives' | 'satisfies' | 'verifies' | 'refines'
+> = {
+  derive: 'derives',
+  satisfy: 'satisfies',
+  verify: 'verifies',
+  refine: 'refines',
+}
 
 /** One op's outcome in the per-op results array. */
 export interface OpResult {
@@ -140,12 +166,14 @@ function toChange(
       }
     }
     case 'derive':
-    case 'satisfy': {
+    case 'satisfy':
+    case 'verify':
+    case 'refine': {
       const from = resolveRef(str(rec, 'from'), 'from')
       if ('code' in from) return from
       const to = resolveRef(str(rec, 'to'), 'to')
       if ('code' in to) return to
-      const relation = op === 'derive' ? 'derives' : 'satisfies'
+      const relation = EDGE_OP_RELATION[op as 'derive' | 'satisfy' | 'verify' | 'refine']
       return {
         change: { kind: 'AddRelationship', from: from.id, relation, to: to.id },
         id: from.id,

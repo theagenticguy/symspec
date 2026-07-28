@@ -18,7 +18,13 @@
 import { describe, expect, it } from 'vitest'
 import type { Requirement } from '../../core/schema'
 import { GtwrCodes } from '../codes'
-import { checkGtWRules, checkGtWRulesSet, type GtWRFinding } from '../gtwr'
+import {
+  checkGtWRules,
+  checkGtWRulesSet,
+  type GtWRFinding,
+  R9_OPEN_ENDED_PHRASES,
+  R38_ABBREVIATIONS,
+} from '../gtwr'
 
 /** Minimal ubiquitous requirement whose rendered sentence is the raw text. */
 function makeReq(text: string, id = 'req-1'): Requirement {
@@ -198,6 +204,193 @@ describe('T-AC-3-2: enum reachability (AC-6-3 append-only guard)', () => {
     expect(missing, `unreachable GtWR codes: ${missing.join(', ')}`).toEqual([])
     // And nothing produced outside the enum.
     for (const code of produced) expect(GtwrCodes).toContain(code)
+  })
+})
+
+describe('GtWR lexicon reachability — EVERY entry of R9 and R38 must be able to fire', () => {
+  // WHY THIS EXISTS (T-AC-1-6). Both lexicons used to compile as
+  // `\b(<entry>|<entry>|…)\b`. A trailing `\b` after an entry whose match ends
+  // in `.` can NEVER hold (`.` is already a non-word character), so `etc.`,
+  // `approx.`, `temp.`, `ref.`, `std.` and `alt.` were unreachable DEAD CODE —
+  // six lexicon entries that could not produce a finding, including `etc.`, the
+  // canonical INCOSE GtWR R9 exemplar named in R9's own finding description.
+  //
+  // Fixing the instance is not enough; this table is the mechanism that stops
+  // the CLASS. The fixture keys are checked for exact set-equality against the
+  // exported lexicons, so adding a lexicon entry without a fixture fails here,
+  // and a compilation change that makes any existing entry unmatchable fails
+  // here too — instead of silently shipping a rule that never fires.
+  //
+  // `matched` pins the SPAN as well as the firing: a dotted entry must report a
+  // span covering the whole offending token INCLUDING its period.
+  interface EntryFixture {
+    /** Sentence containing the entry. */
+    readonly sentence: string
+    /** The exact substring the finding's span must cover. */
+    readonly matched: string
+  }
+
+  const R9_FIXTURES: Readonly<Record<string, EntryFixture>> = {
+    'including but not limited to': {
+      sentence: 'the system shall support formats including but not limited to JSON',
+      matched: 'including but not limited to',
+    },
+    'such as but not limited to': {
+      sentence: 'the system shall support formats such as but not limited to JSON',
+      matched: 'such as but not limited to',
+    },
+    // The regression fixture: sentence-final dotted entry.
+    'etc\\.': {
+      sentence: 'The system shall log errors, warnings, etc.',
+      matched: 'etc.',
+    },
+    'et cetera': {
+      sentence: 'the system shall log errors, warnings, et cetera',
+      matched: 'et cetera',
+    },
+    'and so on': {
+      sentence: 'the system shall log errors, warnings and so on',
+      matched: 'and so on',
+    },
+    'and so forth': {
+      sentence: 'the system shall log errors, warnings and so forth',
+      matched: 'and so forth',
+    },
+    like: {
+      sentence: 'the system shall accept formats like JSON',
+      matched: 'like',
+    },
+    'for example': {
+      sentence: 'the system shall accept a payload, for example JSON',
+      matched: 'for example',
+    },
+  }
+
+  const R38_FIXTURES: Readonly<Record<string, EntryFixture>> = {
+    'approx\\.': {
+      sentence: 'The system shall record approx. 50 events.',
+      matched: 'approx.',
+    },
+    info: { sentence: 'the system shall display the info panel', matched: 'info' },
+    spec: { sentence: 'the system shall load the spec file', matched: 'spec' },
+    // The bare-word control: this entry always worked and must keep working.
+    config: { sentence: 'the system shall load the config', matched: 'config' },
+    op: { sentence: 'the system shall queue the op record', matched: 'op' },
+    'min(?!imum)': { sentence: 'the system shall clamp to the min value', matched: 'min' },
+    'max(?!imum)': { sentence: 'the system shall clamp to the max value', matched: 'max' },
+    'temp\\.': { sentence: 'the system shall log the temp. reading', matched: 'temp.' },
+    'ref\\.': { sentence: 'the system shall resolve the ref. table', matched: 'ref.' },
+    'std\\.': { sentence: 'the system shall apply the std. profile', matched: 'std.' },
+    'alt\\.': { sentence: 'the system shall use the alt. route', matched: 'alt.' },
+  }
+
+  const LEXICONS: ReadonlyArray<
+    [
+      label: string,
+      code: string,
+      severity: GtWRFinding['severity'],
+      entries: readonly string[],
+      fixtures: Readonly<Record<string, EntryFixture>>,
+    ]
+  > = [
+    ['R9', 'GTWR_R9_OPEN_ENDED', 'error', R9_OPEN_ENDED_PHRASES, R9_FIXTURES],
+    ['R38', 'GTWR_R38_ABBREVIATION', 'warn', R38_ABBREVIATIONS, R38_FIXTURES],
+  ]
+
+  for (const [label, code, severity, entries, fixtures] of LEXICONS) {
+    // Set-equality both ways: no entry without a fixture (an unproven entry
+    // could be dead), and no fixture for an entry that no longer exists.
+    it(`${label}: every lexicon entry has a fixture and vice versa`, () => {
+      expect([...entries].sort()).toEqual(Object.keys(fixtures).sort())
+    })
+
+    for (const entry of entries) {
+      it(`${label} entry "${entry}" is reachable — ${code} fires with a span over the entry`, () => {
+        const fixture = fixtures[entry]
+        expect(fixture, `no fixture for ${label} entry "${entry}"`).toBeDefined()
+        if (!fixture) return
+        const { sentence, matched } = fixture
+
+        const findings = checkGtWRules(makeReq(sentence), sentence)
+        const finding = findings.find((f) => f.code === code)
+
+        expect(finding, `${code} not produced for "${entry}" in: "${sentence}"`).toBeDefined()
+        if (!finding) return
+        expect(finding.severity).toBe(severity)
+        assertSpanValid(finding, sentence)
+        // The span must cover the whole offending token — for a dotted entry
+        // that INCLUDES the trailing period.
+        expect(sentence.slice(finding.span[0], finding.span[1]).toLowerCase()).toBe(
+          matched.toLowerCase(),
+        )
+      })
+    }
+  }
+
+  // Making dotted entries matchable must not broaden the rules elsewhere.
+  //
+  // The specific trap: the fix classifies entries by whether their MATCHED TEXT
+  // ends in a word character. A tempting-but-wrong classifier looks at the last
+  // character of the regex SOURCE instead — under which `min(?!imum)` ends in
+  // `)`, gets sorted into the no-trailing-`\b` branch, and starts matching
+  // inside "minutes"/"minor". "minimum"/"maximum" alone do NOT catch that (the
+  // lookahead still suppresses them), so the word-INFIX cases below are the
+  // ones that make the guard bite. Verified: this test fails on that classifier.
+  const R38_MUST_NOT_FIRE: ReadonlyArray<string> = [
+    // the lookahead's own job
+    'the system shall enforce the minimum threshold',
+    'the system shall enforce the maximum threshold',
+    // the trailing-`\b` job: an abbreviation entry must not match a word INFIX
+    'the system shall wait 5 minutes',
+    'the system shall log a minor event',
+    'the system shall record the maximal value',
+    'the system shall inform the operator',
+    'the system shall open the specimen record',
+    'the system shall confirm the configuration baseline',
+  ]
+
+  for (const sentence of R38_MUST_NOT_FIRE) {
+    it(`R38 does NOT fire on: "${sentence}"`, () => {
+      const findings = checkGtWRules(makeReq(sentence), sentence)
+      const r38 = findings.find((f) => f.code === 'GTWR_R38_ABBREVIATION')
+      expect(
+        r38,
+        r38 ? `R38 wrongly matched "${sentence.slice(r38.span[0], r38.span[1])}"` : '',
+      ).toBeUndefined()
+    })
+  }
+
+  it('R9 does NOT fire on a word merely CONTAINING a lexicon entry', () => {
+    // Same trailing-`\b` invariant on the R9 side: "like" must not match inside
+    // "likely", nor "and so on" inside a longer run-on.
+    for (const sentence of [
+      'the system shall reject a likely duplicate',
+      'the system shall record the likeness score',
+    ]) {
+      const findings = checkGtWRules(makeReq(sentence), sentence)
+      const r9 = findings.find((f) => f.code === 'GTWR_R9_OPEN_ENDED')
+      expect(
+        r9,
+        r9 ? `R9 wrongly matched "${sentence.slice(r9.span[0], r9.span[1])}"` : '',
+      ).toBeUndefined()
+    }
+  })
+
+  it('a word ending in a period at a sentence boundary does not trip any lexicon rule', () => {
+    // The dotted branch drops its trailing `\b`; a plain word followed by the
+    // sentence-final period must still produce nothing.
+    const sentence = 'The system shall log the request.'
+    const findings = checkGtWRules(makeReq(sentence), sentence)
+    expect(findings, JSON.stringify(findings)).toEqual([])
+  })
+
+  it('R9 fires on a mid-sentence "etc.," as well as a sentence-final "etc."', () => {
+    const sentence = 'The system shall log errors, warnings, etc., before exiting'
+    const findings = checkGtWRules(makeReq(sentence), sentence)
+    const r9 = findings.filter((f) => f.code === 'GTWR_R9_OPEN_ENDED')
+    expect(r9).toHaveLength(1)
+    const finding = r9[0]!
+    expect(sentence.slice(finding.span[0], finding.span[1])).toBe('etc.')
   })
 })
 

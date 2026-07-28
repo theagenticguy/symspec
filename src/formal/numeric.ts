@@ -156,6 +156,18 @@ const UNIT = '([a-zA-Z]+)?'
  * is the agent-confirmed, committed artifact; nothing fuzzy touches the key. A
  * no-op when no alias map is supplied or the label is not an alias, so the
  * default numeric path is byte-identical to before.
+ *
+ * SOUNDNESS: the key deliberately does NOT include `baseUnit`. A quantity key
+ * names the *thing* bounded ("respond"), while `baseUnit` names the scale its
+ * value was normalized onto; the two are separate facts and the key must keep
+ * naming only the first. Comparability is a property of a PAIR of predicates, so
+ * the unit belongs in the comparison partition, not the identity: see
+ * `numeric-contradiction.ts` (`comparisonKey`), which groups on
+ * `(quantity, baseUnit)` so a unitless bound is never compared against a united
+ * one — and `quantity-alias.ts`, which skips a pair whose `baseUnit` differs.
+ * Folding the unit in here would also rename the `quantity` in every emitted
+ * `evidence.numeric` block and every SMT-LIB2 Real const, changing observable
+ * output for genuine same-unit conflicts that were always correct.
  */
 function quantityKey(
   systemName: string,

@@ -59,6 +59,7 @@ import { FndCodeMeta, FndCodes } from '../formal/codes.js'
 import { DIMENSIONS } from '../formal/numeric.js'
 import { DEFAULT_SEMANTIC_THRESHOLD } from '../formal/semantic.js'
 import { GtwrCodeMeta, GtwrCodes } from '../lint/codes.js'
+import { APPLY_OPS } from './apply.js'
 import { type BackendsReport, BackendsReportSchema, collectBackends } from './backends.js'
 import { COMMAND_SUMMARIES, type CommandName } from './descriptions.js'
 import { API_VERSION } from './envelope.js'
@@ -339,6 +340,22 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
       file: docFileOpt,
     }),
   },
+  {
+    name: 'verify',
+    args: z.object({
+      from: RelationshipAddInputShape.from,
+      to: RelationshipAddInputShape.to,
+      file: docFileOpt,
+    }),
+  },
+  {
+    name: 'refine',
+    args: z.object({
+      from: RelationshipAddInputShape.from,
+      to: RelationshipAddInputShape.to,
+      file: docFileOpt,
+    }),
+  },
   { name: 'remove-edge', args: z.object({ ...RelationshipRemoveInputShape, file: docFileOpt }) },
   { name: 'delete', args: z.object({ ...RequirementDeleteInputShape, file: docFileOpt }) },
   { name: 'export', args: z.object({ file: docPathArg }) },
@@ -362,7 +379,9 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
         .min(1)
         .describe(
           lines(
-            'Path to a JSONL op file — one {"op":"add|update|derive|satisfy|remove-edge|delete", ...} record',
+            // Op list derived from APPLY_OPS so the manifest cannot drift from
+            // the parser's real op set (the manifest-single-source rule).
+            `Path to a JSONL op file — one {"op":"${APPLY_OPS.join('|')}", ...} record`,
             'per line. Blank lines and #-comment lines are skipped. Requirement refs (ref/from/to) accept a',
             'stable key or a UUID; an `add` op may carry "key" so later ops in the SAME batch reference it.',
             'The `delete` op also accepts "id" as an alias for "ref" (both key-or-UUID), so it agrees with',

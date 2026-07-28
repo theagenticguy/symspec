@@ -62,6 +62,7 @@ import { detectAmbiguity } from '../formal/ambiguity.js'
 import { type AntonymEntry, buildAntonymIndexWithDoc } from '../formal/antonyms.js'
 import { glossaryIndex, normalize, atomize as realAtomize } from '../formal/atomize.js'
 import { getContext } from '../formal/backend.js'
+import { type SolverBounds, SolverBudget } from '../formal/budget.js'
 import { type FndCode, structuralKindToFndCode } from '../formal/codes.js'
 import { findContradictions } from '../formal/contradiction.js'
 import {
@@ -79,7 +80,7 @@ import {
 import { attachEvidenceToAll, type Evidence } from '../formal/finding.js'
 import { buildSimilarityGraph, type GraphRequirement } from '../formal/graph.js'
 import { checkCompleteness } from '../formal/incomplete.js'
-import { findNeedsReview } from '../formal/needs-review.js'
+import { findNeedsReview, SolverBudgetExceededError } from '../formal/needs-review.js'
 import { extractNumericPredicates } from '../formal/numeric.js'
 import { findNumericContradictions } from '../formal/numeric-contradiction.js'
 import { findQuantityAliasCandidates } from '../formal/quantity-alias.js'
@@ -126,9 +127,25 @@ export interface CheckFinding {
 export interface CheckOptions {
   /** Pairwise lexical-similarity threshold override (free tier + AC-4-12). */
   similarityThreshold?: number
-  /** Per-group solver timeout in ms (AC-4-7). Default 2000. */
+  /**
+   * Per-solver timeout in ms (AC-4-7, `--timeout-ms`). Default 2000. Applied via
+   * `solver.set('timeout', …)` to EVERY solver every tier constructs (AC-1-7):
+   * contradiction, subsumption, vacuity, incomplete, numeric, temporal, and
+   * needs-review. A solver that hits it returns `unknown`, which each tier
+   * already handles conservatively, so the timeout can only withhold a finding.
+   */
   timeoutMs?: number
-  /** Whole-run solver budget in ms (AC-4-7 `ERR_SOLVER_TIMEOUT` boundary). */
+  /**
+   * Whole-run solver budget in ms (`--solver-budget-ms`). A wall-clock deadline
+   * spanning EVERY solver tier (AC-1-7), not one tier: the pipeline builds one
+   * {@link SolverBudget} and each tier consults it before each unit of work.
+   *
+   * A tier that stops early records a truncation, which becomes a
+   * `solver-budget-exhausted` {@link CoverageDemotion} — so a truncated run can
+   * never report `verified: true`. The stricter `ERR_SOLVER_TIMEOUT` abort stays
+   * exactly where AC-4-7 put it: `findNeedsReview` throwing when the budget dies
+   * inside its own group loop.
+   */
   solverBudgetMs?: number
   /**
    * Opt-in semantic paraphrase pass (AC-9-5, `--semantic`). When provided, an
@@ -269,6 +286,13 @@ export interface CoverageDemotion {
     // hide, which symspec's pairwise numeric tier does not attempt. An honest
     // "not attempted" caveat so `verified` never outruns what was compared.
     | 'relational-reasoning-not-attempted'
+    // AC-1-7: the whole-run `--solver-budget-ms` deadline expired and at least
+    // one solver tier stopped before finishing its units of work. The run did
+    // NOT compare everything it would otherwise have compared, so it cannot
+    // certify. One demotion per truncated tier, naming the unrun unit count.
+    // Discharged by raising `--solver-budget-ms` (or shrinking the document),
+    // never by waiving: a suppressed disclosure is not a completed comparison.
+    | 'solver-budget-exhausted'
   requirementIds: string[]
   /** The exact command (or rewrite guidance) that discharges this demotion. */
   action: string
@@ -661,6 +685,25 @@ function normalizeLint(requirements: readonly Requirement[]): CheckFinding[] {
   return [...perStatement, ...setLevel]
 }
 
+/**
+ * Between-tier whole-run deadline gate (AC-1-7). Returns `true` — and records the
+ * skip on the budget's truncation ledger — when `budget` is present and already
+ * expired, so the caller can skip a whole tier that would otherwise start work it
+ * cannot finish. Returns `false` when there is no budget (unbounded run) or time
+ * remains.
+ *
+ * Used for the two tiers whose internal loop is NOT cut mid-flight: the
+ * contradiction tier (whose per-context-group discipline must not be
+ * restructured) and the needs-review tier (which owns the `ERR_SOLVER_TIMEOUT`
+ * boundary). Every recorded skip becomes a `solver-budget-exhausted` demotion, so
+ * a skipped tier can never be mistaken for a clean one.
+ */
+function budgetSpent(budget: SolverBudget | undefined, tier: string, units: number): boolean {
+  if (budget === undefined || !budget.expired()) return false
+  budget.truncate(tier, units)
+  return true
+}
+
 /** Stable output order: severity, then code, then first requirement id. */
 function compareFindings(a: CheckFinding, b: CheckFinding): number {
   const bySeverity = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]
@@ -727,6 +770,14 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
   let coverageAtomOwners: ReadonlyMap<string, ReadonlySet<string>> = new Map()
   let coverageIncludedIds: readonly string[] = []
 
+  // AC-1-7: the ONE whole-run solver deadline every tier shares, plus its
+  // truncation ledger. Constructed inside the formal runner (so the clock starts
+  // at the first solver contact, not at document load — no solver knob governs
+  // parse/lint time) and hoisted here so the demotion loop below can read the
+  // ledger after `runSolvers` returns. `undefined` when no budget was requested,
+  // in which case every tier runs unbounded exactly as before.
+  let solverBudget: SolverBudget | undefined
+
   const report = await runSolvers(doc, {
     ...(options.similarityThreshold !== undefined
       ? { similarityThreshold: options.similarityThreshold }
@@ -737,6 +788,16 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       const encodable = included.map(toEncodable)
 
       const timeoutMs = options.timeoutMs ?? 2000
+      // AC-1-7: start the whole-run deadline here — the first line of the formal
+      // runner — so it measures SOLVER time. Every tier below receives `bounds`
+      // and therefore both knobs; `bounds.budget` is undefined when the caller
+      // asked for no budget, which makes every tier's deadline check a no-op.
+      solverBudget =
+        options.solverBudgetMs !== undefined ? new SolverBudget(options.solverBudgetMs) : undefined
+      const bounds: SolverBounds = {
+        timeoutMs,
+        ...(solverBudget !== undefined ? { budget: solverBudget } : {}),
+      }
       // AC-9-3: canonicalize atoms through the committed glossary so
       // agent-confirmed paraphrases collide and paraphrased contradictions
       // become provable. Empty glossary ⇒ identical to a glossary-free run.
@@ -778,21 +839,73 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
 
       const includedPairs = pairs.filter((p) => includedIdSet.has(p.a) && includedIdSet.has(p.b))
 
-      const contradictions = await findContradictions(encodable, contradictionOpts)
-      const subsumptions = await checkSubsumption(ctx, encodedById, includedPairs)
-      const vacuities = await checkVacuity(ctx, encoded)
-      const incompletes = await checkCompleteness(ctx, encoded)
+      // AC-1-7: the contradiction tier already bounds each per-group solver
+      // internally (`contradiction.ts` sets `timeout` per group), so the
+      // whole-run deadline is enforced BETWEEN tiers here — the tier is skipped
+      // wholesale if the budget is already spent, and the skip is recorded so it
+      // demotes `verified`. Deliberately NOT a mid-loop cut inside
+      // `findContradictions`: its per-context-group discipline is load-bearing
+      // (the reachability lesson), and this task must not restructure it.
+      const contradictions = budgetSpent(solverBudget, 'contradiction', encodable.length)
+        ? []
+        : await findContradictions(encodable, contradictionOpts)
+      const subsumptions = await checkSubsumption(ctx, encodedById, includedPairs, bounds)
+      const vacuities = await checkVacuity(ctx, encoded, bounds)
+      const incompletes = await checkCompleteness(ctx, encoded, bounds)
       const similar = findSimilarUnunified(
         encodable,
         options.similarityThreshold !== undefined
           ? { similarityThreshold: options.similarityThreshold }
           : {},
       )
-      const review = await findNeedsReview(encodable, {
-        atomize,
-        timeoutMs,
-        ...(options.solverBudgetMs !== undefined ? { solverBudgetMs: options.solverBudgetMs } : {}),
-      })
+      // AC-4-7 boundary, preserved exactly. `findNeedsReview` is the ONE tier
+      // allowed to raise `ERR_SOLVER_TIMEOUT`, and it does so when the budget
+      // dies inside its own group loop. So it is handed the REMAINING budget
+      // rather than the original figure — otherwise a run that had already burned
+      // the budget in subsumption would hand this tier a full fresh budget and
+      // the documented whole-run abort would be unreachable.
+      //
+      // When the budget is ALREADY spent before this tier starts, the tier is
+      // skipped and the skip recorded, rather than entered so it can throw: a
+      // reportable demotion beats an error envelope with no report, and
+      // `verified` is false either way. The throw stays reachable for the
+      // budget-expires-mid-loop case, which is precisely the whole-run boundary
+      // AC-4-7 defines.
+      //
+      // AC-1-7 follow-up. Handing this tier the remaining budget made the
+      // pipeline's failure mode NON-MONOTONE in the budget, which was verified
+      // live on a 100-requirement document: budgets of 1/100/500/1000/1500ms and
+      // 3000ms+ all returned a usable report with honest truncation demotions,
+      // but 2000ms — the band where the budget survives subsumption and then
+      // dies inside this tier's group loop — produced `ERR_SOLVER_TIMEOUT`,
+      // exit 2, and NO report at all. A tighter budget failing more softly than
+      // a looser one is incoherent, and it hands an agent an error envelope on
+      // exactly the runs where a partial verdict is most useful.
+      //
+      // So the pipeline treats a mid-loop budget death the same way it treats
+      // every other tier's truncation: record it and demote. The throw itself is
+      // preserved (its contract is directly tested in
+      // `formal/__tests__/needs-review.test.ts`) and remains the behavior for a
+      // direct library caller of `findNeedsReview`; only the PIPELINE, which has
+      // a report to return and a demotion channel to return it through, absorbs
+      // it. `verified` is false either way, so this trades no soundness.
+      let review: Awaited<ReturnType<typeof findNeedsReview>> = []
+      if (!budgetSpent(solverBudget, 'needs-review', encodable.length)) {
+        try {
+          review = await findNeedsReview(encodable, {
+            atomize,
+            timeoutMs,
+            ...(solverBudget !== undefined
+              ? { solverBudgetMs: Math.max(0, solverBudget.remainingMs()) }
+              : {}),
+          })
+        } catch (e) {
+          if (!(e instanceof SolverBudgetExceededError)) throw e
+          // Unrun group count is unknown from here; record the tier as truncated
+          // so the demotion fires and the coverage report stays honest.
+          solverBudget?.truncate('needs-review', encodable.length)
+        }
+      }
 
       // AC-30-3: numeric/arithmetic conflict tier. Extract per-slot numeric
       // predicates (deterministic, unit-normalized, per-system quantity keys)
@@ -819,7 +932,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
             : []),
         ],
       }))
-      const numericContradictions = await findNumericContradictions(ctx, numericReqPreds)
+      const numericContradictions = await findNumericContradictions(ctx, numericReqPreds, bounds)
 
       // Issue #2 (reproducer a): the numeric tier keys a quantity off the noun
       // phrase before the comparator, so ONE physical quantity described with
@@ -874,6 +987,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
               ctx,
               reqs.map((r) => ({ id: r.id, formula: earsToTemporal(r) })),
               options.temporal.bound ?? 10,
+              bounds,
             )
           : []
 
@@ -1285,6 +1399,37 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
           'to runCheck; pre-warm an air-gapped host with `symspec download-model`.',
       })
     }
+  }
+
+  // AC-1-7 — the soundness-critical demotion. A run whose `--solver-budget-ms`
+  // deadline cut a tier short did NOT compare everything it would otherwise have
+  // compared, so it must not certify. One demotion per truncated tier, naming the
+  // unrun unit count, with the raise-the-budget action.
+  //
+  // Deliberately OUTSIDE the `requirements.length >= 2` guard above. That guard
+  // encodes "a spec with <2 requirements is VACUOUSLY verified" — true only when
+  // the tiers actually ran to completion. Truncation is a statement about the
+  // RUN, not about the document's size, so it demotes unconditionally. This is
+  // the one demotion reason a small document cannot escape.
+  //
+  // Not waiver-discharged: `demotions` is not derived from the finding set here,
+  // so waiving a code cannot suppress it. Truncation is a coverage FACT (the same
+  // reasoning that keeps `excluded-from-formal` keyed off `gateResult.excluded`
+  // rather than the post-waiver `kept` set) — a suppression is not a comparison.
+  for (const t of solverBudget?.truncations() ?? []) {
+    demotions.push({
+      reason: 'solver-budget-exhausted',
+      // No specific requirement is at fault: the whole run was cut short. An
+      // empty id list matches the `semantic-tier-skipped` precedent for a
+      // run-scoped (not requirement-scoped) demotion.
+      requirementIds: [],
+      action:
+        `The ${t.tier} tier stopped after the whole-run --solver-budget-ms deadline ` +
+        `(${solverBudget?.budgetMs ?? 0}ms) expired, leaving ${t.skipped} unit(s) of work unrun, so ` +
+        'this run compared less than it would have. Raise --solver-budget-ms (or reduce the ' +
+        'document / raise --similarity-threshold to shrink the candidate-pair set), then re-run ' +
+        '`symspec check`. Waiving a finding cannot discharge this — the comparison did not happen.',
+    })
   }
   const verified = demotions.length === 0
   const encodedCount = coverageIncludedIds.length

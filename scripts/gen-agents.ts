@@ -115,8 +115,11 @@ ${commandTable()}
       \`FND_NEEDS_REVIEW\` explicitly means "not proven either way".
 5. Re-run \`symspec check\` after every edit batch; exit 0 = conflict-free
    modulo the scope statement below.
-6. Optionally \`symspec certify\` for Lean-kernel-checked certificates
-   (requires a Lean toolchain; never needed for \`check\`).
+6. Do NOT use \`symspec certify\` as a consistency gate. It emits placeholder
+   \`True\` theorems, so it returns the same result for a document \`check\`
+   proves contradictory; \`data.certified\` is always \`false\` and
+   \`data.toolchainElaborated\` reports only that Lean ran. \`check\` is the
+   load-bearing conflict detector.
 
 ## Recipe — prove a code-vs-intent (or spec-vs-spec) conflict
 

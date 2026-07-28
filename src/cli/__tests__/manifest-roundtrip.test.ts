@@ -72,6 +72,11 @@ const POSITIONAL_ALIAS: Record<string, Record<string, string>> = {
   update: { id: 'ref' },
   derive: { from: 'fromId', to: 'toId' },
   satisfy: { from: 'fromId', to: 'toId' },
+  // AC-1-8 — the two edge commands added alongside derive/satisfy share their
+  // positional naming, so they share the alias. This test caught the drift the
+  // moment they were registered, which is exactly its job.
+  verify: { from: 'fromId', to: 'toId' },
+  refine: { from: 'fromId', to: 'toId' },
   'remove-edge': { from: 'fromId', to: 'toId' },
 }
 

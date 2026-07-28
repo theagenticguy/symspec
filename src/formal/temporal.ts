@@ -32,6 +32,7 @@
  */
 
 import type { Z3Context } from './backend.js'
+import type { SolverBounds } from './budget.js'
 import type { Z3Bool } from './encode.js'
 import type { Evidence } from './finding.js'
 import type { TemporalFormula } from './temporal-patterns.js'
@@ -119,17 +120,30 @@ export async function findTemporalContradictions(
   ctx: Z3Context,
   reqTemporals: readonly RequirementTemporal[],
   k = 10,
+  bounds: SolverBounds = {},
 ): Promise<TemporalContradictionFinding[]> {
   if (reqTemporals.length < 2) return []
 
+  // AC-1-7 check-before-work: this tier is ONE whole-spec unit of work (a single
+  // bounded check over every requirement at once), so the deadline is checked
+  // before starting it. If the budget is already spent the tier is skipped
+  // wholesale and records the requirement count as unrun — the pipeline turns
+  // that into a `solver-budget-exhausted` demotion, so a skipped temporal tier
+  // never reads as "temporally consistent". Sound-for-UNSAT already means a
+  // non-finding is not a certificate; this makes the SKIP explicit too.
+  if (bounds.budget?.expired() === true) {
+    bounds.budget.truncate('temporal', reqTemporals.length)
+    return []
+  }
+
   const ids = reqTemporals.map((r) => r.id)
-  const solver = buildBoundedSolver(ctx, reqTemporals, k)
+  const solver = buildBoundedSolver(ctx, reqTemporals, k, bounds)
   const guards = ids.map((id) => ctx.Bool.const(id))
   const res = await solver.check(...guards)
   if (res !== 'unsat') return []
 
   const coreIds = dequoteCore(solver.unsatCore(), new Set(ids))
-  const minimal = await minimizeTemporalCore(ctx, reqTemporals, coreIds, k)
+  const minimal = await minimizeTemporalCore(ctx, reqTemporals, coreIds, k, bounds)
   const culprits = (minimal.length > 0 ? minimal : ids).slice().sort()
 
   return [
@@ -182,13 +196,20 @@ function dequoteCore(core: Iterable<{ toString(): string }>, known: Set<string>)
  * trigger; asserting the antecedent reachable at SOME step exposes it. Shared
  * antecedents dedupe by atom name, so two requirements on the same trigger
  * become reachable together without asserting mutually-exclusive triggers.
+ *
+ * This is the ONLY `new ctx.Solver()` site in this module, so applying
+ * `bounds.timeoutMs` here bounds both the main check and every minimization
+ * re-check (AC-1-7). A timeout surfaces as `unknown`, which the sound-for-UNSAT
+ * discipline already discards (a finding is emitted only on `unsat`).
  */
 function buildBoundedSolver(
   ctx: Z3Context,
   reqTemporals: readonly RequirementTemporal[],
   k: number,
+  bounds: SolverBounds = {},
 ): InstanceType<Z3Context['Solver']> {
   const solver = new ctx.Solver()
+  if (bounds.timeoutMs !== undefined) solver.set('timeout', bounds.timeoutMs)
   for (const { id, formula } of reqTemporals) {
     solver.add(ctx.Implies(ctx.Bool.const(id), lowerInitial(ctx, formula, k)))
   }
@@ -205,19 +226,28 @@ function buildBoundedSolver(
   return solver
 }
 
-/** Deletion-based core minimization: drop each id; keep the smallest still-unsat set. */
+/**
+ * Deletion-based core minimization: drop each id; keep the smallest still-unsat
+ * set. `bounds.timeoutMs` reaches each re-check through `buildBoundedSolver`; an
+ * `unknown` from a timeout fails the `=== 'unsat'` test and so KEEPS the
+ * candidate — the conservative direction (a wider blame set, never a wrongly
+ * exonerated culprit). The whole-run budget is deliberately not consulted:
+ * minimization only runs after `unsat` is already proved, and an owed finding is
+ * reported at full precision (same rationale as `minimizeNumericCore`).
+ */
 async function minimizeTemporalCore(
   ctx: Z3Context,
   reqTemporals: readonly RequirementTemporal[],
   core: string[],
   k: number,
+  bounds: SolverBounds = {},
 ): Promise<string[]> {
   let current = [...new Set(core)]
   for (const candidate of [...current]) {
     const trial = current.filter((id) => id !== candidate)
     if (trial.length < 2) continue
     const subset = reqTemporals.filter((r) => trial.includes(r.id))
-    const solver = buildBoundedSolver(ctx, subset, k)
+    const solver = buildBoundedSolver(ctx, subset, k, bounds)
     if ((await solver.check(...trial.map((id) => ctx.Bool.const(id)))) === 'unsat') current = trial
   }
   return current

@@ -49,6 +49,7 @@
  */
 
 import type { Z3Context } from './backend.js'
+import type { SolverBounds } from './budget.js'
 import { atom, type EncodedRequirement, materialize, not, or } from './encode.js'
 
 /** A completeness finding (Appendix B `FND_INCOMPLETE`, info severity). */
@@ -109,6 +110,7 @@ export async function checkGroupCompleteness(
   ctx: Z3Context,
   trigKey: string,
   encoded: readonly EncodedRequirement[],
+  bounds: SolverBounds = {},
 ): Promise<IncompleteFinding | undefined> {
   // Only groups with a meaningful trigger (non-empty key) make sense to check:
   // a group with no trigger has no "event" whose cases need to be partitioned.
@@ -152,6 +154,10 @@ export async function checkGroupCompleteness(
   const coverage = not(or(uniqueDisjuncts))
 
   const solver = new ctx.Solver()
+  // AC-1-7: bound this single solve. A timeout surfaces as `unknown`, which the
+  // `res !== 'sat'` guard below already treats as "can't tell" → NO finding, so
+  // a per-solver timeout can only suppress a heuristic hint, never emit one.
+  if (bounds.timeoutMs !== undefined) solver.set('timeout', bounds.timeoutMs)
   solver.add(materialize(ctx, coverage))
 
   const res = await solver.check()
@@ -181,10 +187,17 @@ export async function checkGroupCompleteness(
  *
  * Returns findings deduplicated by trigger key (each group reports at most one
  * finding). Async because the solver check is the only async boundary.
+ *
+ * Bounded per AC-1-7: `bounds.timeoutMs` bounds each group's solve and
+ * `bounds.budget` is the whole-run deadline, checked BEFORE each group. Note the
+ * grouping here is by TRIGGER key (this tier's own family notion) and the loop
+ * never reorders or merges groups — truncation drops a suffix of groups, it never
+ * mixes two, so the per-group discipline the SMT tiers rely on is intact.
  */
 export async function checkCompleteness(
   ctx: Z3Context,
   all: readonly EncodedRequirement[],
+  bounds: SolverBounds = {},
 ): Promise<IncompleteFinding[]> {
   // Group encoded requirements by their trigger key.
   const groups = new Map<string, EncodedRequirement[]>()
@@ -199,8 +212,14 @@ export async function checkCompleteness(
   }
 
   const findings: IncompleteFinding[] = []
+  let checkedGroups = 0
   for (const [key, members] of groups) {
-    const finding = await checkGroupCompleteness(ctx, key, members)
+    if (bounds.budget?.expired() === true) {
+      bounds.budget.truncate('incomplete', groups.size - checkedGroups)
+      break
+    }
+    checkedGroups += 1
+    const finding = await checkGroupCompleteness(ctx, key, members, bounds)
     if (finding !== undefined) findings.push(finding)
   }
   return findings

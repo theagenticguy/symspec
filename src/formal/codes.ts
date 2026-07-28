@@ -185,7 +185,9 @@ export const FndCodeMeta = {
     ),
   FND_CERTIFIED: z
     .literal('FND_CERTIFIED')
-    .describe('info — kernel-checked by Lean; carries `#print axioms` provenance.'),
+    .describe(
+      'info — the Lean toolchain elaborated the generated file; carries `#print axioms` provenance. NOT a proof about the spec: every requirement is emitted as a placeholder `True` theorem, so this fires identically for a document `check` proves contradictory. Never gate a consistency claim on it.',
+    ),
   FND_CERTIFY_FAILED: z
     .literal('FND_CERTIFY_FAILED')
     .describe('error — Lean produced a `severity:"error"` diagnostic; certification failed.'),

@@ -45,6 +45,7 @@
 
 import type { CandidatePair } from '../solvers/types.js'
 import type { Z3Context } from './backend.js'
+import type { SolverBounds } from './budget.js'
 import { type EncodedRequirement, type Formula, materialize, not } from './encode.js'
 
 /** A directional subsumption finding (Appendix B `FND_SUBSUMPTION`, warn). */
@@ -75,13 +76,92 @@ export type SubsumptionResult = SubsumptionFinding | RedundancyFinding
  * Decide whether `bodyA ⇒ bodyB` is VALID, i.e. `bodyA ∧ ¬bodyB` is `unsat`.
  * Returns `false` on `sat` or `unknown` (conservative — an inconclusive solver
  * result is never reported as a proven implication).
+ *
+ * `timeoutMs` bounds this single `check()` via `solver.set('timeout', …)`
+ * (AC-1-7), the same idiom `contradiction.ts` uses. A solver that hits the
+ * timeout returns `unknown`, which falls into the existing `!== 'unsat'`
+ * conservative branch — so a per-solver timeout can only WITHHOLD a finding,
+ * never manufacture one.
  */
-async function implies(ctx: Z3Context, bodyA: Formula, bodyB: Formula): Promise<boolean> {
+async function implies(
+  ctx: Z3Context,
+  bodyA: Formula,
+  bodyB: Formula,
+  timeoutMs?: number,
+): Promise<boolean> {
   const solver = new ctx.Solver()
+  if (timeoutMs !== undefined) solver.set('timeout', timeoutMs)
   solver.add(materialize(ctx, bodyA))
   solver.add(materialize(ctx, not(bodyB)))
   const res = await solver.check()
   return res === 'unsat'
+}
+
+/**
+ * The atom names a body formula references. Used only by {@link sharesAtom} for
+ * the pre-solver prune; the `cmp` arm carries no propositional atom (the numeric
+ * tier owns arithmetic), and a body never contains one, but it is enumerated for
+ * totality.
+ */
+function atomsOf(f: Formula, into: Set<string>): void {
+  switch (f.op) {
+    case 'atom':
+      into.add(f.name)
+      return
+    case 'not':
+      atomsOf(f.arg, into)
+      return
+    case 'and':
+    case 'or':
+      for (const a of f.args) atomsOf(a, into)
+      return
+    case 'implies':
+      atomsOf(f.lhs, into)
+      atomsOf(f.rhs, into)
+      return
+    case 'cmp':
+      return
+  }
+}
+
+/**
+ * True when the two bodies reference at least one atom in common.
+ *
+ * ## Why a disjoint-atom pair can be skipped SOUNDLY (AC-1-7, cheap pruning)
+ *
+ * Two requirements whose bodies share NO atom cannot subsume each other, so the
+ * two `implies` solves are provably wasted work. The argument rests on the atom
+ * namespacing `atomize.ts` guarantees — every atom is
+ * `sys__<system>__<kind>__<body>`, so a `trig` atom, a `pre` atom and a `resp`
+ * atom can never be the same name:
+ *
+ *   - A body is either `resp` (ubiquitous) or `(context) ⇒ resp`, where
+ *     `context` is a conjunction of `pre`/`trig` literals. Since context atoms
+ *     and the response atom are drawn from disjoint name spaces, no body is a
+ *     tautology (falsify the response, satisfy the context) and none is
+ *     unsatisfiable (satisfy the response). Every body is therefore both
+ *     SATISFIABLE and FALSIFIABLE.
+ *   - Take a model `M_A` satisfying `bodyA` and a model `M_B` falsifying
+ *     `bodyB`. Their variable sets are disjoint, so `M_A ∪ M_B` is a
+ *     well-defined model satisfying `bodyA ∧ ¬bodyB` — i.e. `bodyA ⇒ bodyB` is
+ *     NOT valid. Symmetrically for `bodyB ⇒ bodyA`.
+ *
+ * So neither direction can hold, and `checkSubsumptionPair` would return
+ * `undefined` after two guaranteed-`sat` solves. Skipping is
+ * behavior-preserving, not a soundness trade.
+ *
+ * Scope note: this prunes pairs in the PAIRWISE tier only. It never drops a
+ * context group — the contradiction/vacuity tiers run per-context-group over the
+ * whole spec, independent of the candidate-pair set
+ * (`solvers/free/pairwise-filter.ts:5-13`), and are untouched here.
+ */
+function sharesAtom(a: EncodedRequirement, b: EncodedRequirement): boolean {
+  const atomsA = new Set<string>()
+  atomsOf(a.body, atomsA)
+  const atomsB = new Set<string>()
+  atomsOf(b.body, atomsB)
+  for (const name of atomsB) if (atomsA.has(name)) return true
+  return false
 }
 
 /**
@@ -96,9 +176,10 @@ export async function checkSubsumptionPair(
   ctx: Z3Context,
   a: EncodedRequirement,
   b: EncodedRequirement,
+  bounds: SolverBounds = {},
 ): Promise<SubsumptionResult | undefined> {
-  const aImpliesB = await implies(ctx, a.body, b.body)
-  const bImpliesA = await implies(ctx, b.body, a.body)
+  const aImpliesB = await implies(ctx, a.body, b.body, bounds.timeoutMs)
+  const bImpliesA = await implies(ctx, b.body, a.body, bounds.timeoutMs)
 
   if (aImpliesB && bImpliesA) {
     return {
@@ -146,18 +227,45 @@ function subsumption(
  *
  * Pairs whose ids are absent from `encodedById` (excluded by the pipeline gate,
  * AC-3-7) are skipped silently.
+ *
+ * ## Bounding (AC-1-7) — this is the O(N²) hot path
+ *
+ * Two unbounded `implies()` solves per pair made this the dominant cost of a
+ * large run (measured: 36.4s of a 37.3s solver budget at N=100 / 4950 pairs).
+ * Both knobs now apply:
+ *
+ *   - `bounds.timeoutMs` bounds each individual solve.
+ *   - `bounds.budget` is the whole-run deadline, checked BEFORE each pair (never
+ *     mid-pair), so a pair is either fully checked or not started. A truncated
+ *     run is therefore a strict PREFIX of the full run and can only miss
+ *     findings, never invent them. On truncation the tier records the unrun pair
+ *     count on the budget ledger, which the pipeline surfaces as a
+ *     `solver-budget-exhausted` demotion — a truncated run can never report
+ *     `verified: true`.
+ *
+ * Pairs whose bodies share no atom are pruned before any solver contact; see
+ * {@link sharesAtom} for why that is behavior-preserving rather than a soundness
+ * trade.
  */
 export async function checkSubsumption(
   ctx: Z3Context,
   encodedById: ReadonlyMap<string, EncodedRequirement>,
   pairs: readonly CandidatePair[],
+  bounds: SolverBounds = {},
 ): Promise<SubsumptionResult[]> {
   const findings: SubsumptionResult[] = []
-  for (const pair of pairs) {
+  for (const [index, pair] of pairs.entries()) {
+    // Check-before-work: the deadline is consulted before a pair's first solve,
+    // so no pair ever half-runs past it.
+    if (bounds.budget?.expired() === true) {
+      bounds.budget.truncate('subsumption', pairs.length - index)
+      break
+    }
     const a = encodedById.get(pair.a)
     const b = encodedById.get(pair.b)
     if (a === undefined || b === undefined) continue
-    const result = await checkSubsumptionPair(ctx, a, b)
+    if (!sharesAtom(a, b)) continue
+    const result = await checkSubsumptionPair(ctx, a, b, bounds)
     if (result !== undefined) findings.push(result)
   }
   return findings

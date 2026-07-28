@@ -16,6 +16,35 @@
  * with a single predicate can never self-conflict, so groups of size < 2 are
  * skipped without a solver call.
  *
+ * ## Why the group is (quantity, baseUnit) and NOT quantity alone
+ *
+ * A quantity key names the *thing* being bounded; `baseUnit` names the scale the
+ * value was normalized onto (`''` = unitless, magnitude UNKNOWN). Two bounds are
+ * only arithmetically comparable when they landed on the SAME base — so the
+ * comparison group is the pair, and predicates whose `baseUnit` differs go into
+ * separate solver calls and are never asserted together.
+ *
+ * Without that partition the tier fabricated an error-severity false positive
+ * (the cardinal sin under sound-modulo-atomization): "respond within 5" (unitless,
+ * value 5) and "respond over 2000 ms" (value 2000) share the label "respond", so
+ * they shared a quantity key and Z3 was handed `q <= 5 ∧ q > 2000` → UNSAT. But 5
+ * *seconds* is 5000 ms — strictly greater than 2000 ms — and there is no conflict
+ * at all. The unitless bound's magnitude is simply unknown; ASSUMING a unit for it
+ * (either direction) would fabricate a magnitude, so the only sound move is to
+ * decline the comparison. Declining is a MISS — the honest failure direction —
+ * whereas comparing invents a verdict. This mirrors the guard the propose-only
+ * quantity-alias tier already had (`quantity-alias.ts`: `if (pa.baseUnit !==
+ * pb.baseUnit) continue`); the DECIDE tier, where a false positive is
+ * unrecoverable, must be at least as strict as the tier that may only suggest.
+ *
+ * The group is PARTITIONED, not skipped: a quantity carrying both a unitless and
+ * an `ms` bound still has its `ms` bounds proved against each other. Skipping the
+ * whole quantity would trade one false positive for a new false negative.
+ *
+ * The emitted `evidence.numeric.quantity` stays the bare quantity key — the unit
+ * is already reported per predicate as `unit` — so a genuine same-unit conflict's
+ * evidence is byte-identical to before this partition existed.
+ *
  * ## Determinism
  *
  * LIA/LRA is convex + decidable; Z3's SAT/UNSAT verdict and unsat core are
@@ -24,6 +53,7 @@
  */
 
 import type { Z3Context } from './backend.js'
+import type { SolverBounds } from './budget.js'
 import { cmp, materialize } from './encode.js'
 import type { Evidence } from './finding.js'
 import type { NumericPredicate } from './numeric.js'
@@ -46,27 +76,53 @@ export interface RequirementPredicates {
 }
 
 /**
+ * Group key for the comparison partition: the canonical quantity PLUS the base
+ * unit its value was normalized onto. `|` cannot occur in either component
+ * (`quantityKey` emits `[a-z0-9_]`, `baseUnit` is a `DIMENSIONS` base or `''`),
+ * so the join is unambiguous.
+ *
+ * Units are part of the key rather than a post-hoc filter because comparability
+ * is a property of the pair, not of one predicate: `ms` bounds are mutually
+ * comparable, unitless bounds are mutually comparable, and the two sets never
+ * mix. Keying makes that partition total — every predicate lands in exactly one
+ * arithmetically-coherent group.
+ */
+function comparisonKey(pred: NumericPredicate): string {
+  return `${pred.quantity}|${pred.baseUnit}`
+}
+
+/**
  * Find numeric contradictions across a set of requirements' predicates.
  *
- * For each quantity referenced by ≥2 requirements, assert every contributing
- * requirement's predicate under its own guard literal and `check`. On `unsat`,
- * emit a finding naming the core's requirement ids.
+ * For each (quantity, base unit) referenced by ≥2 requirements, assert every
+ * contributing requirement's predicate under its own guard literal and `check`.
+ * On `unsat`, emit a finding naming the core's requirement ids. Bounds on one
+ * quantity that normalized to DIFFERENT base units (including unitless vs
+ * united) land in different groups and are never compared — see the module
+ * header for why that is the only sound choice in a verdict-eligible tier.
  */
 export async function findNumericContradictions(
   ctx: Z3Context,
   reqPreds: readonly RequirementPredicates[],
+  bounds: SolverBounds = {},
 ): Promise<NumericContradictionFinding[]> {
-  // Group (quantity → list of {id, predicate}), preserving a human label.
+  // Group ((quantity, baseUnit) → list of {id, predicate}), preserving a human
+  // label and the bare quantity key for the evidence block.
   const byQuantity = new Map<
     string,
-    { label: string; entries: Array<{ id: string; pred: NumericPredicate }> }
+    {
+      quantity: string
+      label: string
+      entries: Array<{ id: string; pred: NumericPredicate }>
+    }
   >()
   for (const rp of reqPreds) {
     for (const pred of rp.predicates) {
-      let g = byQuantity.get(pred.quantity)
+      const key = comparisonKey(pred)
+      let g = byQuantity.get(key)
       if (g === undefined) {
-        g = { label: pred.label, entries: [] }
-        byQuantity.set(pred.quantity, g)
+        g = { quantity: pred.quantity, label: pred.label, entries: [] }
+        byQuantity.set(key, g)
       }
       g.entries.push({ id: rp.id, pred })
     }
@@ -74,12 +130,26 @@ export async function findNumericContradictions(
 
   const findings: NumericContradictionFinding[] = []
 
-  for (const [quantity, { label, entries }] of byQuantity) {
+  let checkedGroups = 0
+  for (const { quantity, label, entries } of byQuantity.values()) {
+    // AC-1-7 check-before-work: consult the whole-run deadline before starting a
+    // group, never mid-group, so a group is either fully decided or not started.
+    // A truncated sweep is a strict prefix, so it can only MISS a numeric
+    // conflict — never invent one — and the pipeline demotes `verified` for it.
+    if (bounds.budget?.expired() === true) {
+      bounds.budget.truncate('numeric-contradiction', byQuantity.size - checkedGroups)
+      break
+    }
+    checkedGroups += 1
     // A quantity constrained by fewer than two requirements cannot self-conflict.
     const distinctIds = new Set(entries.map((e) => e.id))
     if (distinctIds.size < 2) continue
 
     const solver = new ctx.Solver()
+    // AC-1-7: bound this group's solve. A timeout returns `unknown`, which the
+    // `res !== 'unsat'` guard below already treats as "no conflict proved" — so
+    // the timeout can only withhold an error-severity finding, never emit one.
+    if (bounds.timeoutMs !== undefined) solver.set('timeout', bounds.timeoutMs)
     // Assert each predicate implied by its requirement guard, so the unsat core
     // is exactly the set of requirement ids whose predicates cannot co-hold.
     for (const { id, pred } of entries) {
@@ -101,7 +171,7 @@ export async function findNumericContradictions(
       const name = c.toString().replace(/^\|(.*)\|$/, '$1')
       if (distinctIds.has(name)) coreIds.push(name)
     }
-    const minimal = await minimizeNumericCore(ctx, entries, coreIds)
+    const minimal = await minimizeNumericCore(ctx, entries, coreIds, bounds)
     const culprits = minimal.length > 0 ? minimal : [...distinctIds]
 
     const contributing = entries.filter((e) => culprits.includes(e.id))
@@ -135,17 +205,32 @@ export async function findNumericContradictions(
 /**
  * Deletion-based core minimization: drop each id and re-check; if still unsat
  * without it, it was not load-bearing. Yields a smallest still-unsat subset.
+ *
+ * `bounds.timeoutMs` bounds each re-check (AC-1-7). A re-check that times out
+ * returns `unknown`, and the `=== 'unsat'` test below KEEPS the candidate — the
+ * conservative direction, identical to `contradiction.ts`'s `minimizeCore`
+ * treatment of `unknown`: a guard is only dropped on positive proof that it was
+ * inessential, so a timeout can only leave the blame set larger, never wrongly
+ * exonerate a culprit.
+ *
+ * The whole-run budget is deliberately NOT consulted here. Minimization runs only
+ * AFTER a group already proved `unsat`, and abandoning it midway would report a
+ * wider (less precise) culprit set for a conflict that is already established.
+ * The budget bounds which groups get CHECKED (the caller's loop); once a finding
+ * is owed, it is reported at full precision.
  */
 async function minimizeNumericCore(
   ctx: Z3Context,
   entries: ReadonlyArray<{ id: string; pred: NumericPredicate }>,
   core: string[],
+  bounds: SolverBounds = {},
 ): Promise<string[]> {
   let current = [...new Set(core)]
   for (const candidate of [...current]) {
     const trial = current.filter((id) => id !== candidate)
     if (trial.length < 2) continue
     const solver = new ctx.Solver()
+    if (bounds.timeoutMs !== undefined) solver.set('timeout', bounds.timeoutMs)
     for (const { id, pred } of entries) {
       if (!trial.includes(id)) continue
       const guard = ctx.Bool.const(id)

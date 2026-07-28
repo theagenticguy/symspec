@@ -32,6 +32,7 @@
  */
 
 import type { Z3Context } from './backend.js'
+import type { SolverBounds } from './budget.js'
 import { and, atom, type EncodedRequirement, type Formula, materialize } from './encode.js'
 
 /** A relational vacuity finding (Appendix B `FND_VACUITY`, warn, low confidence). */
@@ -68,16 +69,23 @@ function notAtom(name: string): Formula {
  * Returns `undefined` when the requirement has no guard, when the guard is
  * reachable (`sat`), or when the solver is inconclusive (`unknown` — never
  * reported as vacuous).
+ *
+ * `bounds.timeoutMs` bounds this check's single solve (AC-1-7). The existing
+ * `res !== 'unsat'` guard already treats the `unknown` a timeout produces
+ * conservatively (no finding), so a per-solver timeout can only withhold a
+ * vacuity finding, never manufacture one.
  */
 export async function checkVacuityOf(
   ctx: Z3Context,
   target: EncodedRequirement,
   all: readonly EncodedRequirement[],
+  bounds: SolverBounds = {},
 ): Promise<VacuityFinding | undefined> {
   const guard = guardLiterals(target)
   if (guard === undefined) return undefined
 
   const solver = new ctx.Solver()
+  if (bounds.timeoutMs !== undefined) solver.set('timeout', bounds.timeoutMs)
   // Assert every OTHER requirement's body (its behavioural constraint, minus the
   // per-req assumption guard which is irrelevant here).
   for (const other of all) {
@@ -104,14 +112,25 @@ export async function checkVacuityOf(
  * Whole-spec (not pairwise): every other requirement participates in each check,
  * because a guard's unreachability can be forced by any combination of other
  * requirements' responses (AC-4-5, research-smt.md §1.5).
+ *
+ * Bounded per AC-1-7: `bounds.timeoutMs` bounds each per-requirement solve, and
+ * `bounds.budget` is the whole-run deadline, consulted BEFORE each requirement's
+ * check so a check never half-runs past it. On truncation the unrun requirement
+ * count lands on the budget ledger and the pipeline demotes `verified` — a
+ * truncated sweep never passes as a completed one.
  */
 export async function checkVacuity(
   ctx: Z3Context,
   all: readonly EncodedRequirement[],
+  bounds: SolverBounds = {},
 ): Promise<VacuityFinding[]> {
   const findings: VacuityFinding[] = []
-  for (const target of all) {
-    const finding = await checkVacuityOf(ctx, target, all)
+  for (const [index, target] of all.entries()) {
+    if (bounds.budget?.expired() === true) {
+      bounds.budget.truncate('vacuity', all.length - index)
+      break
+    }
+    const finding = await checkVacuityOf(ctx, target, all, bounds)
     if (finding !== undefined) findings.push(finding)
   }
   return findings

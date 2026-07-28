@@ -64,6 +64,59 @@ function getMatches(sentence: string, pattern: RegExp): RegExpExecArray[] {
 }
 
 /**
+ * Does a lexicon entry's MATCHED TEXT end in a word character — i.e. is the
+ * entry `\b`-terminable?
+ *
+ * The question is about the text the entry matches, NOT about the last character
+ * of its regex source, and the two differ in exactly the two ways this repo's
+ * lexicons exercise:
+ *   - an escaped literal (`etc\.`, `approx\.`) whose source ends in `.` after a
+ *     backslash — the matched text ends in `.`, a NON-word character;
+ *   - a negative lookahead (`min(?!imum)`, `max(?!imum)`) whose source ends in
+ *     `)` — the matched text ends in `n`, a WORD character. Getting this one
+ *     wrong is the trap: a naive "last source character is non-word" test would
+ *     strip `min`'s trailing `\b` and make it fire inside "minute"/"minor".
+ * So strip a trailing zero-width assertion, unescape, then inspect the tail.
+ */
+function isWordBoundaryTerminable(source: string): boolean {
+  const literal = source.replace(/\(\?[!=][^)]*\)$/, '').replace(/\\(.)/g, '$1')
+  return /\w/.test(literal.at(-1) ?? '')
+}
+
+/**
+ * Compile a phrase lexicon (an array of regex-source alternatives) into one
+ * case-insensitive `/gi` scanner, splitting the alternation so a trailing `\b`
+ * is emitted ONLY on the branch where it can actually match.
+ *
+ * This is the same shape — and the same fix — as the R6 bare-number pattern
+ * documented at {@link R6_BARE_NUMBER}: "the word-token branch keeps its
+ * trailing `\b`; the symbol/multiword branches do not". A single
+ * `` `\b(${entries.join('|')})\b` `` makes every entry that MATCHES a trailing
+ * non-word character (`etc.`, `approx.`, `temp.`, `ref.`, `std.`, `alt.`)
+ * unreachable dead code, because `\b` demands a word/non-word transition and
+ * `.` is already non-word. R6 hit this with `%`; R9 and R38 hit it with `.`.
+ *
+ * The non-terminable branch is emitted FIRST so the alternation prefers the
+ * LONGER spelling whenever a lexicon holds both a bare word and its dotted form
+ * (a hypothetical `spec` + `spec\.`): word-first would match `spec` inside
+ * `spec.` — there IS a boundary between `c` and `.` — and report a span one
+ * character short of the offending text. Same "longer spellings first"
+ * convention as {@link R6_RECOGNIZED_UNITS}.
+ *
+ * The LEADING `\b` is shared by both branches and always valid: every entry in
+ * both lexicons begins with a word character.
+ */
+function compileLexicon(entries: readonly string[]): RegExp {
+  const bareTailed = entries.filter((e) => !isWordBoundaryTerminable(e))
+  const wordTailed = entries.filter((e) => isWordBoundaryTerminable(e))
+  const branches = [
+    ...(bareTailed.length > 0 ? [`(?:${bareTailed.join('|')})`] : []),
+    ...(wordTailed.length > 0 ? [`(?:${wordTailed.join('|')})\\b`] : []),
+  ]
+  return new RegExp(`\\b(${branches.join('|')})`, 'gi')
+}
+
+/**
  * Standard-identifier allowlist for the bare-number rules (R6 missing-units,
  * R33 missing-tolerance). A digit run that is part of a standard's NAME — "RFC
  * 9457", "HTTP 401", "ISO 8601", "IEEE 754" — is an identifier, not a bare
@@ -542,19 +595,37 @@ function checkR8EscapeClause(sentence: string, findings: GtWRFinding[]): void {
 // R9 — Open-ended phrases
 // ============================================================================
 
+/**
+ * The R9 open-ended lexicon: phrases that leave a requirement's enumeration
+ * unbounded, so no verification can ever be complete. Entries are regex SOURCE
+ * (hence `etc\.`), compiled by {@link compileLexicon} — see that function for why
+ * the dotted entry needs its own branch. `etc.` is the canonical GtWR R9
+ * exemplar and is named in this rule's own finding description
+ * (`src/lint/codes.ts`), so it MUST be reachable.
+ *
+ * Exported so the per-entry reachability test can assert a fixture for EVERY
+ * entry, derived from this list rather than a hand-copied parallel one — the
+ * mechanism that stops a future entry from silently becoming dead code.
+ */
+export const R9_OPEN_ENDED_PHRASES: readonly string[] = [
+  'including but not limited to',
+  'such as but not limited to',
+  'etc\\.',
+  'et cetera',
+  'and so on',
+  'and so forth',
+  'like',
+  'for example',
+]
+
+/** Compiled once at module load from {@link R9_OPEN_ENDED_PHRASES}. */
+const R9_OPEN_ENDED = compileLexicon(R9_OPEN_ENDED_PHRASES)
+
 function checkR9OpenEnded(sentence: string, findings: GtWRFinding[]): void {
-  const openEndedPhrases = [
-    'including but not limited to',
-    'such as but not limited to',
-    'etc\\.',
-    'et cetera',
-    'and so on',
-    'and so forth',
-    'like',
-    'for example',
-  ]
-  const pattern = new RegExp(`\\b(${openEndedPhrases.join('|')})\\b`, 'gi')
-  const matches = getMatches(sentence, pattern)
+  // `lastIndex` is reset because R9_OPEN_ENDED is a module-level /g regex shared
+  // across calls (same discipline as R6_BARE_NUMBER).
+  R9_OPEN_ENDED.lastIndex = 0
+  const matches = getMatches(sentence, R9_OPEN_ENDED)
   for (const match of matches) {
     findings.push({
       code: 'GTWR_R9_OPEN_ENDED',
@@ -1000,22 +1071,38 @@ function checkR37Acronym(sentence: string, findings: GtWRFinding[]): void {
 // R38 — Non-unit abbreviations
 // ============================================================================
 
+/**
+ * The R38 non-unit-abbreviation lexicon. Entries are regex SOURCE, so it holds
+ * both escaped-literal forms (`approx\.`) and negative-lookahead forms
+ * (`min(?!imum)`, which must NOT fire on the fully spelled-out "minimum"), and is
+ * compiled by {@link compileLexicon} — which keeps the lookahead entries'
+ * trailing `\b` (their match ends in a word character) while dropping it for the
+ * dotted ones (their match ends in `.`, where `\b` can never hold).
+ *
+ * Exported for the same per-entry reachability reason as
+ * {@link R9_OPEN_ENDED_PHRASES}.
+ */
+export const R38_ABBREVIATIONS: readonly string[] = [
+  'approx\\.',
+  'info',
+  'spec',
+  'config',
+  'op',
+  'min(?!imum)',
+  'max(?!imum)',
+  'temp\\.',
+  'ref\\.',
+  'std\\.',
+  'alt\\.',
+]
+
+/** Compiled once at module load from {@link R38_ABBREVIATIONS}. */
+const R38_ABBREVIATION = compileLexicon(R38_ABBREVIATIONS)
+
 function checkR38Abbreviation(sentence: string, findings: GtWRFinding[]): void {
-  const abbreviations = [
-    'approx\\.',
-    'info',
-    'spec',
-    'config',
-    'op',
-    'min(?!imum)',
-    'max(?!imum)',
-    'temp\\.',
-    'ref\\.',
-    'std\\.',
-    'alt\\.',
-  ]
-  const pattern = new RegExp(`\\b(${abbreviations.join('|')})\\b`, 'gi')
-  const matches = getMatches(sentence, pattern)
+  // `lastIndex` reset: module-level /g regex shared across calls.
+  R38_ABBREVIATION.lastIndex = 0
+  const matches = getMatches(sentence, R38_ABBREVIATION)
   for (const match of matches) {
     findings.push({
       code: 'GTWR_R38_ABBREVIATION',

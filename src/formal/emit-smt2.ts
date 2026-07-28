@@ -58,8 +58,29 @@ export interface EmitSmt2Options {
    * Context atoms to assert `true` (the reachability discipline from AC-4-3 —
    * e.g. a single context group's trigger/precondition atoms). Defaults to
    * none (the baseline empty-context check).
+   *
+   * Mutually exclusive with {@link contextGroups}: this option emits ONE
+   * check-sat for ONE group, which is the right shape for a caller that is
+   * already looping groups itself (the binary cross-check does exactly that,
+   * because {@link runSolverBinary} parses a single verdict).
    */
   contextAtoms?: readonly string[]
+  /**
+   * Context groups to sweep in a SINGLE self-contained artifact (AC-1-3): one
+   * `push`/`assert context`/`check-sat-assuming`/`get-unsat-core`/`pop` block
+   * per group, in the given order.
+   *
+   * This is what makes an exported `--emit-smt2` file answer the same QUESTION
+   * the in-process tier answers. Emitting the guarded formulas alone is not a
+   * weaker check, it is a DIFFERENT one: `(X ⇒ Y) ∧ (X ⇒ ¬Y)` is satisfiable by
+   * setting `X` false, so without asserting a context reachable, an external
+   * solver reports `sat` on precisely the conflicts symspec exists to find.
+   * Verified: on a two-requirement grant/revoke contradiction the in-process
+   * tier proved `unsat` while `z3` on the old single-block artifact said `sat`.
+   *
+   * Takes precedence over {@link contextAtoms} when both are supplied.
+   */
+  contextGroups?: readonly { readonly key: string; readonly contextAtoms: readonly string[] }[]
 }
 
 /**
@@ -158,6 +179,31 @@ export function emitSmt2(
   for (const req of sortedReqs) {
     lines.push(`(assert ${renderFormula(req.formula)})`)
   }
+  const assuming = `(check-sat-assuming (${guardNames.map(quoteSymbol).join(' ')}))`
+
+  // AC-1-3 — multi-group sweep in one artifact. Each group is scoped by
+  // push/pop so its context assertions cannot leak into the next group: two
+  // mutually exclusive triggers asserted together would fake a conflict, which
+  // is the exact unsoundness `planContextGroups` upstream exists to prevent.
+  if (options.contextGroups !== undefined) {
+    for (const group of options.contextGroups) {
+      const sorted = [...group.contextAtoms].sort()
+      lines.push('')
+      lines.push(
+        `; ── Context group ${group.key === '' ? '<baseline: no context asserted>' : `[${sorted.join(' ')}]`}`,
+      )
+      lines.push('(push 1)')
+      for (const name of sorted) {
+        lines.push(`(assert ${quoteSymbol(name)})`)
+      }
+      lines.push(assuming)
+      lines.push('(get-unsat-core)')
+      lines.push('(pop 1)')
+    }
+    lines.push('')
+    return lines.join('\n')
+  }
+
   if (contextAtoms.length > 0) {
     lines.push('')
     lines.push(
@@ -168,7 +214,7 @@ export function emitSmt2(
     }
   }
   lines.push('')
-  lines.push(`(check-sat-assuming (${guardNames.map(quoteSymbol).join(' ')}))`)
+  lines.push(assuming)
   lines.push('(get-unsat-core)')
   lines.push('')
 
