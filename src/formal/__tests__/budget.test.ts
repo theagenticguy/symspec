@@ -29,6 +29,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { makeAtomize } from '../atomize.js'
 import { getContext, type Z3Context } from '../backend.js'
 import { SolverBudget } from '../budget.js'
 import { type Atomize, type AtomLit, type EncodableRequirement, encode } from '../encode.js'
@@ -253,7 +254,14 @@ const numericSpec = [
  * `unknown`-handling test too (a tier that can only withhold findings must be
  * observed on input where a finding is not owed). Real temporal conflicts, and
  * the AC-2-6 false-positive regressions, live in `temporal.test.ts`.
+ *
+ * AC-2-7: the `earsToTemporal` calls now pass the shared atomizer (mechanical —
+ * the signature gained a required parameter). The fixture's MEANING is unchanged
+ * and its `sat` verdict is re-verified: "notify the operator" leads with `notify`,
+ * which is in no antonym class, so unification adds nothing here and the pair is
+ * still one atom at two polarities across two steps — satisfiable, no finding.
  */
+const temporalAtomize = makeAtomize()
 const temporalSpec = [
   {
     id: 'REQ-RESPOND',
@@ -264,6 +272,7 @@ const temporalSpec = [
         trigger: 'an alarm fires',
         systemResponse: 'notify the operator',
       }) as never,
+      temporalAtomize,
     ),
   },
   {
@@ -276,6 +285,7 @@ const temporalSpec = [
         systemResponse: 'notify the operator',
         negated: true,
       }) as never,
+      temporalAtomize,
     ),
   },
 ]

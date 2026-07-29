@@ -51,6 +51,25 @@
  * Either way the atomizer receives positive text + a polarity flag, restoring
  * the same atom-polarity discipline (same atom, opposite polarity) the parse
  * tier established.
+ *
+ * ## One atomizer, one requirement population, both tiers (AC-2-7)
+ *
+ * This module is where the propositional and bounded-temporal tiers are wired,
+ * and it is therefore where they used to be wired DIFFERENTLY. Two fixes here:
+ *
+ *   - **One atomizer instance.** The `makeAtomize(glossary, antonyms)` closure
+ *     (now owned by `formal/atomize.ts`) is built ONCE per run and handed to BOTH
+ *     `encode` and `earsToTemporal`. The temporal tier previously received none —
+ *     `earsToTemporal(req)` took no glossary or antonym parameter at all — so
+ *     `--temporal` was structurally blind to every committed glossary alias and
+ *     antonym pair. Passing the same instance is what makes `G(t → F grant_x)` vs
+ *     `G(t → F ¬grant_x)` provable once `antonym add grant revoke` is committed.
+ *   - **One requirement population.** Both tiers now score the AC-3-7 gate's
+ *     INCLUDED subset. The temporal tier previously scored raw `reqs`, so the two
+ *     error-severity tiers disagreed about which document they were checking, and
+ *     `FND_EXCLUDED_FROM_FORMAL` ("the solver never saw this") was false about
+ *     one of them. The full rationale is at the temporal call site in
+ *     {@link runCheck}.
  */
 
 import { analyze, type Finding } from '../core/analyze.js'
@@ -60,7 +79,7 @@ import { renderSentence } from '../core/render.js'
 import type { Requirement, Waiver } from '../core/schema.js'
 import { detectAmbiguity } from '../formal/ambiguity.js'
 import { type AntonymEntry, buildAntonymIndexWithDoc } from '../formal/antonyms.js'
-import { glossaryIndex, normalize, atomize as realAtomize } from '../formal/atomize.js'
+import { glossaryIndex, makeAtomize, normalize } from '../formal/atomize.js'
 import { getContext } from '../formal/backend.js'
 import { type SolverBounds, SolverBudget } from '../formal/budget.js'
 import { type FndCode, structuralKindToFndCode } from '../formal/codes.js'
@@ -71,12 +90,7 @@ import {
   relationalUncheckedFinding,
 } from '../formal/coverage.js'
 import type { Embedder } from '../formal/embed.js'
-import {
-  type Atomize,
-  type EncodableRequirement,
-  type EncodedRequirement,
-  encode,
-} from '../formal/encode.js'
+import { type EncodableRequirement, type EncodedRequirement, encode } from '../formal/encode.js'
 import { attachEvidenceToAll, type Evidence } from '../formal/finding.js'
 import { buildSimilarityGraph, type GraphRequirement } from '../formal/graph.js'
 import { checkCompleteness } from '../formal/incomplete.js'
@@ -533,30 +547,6 @@ export interface CheckResult {
 }
 
 /**
- * Build the encoder's positional `atomize` adapter (AC-4-2a → encoder), closing
- * over an optional glossary index (AC-9-2) so agent-confirmed synonyms
- * canonicalize to one atom, and an optional doc-augmented antonym index (#1) so
- * agent-confirmed opposites collapse to one atom at opposite polarity. With
- * neither, behavior is byte-identical to the pre-feature run.
- */
-function makeAtomize(
-  glossary?: ReadonlyMap<string, string>,
-  antonyms?: ReadonlyMap<string, AntonymEntry>,
-): Atomize {
-  return (kind, slotText, systemName, negated) => {
-    const a = realAtomize({
-      kind,
-      text: slotText,
-      systemName,
-      negated,
-      ...(glossary !== undefined ? { glossary } : {}),
-      ...(antonyms !== undefined ? { antonyms } : {}),
-    })
-    return { atom: a.name, negated: a.negated }
-  }
-}
-
-/**
  * Resolve the antonym index a check run consults from the document's committed
  * pairs (#1). Normalizes both heads (so a pair authored as "Open"/"Shut" matches
  * the normalized leading verb the atomizer keys on) and folds them into the seed
@@ -979,13 +969,54 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
 
       // AC-33-2: opt-in bounded temporal tier. Map each requirement to LTL
       // (Dwyer/FRET) and prove temporal contradictions via bounded LTL→SMT on
-      // the shared Z3-WASM context. Runs over ALL requirements (temporal
-      // consistency is independent of the propositional gate). Sound-for-UNSAT.
+      // the shared Z3-WASM context. Sound-for-UNSAT.
+      //
+      // ## Which requirements the temporal tier scores (AC-2-7 divergence 8)
+      //
+      // It scores `encodable` — the AC-3-7 gate's INCLUDED subset, threaded
+      // through `toEncodable`. It used to score raw `reqs`, so the two tiers
+      // reasoned over DIFFERENT requirement populations while both reported at
+      // error severity. That is resolved deliberately, in favour of the gated
+      // set, for three reasons:
+      //
+      //   1. **The gate exists because unsound input makes a solver verdict
+      //      unsound, and that argument is tier-agnostic.** AC-3-7's forced
+      //      pipeline order (parse → lint → symbolize → solve) rests on "a
+      //      statement that fails a surface check has no trustworthy slot set".
+      //      A requirement whose sentence does not match any EARS pattern has no
+      //      trustworthy TRIGGER either — and the temporal tier's whole shape is
+      //      `G(trigger → …)`. Feeding it a slot the lint tier just declared
+      //      untrustworthy, and then reporting `FND_TEMPORAL_CONTRADICTION` at
+      //      error severity on the strength of it, is the propose/decide rule
+      //      inverted: the decide tier would be LOOSER about its input than the
+      //      tier that gates it. `decide-tier-must-carry-every-guard-the-propose-
+      //      tier-has` is the general form of that bug.
+      //   2. **Nothing is silently lost, because the coverage hole is already
+      //      disclosed and already demotes.** An excluded requirement produces
+      //      `FND_EXCLUDED_FROM_FORMAL` plus an `excluded-from-formal` demotion
+      //      per requirement, so `verified` cannot be true over it — for BOTH
+      //      tiers now, with one disclosure covering both. Under the previous
+      //      split, an excluded requirement was un-scored propositionally and
+      //      scored temporally, so `FND_EXCLUDED_FROM_FORMAL` was literally
+      //      false about the temporal tier: the solver HAD seen it.
+      //   3. **It is the direction that cannot fabricate.** Scoring fewer
+      //      requirements can only withhold an `unsat` (a false negative, the
+      //      honest direction for a sound-for-UNSAT tier), and the gate is
+      //      waiver-aware: `symspec waive add <blocking-code> --ref <id>`
+      //      re-admits a requirement to BOTH tiers at once, which is a reviewed,
+      //      reasoned discharge rather than a silent one.
+      //
+      // The numeric tier deliberately keeps scoring raw `reqs`, and that is not
+      // an inconsistency: its soundness does not depend on the propositional
+      // atomization the gate protects (a bare number with a missing-units warning
+      // still carries a real, comparable bound), whereas the temporal tier is
+      // built on exactly the atoms and slots the gate is about. That distinction
+      // is already written down at the numeric tier's call site above.
       const temporalContradictions =
         options.temporal !== undefined
           ? await findTemporalContradictions(
               ctx,
-              reqs.map((r) => ({ id: r.id, formula: earsToTemporal(r) })),
+              encodable.map((r) => ({ id: r.id, formula: earsToTemporal(r, atomize) })),
               options.temporal.bound ?? 10,
               bounds,
             )

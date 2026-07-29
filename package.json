@@ -43,7 +43,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check . --write",
     "knip": "knip",
-    "check": "biome ci . && tsc --noEmit && vitest run && knip",
+    "gate:temporal": "tsx scripts/temporal-feasibility.ts",
+    "check": "biome ci . && tsc --noEmit && pnpm run check:agents && pnpm run gate:temporal && vitest run && knip",
     "hooks:install": "lefthook install",
     "gen:agents": "tsx scripts/gen-agents.ts",
     "check:agents": "tsx scripts/gen-agents.ts --stdout | diff -u AGENTS.md - >/dev/null || (echo \"AGENTS.md is stale — run pnpm gen:agents\" >&2; exit 1)"

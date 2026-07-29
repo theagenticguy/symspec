@@ -22,6 +22,7 @@ import { describe, expect, it } from 'vitest'
 import { renderSentence } from '../../core/render.js'
 import type { EarsPattern, Requirement } from '../../core/schema.js'
 import type { ReqView } from '../../solvers/types.js'
+import { makeAtomize } from '../atomize.js'
 import { getContext } from '../backend.js'
 import { findTemporalContradictions, lowerAt } from '../temporal.js'
 import {
@@ -122,7 +123,8 @@ describe('findTemporalContradictions (AC-33-2)', () => {
     const reqA = view('A', 'event-driven', 'controller', 'open the relief valve', {
       trigger: 'the sensor reports overheat',
     })
-    expect(() => earsToTemporal(reqA)).not.toThrow()
+    // AC-2-7: mechanical — `earsToTemporal` now takes the shared atomizer.
+    expect(() => earsToTemporal(reqA, makeAtomize())).not.toThrow()
   })
 })
 

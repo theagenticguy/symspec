@@ -33,16 +33,21 @@
  *                    checks, evidence enrichment) plus the free-tier solver
  *                    orchestrator.
  *
- * Two module pairs export a same-named type for genuinely distinct concepts
- * (`formal/atomize.ts` vs `formal/encode.ts` both define a slot-kind
- * `AtomKind`; `parse/tier1.ts` vs `solvers/types.ts` both define a
- * `Confidence` union with different members) — `export *` would make both
- * ambiguous under TypeScript's re-export rules, so those two subsystems
- * (`formal/atomize.js` + `formal/encode.js`, and `solvers/types.js`) are
- * re-exported explicitly below rather than via a blanket `export *`, with
- * `solvers/types.ts`'s `Confidence` renamed to `SolverConfidence` at this
- * barrel to disambiguate it from the parse ladder's `Confidence` (re-exported
- * via `parse/index.js`, which already carries that name for Tier 1/2 results).
+ * `parse/tier1.ts` and `solvers/types.ts` both define a `Confidence` union with
+ * different members, so `export *` from both would be ambiguous under
+ * TypeScript's re-export rules; `solvers/types.js` is re-exported explicitly
+ * below with its `Confidence` renamed to `SolverConfidence`, disambiguating it
+ * from the parse ladder's `Confidence` (re-exported via `parse/index.js`, which
+ * already carries that name for Tier 1/2 results).
+ *
+ * `formal/atomize.js` and `formal/encode.js` used to need the same treatment for
+ * a duplicated slot-kind `AtomKind`. AC-2-7 removed the duplicate declaration —
+ * `atomize.ts` owns the atom vocabulary and `encode.ts` re-exports it — so the
+ * ambiguity is gone at the source rather than papered over at the barrel. Their
+ * explicit re-export lists are kept anyway, because `encode.ts` re-exporting
+ * `atomize.ts`'s types means a blanket `export *` from both would still route two
+ * names to one declaration, and an explicit list documents each module's public
+ * surface at the one place a library consumer reads.
  */
 
 // ---------------------------------------------------------------------------
@@ -88,16 +93,31 @@ export {
   detectAmbiguity,
 } from './formal/ambiguity.js'
 // ---------------------------------------------------------------------------
-// formal — the SMT-backed formal tier (all members except the two
-// `AtomKind`-colliding modules, re-exported explicitly below)
+// formal — the SMT-backed formal tier. Most modules ride `export *`; the
+// atomizer/encoder/temporal trio is listed explicitly (see the header note).
 // ---------------------------------------------------------------------------
 export * from './formal/antonyms.js'
-export type { Atom, AtomizeArgs, AtomKind } from './formal/atomize.js'
-// `atomize.ts` (AC-4-2a) and `encode.ts` (AC-4-2) both declare a slot-kind
-// `AtomKind` type — the same three-member union by coincidence, but two
-// independent declarations, so `export *` from both is a genuine TS2308
-// ambiguity. Re-export each module's full named surface explicitly instead.
-export { atomize, glossaryIndex, normalize } from './formal/atomize.js'
+// The atom vocabulary (AC-4-2a, deduplicated by AC-2-7): `atomize.ts` is the ONE
+// declaration site for `AtomKind` / `AtomLit` / `Atomize` / `AtomRef`, which
+// `encode.ts` re-exports for its existing import sites. Exported from here so a
+// library consumer building its own atomizer (or reading an atom's structured
+// kind instead of substring-matching its name) has the types.
+export type {
+  Atom,
+  Atomize,
+  AtomizeArgs,
+  AtomKind,
+  AtomLit,
+  AtomRef,
+} from './formal/atomize.js'
+export {
+  atomize,
+  GUARD_KINDS,
+  glossaryIndex,
+  makeAtomize,
+  normalize,
+  renderAtom,
+} from './formal/atomize.js'
 export * from './formal/backend.js'
 export * from './formal/binary-backend.js'
 export * from './formal/codes.js'
@@ -105,15 +125,30 @@ export * from './formal/contradiction.js'
 export * from './formal/embed.js'
 export * from './formal/emit-smt2.js'
 export type {
-  Atomize,
-  AtomLit,
+  AndNode,
+  AtomNode,
   AtomTableEntry,
+  CmpNode,
   EncodableRequirement,
   EncodedRequirement,
   Formula,
+  ImpliesNode,
+  NotNode,
+  NumericComparator,
+  OrNode,
   Z3Bool,
 } from './formal/encode.js'
-export { and, atom, encode, implies, materialize, not, or } from './formal/encode.js'
+export {
+  and,
+  atom,
+  cmp,
+  encode,
+  implies,
+  materialize,
+  not,
+  or,
+  slotIsEmpty,
+} from './formal/encode.js'
 export * from './formal/finding.js'
 export {
   buildSimilarityGraph,
@@ -147,7 +182,20 @@ export {
 } from './formal/temporal.js'
 export {
   earsToTemporal,
+  F,
+  type FNode,
+  G,
+  type GNode,
   type TemporalFormula,
+  tAnd,
+  tAtom,
+  tImplies,
+  tNot,
+  tOr,
+  U,
+  type UNode,
+  X,
+  type XNode,
 } from './formal/temporal-patterns.js'
 export * from './formal/vacuity.js'
 // ---------------------------------------------------------------------------

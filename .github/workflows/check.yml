@@ -23,4 +23,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # `pnpm check` = biome ci + tsc --noEmit + check:agents (AGENTS.md drift)
+      # + gate:temporal (AC-2-8 bounded-LTL feasibility/polarity) + vitest run
+      # + knip. The two tsx-driven gates were pre-push-only before AC-2-8, which
+      # meant a contributor without the hook installed — and every CI path —
+      # never ran them. Keeping them inside `pnpm check` is what makes this one
+      # `run:` the whole merge gate; do not split them back out.
       - run: pnpm check

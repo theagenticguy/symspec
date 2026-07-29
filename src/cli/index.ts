@@ -601,8 +601,70 @@ program
 
       // AC-33-2: opt-in bounded temporal tier. No model — pure Z3-WASM — so it
       // just flips on with an optional trace bound.
+      //
+      // AC-2-8: the bound is CAPPED, and the cap comes from measurement, not
+      // taste. The lowering is O(k²) per `F`-under-`G` and O(k³) per
+      // `U`-under-`G`, and — critically — the expensive half is ENCODING, which
+      // `--timeout-ms` cannot interrupt: that knob is a per-solver
+      // `solver.set('timeout', …)`, and the cost is paid building the term graph
+      // before any solver sees it. `--solver-budget-ms` does not save the
+      // operator either: temporal is ONE whole-spec unit of work, so the budget
+      // is consulted only BEFORE the tier starts. A run whose earlier tiers
+      // finish inside the deadline enters the temporal tier and then encodes for
+      // as long as `k` demands, both knobs notwithstanding.
+      //
+      // Measured on this machine via the shipped tier
+      // (`findTemporalContradictions`, warm-up excluded), with peak RSS —
+      // memory, not time, is what actually kills the process:
+      //
+      //   N=100 k=150 →  8.1s /  1.0 GB       N=10 k=100  →  0.4s
+      //   N=100 k=200 → 13.5s /  2.0 GB       N=10 k=300  →  3.0s
+      //   N=100 k=250 → 24.0s /  3.0 GB       N=10 k=500  →  8.1s
+      //   N=100 k=300 → 55.0s /  4.0 GB       N=10 k=1000 → 51s under
+      //                                       --timeout-ms 2000 (no effect)
+      //
+      // End-to-end through the CLI on a 3-requirement document with
+      // `--timeout-ms 100` set, i.e. the smallest input an operator could
+      // plausibly type: k=200 → 2.4s/0.7 GB, k=1000 → 10.0s/1.5 GB, k=2000 →
+      // 34.3s/3.4 GB. At N=100/k=2000 the process aborts outright — V8
+      // "Ineffective mark-compacts near heap limit", exit 134, no verdict, no
+      // envelope, nothing an agent can parse.
+      //
+      // 200 is the ceiling because ~4 GB is Node's default old-space limit and
+      // N=100/k=300 lands exactly on it. k=250 (3.0 GB) is already inside the
+      // GC-thrash band where the run degrades non-linearly; 200 (2.0 GB, 13.5s)
+      // is the last bound with real headroom under the cliff, so the worst LEGAL
+      // configuration stays slow-but-recoverable and always returns an envelope.
+      // It is also 20× the default bound of 10 — far past any trace length an
+      // EARS document's ordering conflicts need, since a conflict that needs a
+      // 200-step witness is not one a reader would recognize either.
+      const MAX_TEMPORAL_BOUND = 200
       if (opts.temporal === true) {
         const bound = opts.temporalBound !== undefined ? Number(opts.temporalBound) : undefined
+        if (bound !== undefined && (!Number.isInteger(bound) || bound < 1)) {
+          emit(
+            usageError(
+              `--temporal-bound expects an integer >= 1, got "${opts.temporalBound}"`,
+              `symspec check [file] --temporal --temporal-bound <1..${MAX_TEMPORAL_BOUND}>`,
+            ),
+            flags,
+          )
+        }
+        if (bound !== undefined && bound > MAX_TEMPORAL_BOUND) {
+          emit(
+            usageError(
+              `--temporal-bound ${bound} exceeds the maximum of ${MAX_TEMPORAL_BOUND}. The bounded ` +
+                `LTL→SMT encoding is O(k²)–O(k³) in the bound, and the encode phase is not ` +
+                `interruptible by --timeout-ms (a per-solver timeout) or --solver-budget-ms ` +
+                `(checked only before the tier starts), so a larger bound is a denial of ` +
+                `service with no way to abort it. Measured: 100 requirements at k=200 takes ` +
+                `13.5s and 2.0 GB; at k=300 it takes 55s and 4.0 GB, which is Node's heap ` +
+                `limit — the process aborts with no envelope at all.`,
+              `symspec check [file] --temporal --temporal-bound <1..${MAX_TEMPORAL_BOUND}>`,
+            ),
+            flags,
+          )
+        }
         checkOpts.temporal = bound !== undefined && Number.isFinite(bound) ? { bound } : {}
       }
 

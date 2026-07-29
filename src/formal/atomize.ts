@@ -28,9 +28,9 @@
  *        - the LEADING RESPONSE VERB is de-inflected by a closed third-person
  *          -s rule ({@link deInflectHead}), so "shall opens the valve" and
  *          "shall open the valve" collide on one atom;
- *        - GUARD slots (pre/trig) drop a single copula token
- *          ({@link stripCopula}), so "the session is authenticated" and "the
- *          session authenticated" name one guard state;
+ *        - GUARD slots ({@link GUARD_KINDS}: pre/trig/feat) drop a single copula
+ *          token ({@link stripCopula}), so "the session is authenticated" and
+ *          "the session authenticated" name one guard state;
  *        - when (and only when) an ANTONYM head-flip fires, one preposition
  *          token is dropped from the remainder ({@link canonicalizeAntonymRest}),
  *          so "include X in the view" / "exclude X from the view" unify.
@@ -38,7 +38,8 @@
  *      false-positive risk class (AC-4-11), so we buy only what closed rules
  *      can honestly deliver.
  *
- *   3. PER-systemName SCOPING. Every atom is prefixed `sys__<system>__<kind>__`.
+ *   3. PER-systemName SCOPING. Every atom is prefixed `sys__<system>__<kind>__`
+ *      (rendered by {@link renderAtom}, the one place that format is written).
  *      Identical response text under two different systems therefore yields two
  *      distinct atoms and can never unify into a spurious cross-system
  *      contradiction (spec AC-4-2a; research-smt.md §4.1 — "scope atoms per
@@ -54,6 +55,33 @@
  *      opposites: "grant access" / "revoke access" unify to one atom, opposite
  *      polarity, so the common grant-vs-revoke conflict is detectable rather
  *      than a false negative (spec AC-4-2a; research-smt.md §4.2).
+ *
+ * ## ONE atomizer for BOTH tiers (AC-2-7)
+ *
+ * This module is the SINGLE atomizer for the propositional tier (`encode.ts`)
+ * AND the bounded-temporal tier (`temporal-patterns.ts`). It did not used to be:
+ * `temporal-patterns.ts` carried a private normalizer that diverged from this one
+ * in nine measured ways (punctuation class, copula strip, glossary, antonym
+ * unification, de-inflection, a fourth `feat` kind, `not` baked into the atom
+ * NAME, empty-slot atoms, and a different requirement population). The
+ * consequence was that `--temporal` was blind to every glossary/antonym
+ * commitment — structurally, because `earsToTemporal` took no such parameter.
+ *
+ * The divergences are resolved in favour of the semantics BELOW in every case:
+ * this is the tier whose behavior is pinned by `atomize.test.ts` and whose
+ * conservatism argument (invariant 2) is the documented one. `earsToTemporal`
+ * now takes an injected {@link Atomize} — the SAME function instance the
+ * propositional encoder receives — so the two tiers cannot drift again without a
+ * signature change.
+ *
+ * **Propose/decide note.** Nothing in this pipeline is a propose-only leniency
+ * being promoted into a decide key (the trap
+ * `.erpaval/solutions/architecture/normalization-for-a-propose-signal-must-not-touch-the-decide-key.md`
+ * records). The glossary and antonym indexes are DOC-COMMITTED artifacts — the
+ * decide half of propose/decide — and the copula strip, leading-verb
+ * de-inflection and antonym-remainder rule are closed deterministic rules that
+ * were already in the propositional DECIDE key before AC-2-7. Unification makes
+ * two decide tiers agree; it does not make either one looser than it was.
  */
 
 import { ANTONYM_INDEX, type AntonymEntry } from './antonyms.js'
@@ -61,18 +89,162 @@ import { deInflectHead } from './lemma.js'
 
 export { deInflectHead } from './lemma.js'
 
-/** Which EARS slot an atom was derived from (research-smt.md §4.1). */
-export type AtomKind = 'trig' | 'pre' | 'resp'
+/**
+ * Which EARS slot an atom was derived from (research-smt.md §4.1). The SINGLE
+ * declaration of this union: `encode.ts` used to declare a structurally
+ * identical copy, which is exactly the kind of duplication that let the two
+ * tiers drift (AC-2-7). `encode.ts` now imports this type.
+ *
+ * `feat` is produced ONLY by the temporal tier's `optional-feature` mapping
+ * (`temporal-patterns.ts`); the propositional encoder never emits one, so no
+ * propositional consumer's behavior changes by its presence in the union. Its
+ * survival is a live semantic question — see the `feat` note on
+ * {@link GUARD_KINDS}.
+ */
+export type AtomKind = 'trig' | 'pre' | 'resp' | 'feat'
+
+/**
+ * The GUARD kinds — the slot kinds that describe a condition rather than a
+ * response, and therefore the kinds the copula strip applies to.
+ *
+ * `feat` is in this set because an `optional-feature` requirement's `feat` atom
+ * is derived from the very same `preCondition` slot a `state-driven`
+ * requirement's `pre` atom comes from; treating the two slots differently under
+ * normalization would be a divergence of exactly the kind AC-2-7 removes.
+ *
+ * **Open semantic question, deliberately NOT resolved here (AC-2-7 note (a)).**
+ * Whether `feat` should exist at all: one slot yielding two different atom
+ * namespaces depending on `patternType` is arguably wrong, and collapsing
+ * `feat` → `pre` is arguably more correct. It is NOT a refactor — collapsing it
+ * makes an `optional-feature` precondition share an atom with a `state-driven`
+ * precondition of the same text, which can only INCREASE unification and
+ * therefore increase error-severity findings. The conservative choice (keep the
+ * namespaces separate, exactly as shipped) is what is implemented, because the
+ * other direction moves in the false-positive direction and needs a human.
+ */
+export const GUARD_KINDS: ReadonlySet<AtomKind> = new Set<AtomKind>(['pre', 'trig', 'feat'])
+
+/**
+ * The STRUCTURED identity of an atom, before it is rendered to a name.
+ *
+ * The whole reason this exists (AC-2-7): an atom used to be nothing but a
+ * pre-joined string, so any consumer that wanted to know an atom's KIND had to
+ * look for `__resp__` as an embedded substring of the name. That is a parse of a
+ * rendering — it cannot distinguish a real kind marker from body text, and it
+ * silently answers a well-formed question wrongly. Carrying `{scope, kind, body}`
+ * and rendering on demand makes kind a field, so the question is answered by a
+ * lookup that cannot be fooled.
+ *
+ * `scope` and `body` are ALREADY {@link normalize}d; `renderAtom` only joins.
+ */
+export interface AtomRef {
+  /** The normalized `systemName` the atom is scoped under (invariant 3). */
+  readonly scope: string
+  /** Which EARS slot the atom came from. */
+  readonly kind: AtomKind
+  /**
+   * The normalized slot body, post-glossary / copula / antonym rewriting. Empty
+   * exactly when the slot was absent or normalized away to nothing — which is
+   * what lets a caller OMIT the slot rather than emit a well-formed-but-empty
+   * atom that two unrelated malformed requirements would then share.
+   */
+  readonly body: string
+}
+
+/**
+ * Render an {@link AtomRef} to its scoped atom name. The ONE place the name
+ * format `sys__<system>__<kind>__<body>` is written down, so both tiers'
+ * atom names are byte-identical by construction rather than by comment.
+ */
+export function renderAtom(ref: AtomRef): string {
+  return `sys__${ref.scope}__${ref.kind}__${ref.body}`
+}
 
 /** A single Boolean atom: its fully-scoped name plus the polarity to assert. */
 export interface Atom {
   /**
    * The scoped atom name, e.g. `sys__auth_service__resp__issue_a_session_token`.
-   * Two slot texts collide iff they produce the same `name`.
+   * Two slot texts collide iff they produce the same `name`. Always exactly
+   * `renderAtom(ref)`.
    */
   name: string
   /** When true, the formula asserts `¬name` rather than `name`. */
   negated: boolean
+  /** The structured identity `name` renders from (see {@link AtomRef}). */
+  ref: AtomRef
+}
+
+/**
+ * A Boolean atom paired with its polarity, as the injected {@link Atomize}
+ * contract returns it. `negated: true` means the requirement asserts `¬atom` (an
+ * explicit `shall not` per AC-2-4, or a polar-opposite unified via the antonym
+ * table). The atom name is the *positive* atom in both cases, so `shall X` and
+ * `shall not X` share one atom with opposite polarity.
+ *
+ * Declared HERE rather than in `encode.ts` (AC-2-7): the atomization contract
+ * belongs to the atomizer, and having the encoder own a second copy of the atom
+ * vocabulary is what let the temporal tier grow a third.
+ */
+export interface AtomLit {
+  atom: string
+  negated: boolean
+  /**
+   * The structured identity, when the atomizer supplied one. OPTIONAL because
+   * unit tests legitimately inject a hand-written atomizer that returns only a
+   * name; a consumer that needs the structure must handle its absence rather
+   * than fall back to parsing `atom` (see {@link AtomRef}).
+   */
+  ref?: AtomRef
+}
+
+/**
+ * The atom-table function (AC-4-2a), INJECTED into both the propositional
+ * encoder (`encode`) and the temporal mapper (`earsToTemporal`) so the two tiers
+ * provably share one atomizer: they receive the same function instance from
+ * `src/pipeline/check.ts`, and neither can be called without one.
+ *
+ * Given a slot kind, the raw slot text, the owning `systemName` (for per-system
+ * scoping so identical response text under two systems yields two distinct atoms
+ * — invariant 3), and the parse-time `negated` flag (AC-2-4), it returns the
+ * scoped atom name and its polarity.
+ *
+ * Context slots (`trig`/`pre`/`feat`) pass `negated = false`; only the response
+ * slot threads the requirement's `negated` flag.
+ */
+export type Atomize = (
+  kind: AtomKind,
+  slotText: string,
+  systemName: string,
+  negated: boolean,
+) => AtomLit
+
+/**
+ * Build the injected {@link Atomize} both tiers consume, closing over an optional
+ * glossary index (AC-9-2) so agent-confirmed synonyms canonicalize to one atom,
+ * and an optional doc-augmented antonym index (#1) so agent-confirmed opposites
+ * collapse to one atom at opposite polarity. With neither, behavior is
+ * byte-identical to the pre-feature run.
+ *
+ * This lives here rather than in the pipeline (AC-2-7) precisely so the temporal
+ * tier can be handed the same closure the propositional tier gets — the previous
+ * arrangement (a private adapter inside `check.ts`) is what made the temporal
+ * tier's blindness structural.
+ */
+export function makeAtomize(
+  glossary?: ReadonlyMap<string, string>,
+  antonyms?: ReadonlyMap<string, AntonymEntry>,
+): Atomize {
+  return (kind, slotText, systemName, negated) => {
+    const a = atomize({
+      kind,
+      text: slotText,
+      systemName,
+      negated,
+      ...(glossary !== undefined ? { glossary } : {}),
+      ...(antonyms !== undefined ? { antonyms } : {}),
+    })
+    return { atom: a.name, negated: a.negated, ref: a.ref }
+  }
 }
 
 /** Arguments to {@link atomize}. */
@@ -238,13 +410,18 @@ export function atomize(args: AtomizeArgs): Atom {
     if (canonical !== undefined) body = canonical
   }
 
-  // Copula strip applies only to GUARD slots (pre/trig), AFTER the glossary
+  // Copula strip applies only to GUARD slots (pre/trig/feat), AFTER the glossary
   // rewrite so committed glossary entries keyed on the natural phrasing keep
   // matching. "the session is authenticated" ⇒ "session_authenticated", the
   // same atom the guard-implication tier derives from a "mark the session as
   // authenticated" bridge — the copula was the byte gap that dropped those
   // bridges as inert (Run 2/3 adversarial escape).
-  if (args.kind === 'pre' || args.kind === 'trig') {
+  //
+  // AC-2-7: `feat` joins this set. It is derived from the same `preCondition`
+  // slot as `pre`, so leaving it un-stripped would keep exactly the divergence
+  // this AC removes (the temporal tier's `optional-feature` guard previously kept
+  // its copula while every propositional guard dropped one).
+  if (GUARD_KINDS.has(args.kind)) {
     body = stripCopula(body)
   }
 
@@ -282,5 +459,6 @@ export function atomize(args: AtomizeArgs): Atom {
     }
   }
 
-  return { name: `sys__${scope}__${args.kind}__${body}`, negated }
+  const ref: AtomRef = { scope, kind: args.kind, body }
+  return { name: renderAtom(ref), negated, ref }
 }

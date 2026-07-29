@@ -36,81 +36,160 @@
  *     separate step ({@link materialize}) the solver-driving tiers
  *     (contradiction/subsumption/vacuity, AC-4-3/4-5) call — "the encoder [is]
  *     a pure, unit-testable function separate from the solver call" (AC-4-2).
- *   - **Atomization is injected, not imported.** The atom table is owned by
- *     AC-4-2a (`src/formal/atomize.ts`, a parallel wave-mate). This module
- *     depends on the *shape* of an atomizer via the {@link Atomize} function
- *     type, never on that file, so the encoder stays a pure function of its
- *     inputs and the two tasks never collide. The integration tier passes the
- *     real AC-4-2a `atomize` (adapting its signature in its own file if
- *     needed).
+ *   - **Atomization is injected, not imported as a concrete function.** The atom
+ *     table is owned by AC-4-2a (`src/formal/atomize.ts`). This module depends on
+ *     the *shape* of an atomizer via the {@link Atomize} function type, so the
+ *     encoder stays a pure function of its inputs and a test can pin atomization.
+ *     As of AC-2-7 the {@link Atomize} / {@link AtomLit} / {@link AtomKind}
+ *     vocabulary is DECLARED in `atomize.ts` and re-exported here rather than
+ *     redeclared: the duplicate `AtomKind` declaration this file used to carry is
+ *     precisely the kind of structural duplication that let the temporal tier
+ *     grow a third, divergent atom vocabulary.
+ *
+ * ## The formula AST is INDEXED, not forked (AC-2-7)
+ *
+ * `Formula` and `TemporalFormula` are one AST family: {@link Formula} is the
+ * propositional core, and `temporal-patterns.ts`'s `TemporalFormula` is that same
+ * core plus the four LTL modalities. The two tiers' needs are met by
+ * PARAMETERS on the shared nodes, not by two node sets:
+ *
+ *   - the propositional path needs context groups (`contradiction.ts`) and a
+ *     guard literal per requirement id for unsat cores — both of which are
+ *     ordinary `atom` nodes, so no node kind is required for them;
+ *   - the temporal path needs per-timestep naming `<atom>@<t>`, which
+ *     `temporal.ts:lowerAt` supplies as a lowering PARAMETER `t` rather than as
+ *     an `at` field on the node. That keeps the propositional `.smt2` bytes
+ *     byte-identical (no node gains a field) while the temporal tier still gets
+ *     one Bool per (atom, timestep).
+ *
+ * See {@link Formula}'s `cmp` arm for the one node whose indexing is a live
+ * semantic question.
  */
 
 import type { EarsPattern } from '../core/schema.js'
 import type { ReqView } from '../solvers/types.js'
+import type { Atomize, AtomKind, AtomLit } from './atomize.js'
 import type { Z3Context } from './backend.js'
 
 // ---------------------------------------------------------------------------
-// Atomization contract (AC-4-2a, injected)
+// Atomization contract (AC-4-2a) — DECLARED in atomize.ts, re-exported here
 // ---------------------------------------------------------------------------
 
-/** Which EARS slot an atom was derived from (research-smt.md §4.1). */
-export type AtomKind = 'trig' | 'pre' | 'resp'
-
-/**
- * A Boolean atom paired with its polarity. `negated: true` means the
- * requirement asserts `¬atom` (an explicit `shall not` per AC-2-4, or a
- * polar-opposite unified via the AC-4-2a antonym table). The atom name is the
- * *positive* atom in both cases, so `shall X` and `shall not X` share one atom
- * with opposite polarity (AC-4-2a).
- */
-export interface AtomLit {
-  atom: string
-  negated: boolean
-}
-
-/**
- * The atom-table function (AC-4-2a), injected so the encoder never imports the
- * parallel `atomize.ts`. Given a slot kind, the raw slot text, the owning
- * `systemName` (for per-system scoping so identical response text under two
- * systems yields two distinct atoms — AC-4-2a), and the parse-time `negated`
- * flag (AC-2-4), it returns the scoped atom name and its polarity.
- *
- * Context slots (`trig`/`pre`) pass `negated = false`; only the response slot
- * threads the requirement's `negated` flag.
- */
-export type Atomize = (
-  kind: AtomKind,
-  slotText: string,
-  systemName: string,
-  negated: boolean,
-) => AtomLit
+// AC-2-7 deduplication: `AtomKind`, `AtomLit` and `Atomize` used to be declared
+// in BOTH this file and `atomize.ts`. Two structurally-identical declarations of
+// the same contract is how the vocabulary drifts, and it forced `src/index.ts` to
+// carve both modules out of its blanket re-export to dodge a TS2308 ambiguity.
+// There is now exactly one declaration; this file re-exports it so every existing
+// `from './encode.js'` import site keeps working unchanged.
+export type { Atomize, AtomKind, AtomLit, AtomRef } from './atomize.js'
 
 // ---------------------------------------------------------------------------
 // Abstract propositional formula AST
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The shared BOOLEAN CORE nodes (AC-2-7) — one declaration, both tiers
+// ---------------------------------------------------------------------------
+//
+// Before AC-2-7 the propositional `Formula` and the temporal `TemporalFormula`
+// declared five structurally identical boolean nodes each, in two files. That is
+// a forked AST wearing the costume of a shared one: nothing made the two `and`
+// nodes the same shape except two authors writing the same line, and the
+// arity-collapsing constructors had to be duplicated to match.
+//
+// Each node is now declared exactly ONCE, generic in its child type, and each
+// tier's formula type is the union of the nodes it admits:
+//
+//   Formula          = boolean core + `cmp`            (propositional / numeric)
+//   TemporalFormula  = boolean core + `G`/`F`/`X`/`U`  (bounded LTL)
+//
+// The parameterization is what makes the propositional tier's cmp-free formulas
+// STRUCTURALLY assignable to `TemporalFormula` — the same node objects, no
+// conversion, no copy — which is the property that lets one atomizer feed both.
+// A tier's extra nodes stay out of the other tier's type, so `emit-smt2` still
+// cannot be handed a `G` and `lowerAt` still cannot be handed a `cmp`; the
+// exhaustive switches in both files remain exhaustive.
+//
+// The generic parameter is spelled out per union member rather than via a
+// `BooleanCore<T>` alias because TypeScript reports `TS2456 circularly
+// references itself` when a recursive type alias passes ITSELF to a generic
+// alias — verified, not assumed. Naming each node interface individually keeps
+// the recursion legal while still giving exactly one declaration per node.
+
+/** Shared AST node: a bare named Boolean atom. Leaf, so it takes no child type. */
+export interface AtomNode {
+  readonly op: 'atom'
+  readonly name: string
+}
+/** Shared AST node: logical negation `¬arg`. */
+export interface NotNode<T> {
+  readonly op: 'not'
+  readonly arg: T
+}
+/** Shared AST node: conjunction. */
+export interface AndNode<T> {
+  readonly op: 'and'
+  readonly args: readonly T[]
+}
+/** Shared AST node: disjunction. */
+export interface OrNode<T> {
+  readonly op: 'or'
+  readonly args: readonly T[]
+}
+/** Shared AST node: material implication `lhs ⇒ rhs`. */
+export interface ImpliesNode<T> {
+  readonly op: 'implies'
+  readonly lhs: T
+  readonly rhs: T
+}
+
+/**
+ * Arithmetic comparison over a named real-valued quantity (AC-30-1).
+ * `quantity` is the canonical per-system quantity variable (owned by
+ * `numeric.ts`); `value` is already unit-normalized to that quantity's base unit.
+ * Materializes to a `z3-solver` Real comparison — LIA/LRA only, so the theory
+ * stays decidable and deterministic.
+ *
+ * **OPEN SEMANTIC QUESTION, deliberately NOT resolved by AC-2-7 (note (b)):
+ * whether this node should be timestep-indexed.** Today it is not, and nothing
+ * needs it to be: `earsToTemporal` emits no `cmp`, so the temporal tier never
+ * lowers one, and the numeric tier is a single-snapshot LIA/LRA check.
+ * AC-2-1's state model will plausibly want a time-varying quantity
+ * (`queue_depth@t`), and at that point the choice matters: indexing it renames
+ * the Real const in every numeric finding's `evidence.numeric.quantity` and in
+ * every emitted `.smt2`, so it is an observable contract change, not a refactor —
+ * the same reason AC-1-1 chose to PARTITION by `(quantity, baseUnit)` rather than
+ * fold the unit into the quantity key. The conservative choice — leave it
+ * unindexed until a requirement needs it — is what is implemented here, so no
+ * already-correct numeric finding changes shape. Deliberately NOT admitted into
+ * `TemporalFormula`, so this decision cannot be made accidentally: adding a
+ * time-varying quantity requires editing that union and confronting the question.
+ */
+export interface CmpNode {
+  readonly op: 'cmp'
+  readonly quantity: string
+  readonly comparator: NumericComparator
+  readonly value: number
+}
+
 /**
  * A propositional formula over named Boolean atoms. Deliberately Z3-free so
  * the encoder is synchronously testable; {@link materialize} lowers it to a
  * `z3-solver` `Bool`.
+ *
+ * The boolean nodes are the SAME declarations `TemporalFormula` composes
+ * (AC-2-7), so a cmp-free `Formula` is structurally a `TemporalFormula`.
+ * Timestep indexing for the temporal tier is a lowering PARAMETER
+ * (`lowerAt(ctx, f, t, k)`), never a field on a node, so this type gains nothing
+ * from AC-2-7 and the emitted `.smt2` bytes are unchanged.
  */
 export type Formula =
-  | { readonly op: 'atom'; readonly name: string }
-  | { readonly op: 'not'; readonly arg: Formula }
-  | { readonly op: 'and'; readonly args: readonly Formula[] }
-  | { readonly op: 'or'; readonly args: readonly Formula[] }
-  | { readonly op: 'implies'; readonly lhs: Formula; readonly rhs: Formula }
-  | {
-      // Arithmetic comparison over a named real-valued quantity (AC-30-1).
-      // `quantity` is the canonical per-system quantity variable (owned by
-      // numeric.ts); `value` is already unit-normalized to that quantity's base
-      // unit. Materializes to a `z3-solver` Real comparison — LIA/LRA only, so
-      // the theory stays decidable + deterministic.
-      readonly op: 'cmp'
-      readonly quantity: string
-      readonly comparator: NumericComparator
-      readonly value: number
-    }
+  | AtomNode
+  | NotNode<Formula>
+  | AndNode<Formula>
+  | OrNode<Formula>
+  | ImpliesNode<Formula>
+  | CmpNode
 
 /** The six arithmetic comparators a numeric predicate can use (AC-30-1). */
 export type NumericComparator = '<' | '<=' | '=' | '>=' | '>' | '!='
@@ -195,6 +274,35 @@ export interface EncodedRequirement {
 export type EncodableRequirement = ReqView & { negated?: boolean }
 
 /**
+ * True when a slot carries no atomizable content, so it must be OMITTED rather
+ * than atomized (AC-2-7, divergence 9).
+ *
+ * The failure this prevents: a slot that is absent, blank, or normalizes away to
+ * nothing (`"---"`) still produces a *well-formed* atom name with an empty body,
+ * `sys__auth__trig__`. Two unrelated malformed requirements under the same
+ * system then SHARE that atom, and sharing an atom is exactly the predicate the
+ * contradiction tier's context grouping and the coverage/participation counters
+ * are built on. So an empty slot could silently make two requirements
+ * "co-triggered" — a fabricated relationship between two things whose only
+ * commonality is being malformed.
+ *
+ * The propositional encoder has always guarded `undefined`/`''` here; what
+ * AC-2-7 adds is (a) the same guard on the temporal side, which had none, and
+ * (b) extending it from "the raw text is blank" to "the NORMALIZED body is
+ * empty", which catches `"   "` and `"---"` that the raw check lets through.
+ *
+ * Exported because `temporal-patterns.ts` must apply the identical rule — a
+ * second copy of this predicate is how divergence 9 happened in the first place.
+ */
+export function slotIsEmpty(lit: AtomLit, rawText: string | undefined): boolean {
+  if (rawText === undefined || rawText === '') return true
+  // Prefer the structured body when the atomizer supplied one (the real
+  // atomizer always does); a test-injected atomizer without `ref` falls back to
+  // the raw-text check above, which is the pre-AC-2-7 behavior.
+  return lit.ref !== undefined && lit.ref.body === ''
+}
+
+/**
  * Encode a single requirement into its guarded-implication {@link Formula}.
  *
  * Pure: no mutation of `req`, no solver contact, deterministic given a
@@ -212,15 +320,19 @@ export function encode(req: EncodableRequirement, atomize: Atomize): EncodedRequ
   const pre = req.preCondition
   if (pre !== undefined && pre !== '') {
     const p = atomize('pre', pre, req.systemName, false)
-    atoms.push({ atom: p.atom, kind: 'pre', slotText: pre, negated: p.negated })
-    contextLits.push(literal(p))
+    if (!slotIsEmpty(p, pre)) {
+      atoms.push({ atom: p.atom, kind: 'pre', slotText: pre, negated: p.negated })
+      contextLits.push(literal(p))
+    }
   }
 
   const trig = req.trigger
   if (trig !== undefined && trig !== '') {
     const t = atomize('trig', trig, req.systemName, false)
-    atoms.push({ atom: t.atom, kind: 'trig', slotText: trig, negated: t.negated })
-    contextLits.push(literal(t))
+    if (!slotIsEmpty(t, trig)) {
+      atoms.push({ atom: t.atom, kind: 'trig', slotText: trig, negated: t.negated })
+      contextLits.push(literal(t))
+    }
   }
 
   atoms.push({

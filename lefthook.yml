@@ -23,3 +23,11 @@ pre-push:
 
     - name: agents-md-drift
       run: pnpm run check:agents
+
+    # AC-2-8 committed feasibility gate: the bounded temporal tier must still
+    # refute the conflicting fixture, stay silent on the satisfiable one, and
+    # land inside `LATENCY_BUDGET_MS` (exit 1 infeasible / 2 crash). Also in
+    # `pnpm check`, so GitHub CI runs it too — this job only shortens the
+    # feedback loop for anyone with the hook installed.
+    - name: temporal-feasibility-gate
+      run: pnpm run gate:temporal

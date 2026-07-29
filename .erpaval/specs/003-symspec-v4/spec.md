@@ -64,8 +64,11 @@ report. Evidence lives in `.erpaval/sessions/session-511b2b/probes/`.
 | V24 | **The README's quick-start `check` output showed a FABRICATED finding message** | ✅ verified | Claimed `"…on the same trigger, one grants access and the other revokes it."` — that string exists **nowhere in `src/`** (grep clean). Real output: `"…their responses resolve to the same atom with opposite polarity under a reachable context."` The `evidence` placeholder was also vague where the real keys are exactly `atomTable` and `core`. A worked example that cannot be reproduced is the same defect class as a false capability claim. |
 | V25 | **"No false alarms" was stronger than the tool's own disclosure** | ✅ verified | The README asserted "a fabricated contradiction is the one error the tool is built never to make", while the shipped manifest's `scope.overUnification` names over-unification as "the one false-positive risk". Demonstrated live: `a session is active` and `the session is active` both normalize to `sys__router__pre__session_active` and yield an error-severity `FND_CONTRADICTION`; genuinely distinct guards (`the primary session` vs `the backup session`) correctly do not collapse. |
 | V26 | **"20 commands" was stale** | ✅ verified | Built manifest reports **22** — Wave 1's AC-1-8 added `verify` and `refine`. Code counts re-verified correct and unchanged: 21 error + 24 lint + 30 finding = 75. |
+| V30 | **Test files are never type-checked — 137 type errors hide behind the gate** | ✅ verified (pre-existing) | `tsconfig.json` excludes `**/__tests__/**` and `**/*.test.ts`, and `pnpm check` runs `tsc --noEmit` against that config, so no gate has ever type-checked a test. vitest transpiles without checking. Audited with an identical-options config widened only in `include`: **137 at committed HEAD `22e0a04`**, 147 in the working tree (in-flight AC-2-7 adds ~7). Concentrated in `add.test.ts` (36), `add-wishlist.test.ts` (17), `update.test.ts` (16), `apply.test.ts` (11). Dominant pattern: `exactOptionalPropertyTypes` vs `Partial<T>` fixture spreads. Same class as V19 — a gate that does not gate — but **not urgent**: no runtime failure, and fixing it touches ~15 files three agents are concurrently editing. Deferred to its own change with a recorded baseline that can only go down. Detail: `.erpaval/sessions/session-511b2b/V30-tests-are-not-typechecked.md`. |
+| V27 | **An unrecognized top-level document field is SILENTLY DROPPED by any mutation** | ✅ verified | `RequirementsDocSchema` (`schema.ts:446-447`) is a plain `z.object` — Zod's default **strip** mode — and every mutation round-trips through `safeParse` and writes back the stripped result. Measured: a doc carrying `stateModel` loads and checks fine, but after one `symspec add` the key is **gone**, with no error, warning, or finding. No test covers unknown-field fidelity. Consequence for AC-2-1: forward compatibility is **read-only** — an older binary mutating a doc destroys a committed state model, and because AC-2-2's proof is *conditional on* that model, the next `check` silently falls back to "no state model" and demotes with the cause invisible. Recommendation: detect unrecognized top-level keys on load and **disclose** them (info finding), not `.passthrough()` (would round-trip unvalidated data) and not `.strict()` (would break the forward-read compatibility that works today). Detail: `.erpaval/sessions/session-511b2b/AC-2-1-groundwork.md`. |
 | R3 | ~~AC-2-7 lets `guard-implication.ts` be deleted~~ | ❌ **refuted** | `guard-implication.ts:268` emits `implies(atom(r.id), implies(and(contextLits), stateLiteral))` — a **new formula over the requirement set** — plus an inert-implication guard needing other requirements' guard atoms (`:259-261`). A pure `slot → atom` atomizer (`atomize.ts:14-18`) structurally cannot subsume this. 24 verbs confirmed. **AC-2-1/2-2's state model is what subsumes it; keep the file in Wave 2.** |
 | R4 | ~~AC-1-5 requires a document migration path~~ | ❌ **refuted** | v1 on disk was a **binary Automerge blob**, not JSON (`git show cbdf631:src/core/doc.ts:39-40`); `df0efdc` flipped 1→2 and moved to JSON in one commit. A v1 file dies at `ERR_DOC_PARSE` before the version check, which runs only after `safeParse` succeeds. Nothing to migrate; the AC's second disjunct is the real one. **AC-2-1 is therefore NOT blocked by AC-1-5** — new doc fields ride `.default()` with no version bump, as `glossary`/`waivers`/`antonyms` all did at v2. |
+| R6 | ~~Unifying the atomizer makes V6 exploitable (a `resp` atom can equal a `pre`/`trig` atom)~~ | ❌ **refuted** | A **structural kind barrier** exists: `renderAtom` emits `sys__<scope>__<kind>__<body>` and the propositional punctuation class collapses punctuation **runs**, so an atom body can never contain `__`. Orchestrator-verified by adversarial construction on the shipped atomizer — 11 attempts (leading `__`, embedded `x__pre__y`, `--`, `..`, `/`, single `_`, triple `___`, and a fully forged `sys__auth__pre__x`) all collapsed to a single `_`: **0 bodies containing `__`, 0 cross-kind collisions** on identical text across `trig`/`pre`/`resp`/`feat`. Agent's independent evidence: 1169 EARS-path triples with **0 legacy-only-unsat** — the 56 such cases `v6-strict-relaxation` finds by building formulas *directly* are unreachable through the EARS path precisely because of this barrier. **AC-2-6-before-AC-2-7 was still the correct call** (V18 was real via `lowerAt`, a public export, and the sequencing was right under the information available), but the two ACs are less coupled than the plan recorded. Recorded so a future session does not re-derive the stronger claim as fact. |
 | R5 | ~~Spacer invariant text is unstable under context reuse~~ | ⚠️ **unverified** | Could not reproduce across 8 iterations on a shared context, with decoy queries interleaved, on the reported `(or A (not B))` shape. Recorded as an open risk, not a fact. Mitigation adopted regardless: canonicalize evidence, prefer a fresh context per reachability run, and independently re-check the invariant (`Init ⇒ Inv`, `Inv ∧ T ⇒ Inv'`, `Inv ⇒ ¬Bad`) so invariant *text* is never load-bearing. |
 | V21 | **An UNDECLARED param silently voids the timeout, producing an unkillable hang** | ✅ verified | Identical params object plus `random_seed=42` (undeclared on Fixedpoint): `timeout=1500` alone → 1621ms `unknown`; with the extra key → **hangs past 45s**, no JS-side recovery. No throw at `params_set_uint` or `fixedpoint_set_params`. Reproduced on **both** 4.16.0 and 5.0.0. **`research-spacer-api.md`'s own "Recommended configuration" block prescribes `random_seed` and is therefore unsafe as written.** Set only declared params (enumerate via `fixedpoint_get_param_descrs`), and ship a bounded canary query that fails closed if the params object is dead. Seeds buy nothing: `0/1/42/12345` give an identical answer hash. `probes/RESULTS-param-poisoning.md`. |
 | V22 | **z3-solver 5.0.0 adopted; `rlimit` is enforced per query, monotone, and deterministic** | ✅ verified | Pin `^4.16.0` → `^5.0.0`, **zero source changes**. At HEAD in an isolated worktree: 1186 tests, adversarial 15/15, all gates exit 0 — identical to the 4.16.0 baseline. Polarity probe **byte-identical** (orchestrator re-ran it on 5.0.0). Timeout band still monotone. `rlimit` now declared (119→120 params) and enforced **per query** — the cumulative counter is not the budget: per-query delta was exactly 1023 at every position in a shared context, 8/8 positions decided, so the feared position-dependent starvation **does not occur**. Deterministic where wall-clock is not: `timeout=200ms` gave 5 distinct consumed counts per process (60-75% variance); `rlimit` gave 1, with md5-identical canaries across 3 processes. WASM +921,757 B (+2.73%, 32.1→33.0 MiB), no new transitive deps. |
@@ -227,12 +230,31 @@ Depends on: AC-1-1, AC-1-3, AC-1-7. **Not** AC-1-5 (see R4).
 *Spacer returns both (verified in V1). `Evidence.witness` is declared at `src/formal/finding.ts:74-79` and populated nowhere — this fills it. Requires a new trace evidence member and renderer.*
 
 > **Correction: `getAnswer()` does NOT return a readable trace on `sat`.** It
-> returns a hyper-resolution **proof term**. The trace needs the raw-layer calls
-> `fixedpoint_get_ground_sat_answer` / `fixedpoint_get_rules_along_trace` /
-> `fixedpoint_get_rule_names_along_trace` — all confirmed present in the shipped
-> WASM. Call them **last**, after verdict and invariant are in hand: a
-> `shared_occs` assertion aborts rather than throws, so `try/catch` would not help,
-> and calling last means a hypothetical abort costs only the trace.
+> returns a hyper-resolution **proof term** (725 chars on a 4-step system).
+>
+> **V29 — measured which call actually works (`probes/RESULTS-trace-extraction.md`).**
+> All six raw entrypoints are present. But:
+> - **`get_rules_along_trace` is the one to use** — 6 entries forming a genuine
+>   step-by-step witness, with rule multiplicity preserved (the increment rule
+>   appears 3 times for 3 increments). Returned **reverse-ordered**, violation
+>   first and initial state last: reverse before rendering.
+> - **`get_ground_sat_answer` returned literal `false`** — useless on this shape,
+>   despite being the research's first recommendation.
+> - `get_rule_names_along_trace` **does not abort** (the research warned it
+>   hard-aborts via `shared_occs.cpp`; it returned cleanly) but yields
+>   `<null>` per entry, because rules loaded through `fixedpoint_from_string`
+>   carry no names.
+>
+> **Therefore register rules programmatically with per-requirement names**
+> (`addRule(rule, requirementId)`) instead of `fromString`. Then the trace names
+> *which requirements fired in which order* to reach the violation — the direct
+> analogue of the unsat core the propositional tier already reports, and the
+> evidence a user can act on. Parsing from a string throws that away.
+>
+> Keep the ordering mitigation anyway: extract the trace **last**, after the
+> verdict and invariant are in hand. A `shared_occs` assertion would abort rather
+> than throw, so `try/catch` cannot protect against it and ordering is the only
+> defense; it costs nothing.
 >
 > **Evidence text must be canonicalized, not asserted raw** (R5 + a latent
 > address-dependent tie-break in Spacer's `pob_lt_proc`). Better still, make
@@ -240,6 +262,29 @@ Depends on: AC-1-1, AC-1-3, AC-1-7. **Not** AC-1-5 (see R4).
 > with three plain-SMT queries (`Init ⇒ Inv`, `Inv ∧ T ⇒ Inv'`, `Inv ⇒ ¬Bad`). The
 > *verdict* was deterministic in every measurement; the *text* is what carries risk.
 > Strip the `:weight 0` annotations before showing a human.
+>
+> **V28 — the certificate check WORKS and has teeth (measured, `probes/RESULTS-certificate-check.md`).**
+> On a real Spacer `unsat` + inferred invariant, all three obligations discharge
+> (`negation=unsat` each). The negative control — substituting the vacuously-true
+> `Inv = true`, which satisfies the first two obligations trivially — is **correctly
+> rejected** at `Inv ⇒ ¬Bad`. Three cheap queries against an already-warm context.
+>
+> Required verdict shape:
+> `unsat` → run the 3 obligations; all pass → `PROVED` (or
+> `PROVED_UNDER_HYPOTHESES` per AC-2-5); **any fail → ERROR "the solver's answer
+> did not re-verify", never a proof and never merely a demotion**.
+> `sat` → reachable, extract the trace. `unknown` → demote, split per V15.
+>
+> The obligations must be built from the **same encoding the Horn rules came
+> from**, never re-derived from the document — re-deriving would validate a
+> different question, which is exactly the AC-1-3 defect (the exported `.smt2`
+> answered a weaker question than the in-process tier and said `sat` where it
+> proved `unsat`).
+>
+> Incidental R5 evidence: the same invariant printed `(or B (not A))` in this run
+> and `(or (not A) B)` in an earlier one — same verdict both times. Operand order
+> is not stable **across configurations**, which is not the within-configuration
+> instability R5 claimed, but is further reason never to assert on printed text.
 
 **AC-2-4** — Unwanted behavior. If a document has no committed state model, or Spacer returns `unknown`, then `check` shall demote `verified` with the exact command that supplies what is missing, and shall never report reachability as proven.
 *Preserves demotion-only. New demotion reasons join the eight at ~~`src/pipeline/check.ts:251-275`~~ **`:268-299`** (the cited range is pre-Wave-1; `solver-budget-exhausted` was Wave 1's eighth).*
@@ -401,6 +446,55 @@ Depends on: AC-1-1, AC-1-3, AC-1-7. **Not** AC-1-5 (see R4).
 > (`encode.ts:109-113`) should be timestep-indexed (nothing needs it today, but
 > AC-2-1's state model probably will).
 
+> **AC-2-7 DONE.** All nine divergences resolved with the **propositional**
+> semantics winning every contested one (punctuation class, copula strip — extended
+> to `trig`/`feat` —, antonym unification, de-inflection, glossary, negation as
+> polarity rather than text, and empty-slot handling *strengthened* from "raw text
+> blank" to "normalized body empty", which also catches `"---"`).
+>
+> Enforcement is **structural, not conventional**: `earsToTemporal(req, atomize)`
+> takes the atomizer as a **required** parameter, so the tier cannot silently go
+> blind again without a visible signature change. `slotIsEmpty` is now *shared*
+> from `encode.ts` rather than copied — a second copy is how divergence #9 arose.
+> The atom is now a structured `{ name, negated, ref }` with `renderAtom(ref)`, so
+> kind comparison is no longer substring matching on a joined string.
+>
+> **#8 resolved: temporal now scores the gate-included set.** A requirement whose
+> guard the lint tier just called untrustworthy has no trustworthy *trigger*, and
+> the temporal tier's whole shape is `G(trigger → …)`; scoring it anyway would make
+> the decide tier looser about its input than the tier gating it. Nothing is lost —
+> `FND_EXCLUDED_FROM_FORMAL` already demotes, and it was previously **literally
+> false** about the temporal tier. Waivers re-admit to both tiers at once (tested).
+> The numeric tier deliberately still reads raw `reqs`; its soundness does not
+> depend on the atomization the gate protects.
+>
+> **Both open decisions took the conservative branch, deliberately.** `feat`
+> survives — collapsing it to `pre` *increases* unification (an optional-feature
+> guard would share an atom with a state-driven guard of the same text) and so
+> produces *more* error-severity findings; that direction needs a human. AC-2-7 does
+> make `feat` normalize identically to `pre`, with only the kind marker differing.
+> `cmp` stays unindexed and is deliberately **not** admitted into `TemporalFormula`
+> so the choice cannot be made by accident: indexing renames the Real const in every
+> numeric finding's evidence and every emitted `.smt2` — an observable contract
+> change.
+>
+> **The payoff, orchestrator-verified on the built CLI.** `G(fail → ¬grant)` +
+> `G(authorize)` under a glossary alias: **before** the alias, 0 errors and 0
+> temporal findings; **after** `glossary add "grant access" "authorize the
+> request"`, the temporal tier proves the conflict. Propositionally satisfiable;
+> temporally unsat via the `F(antecedent)` premise. The propose/decide loop now
+> reaches a tier that was structurally blind to it.
+>
+> No regressions: 1243 → **1270 tests**, adversarial **15/15 with no round changing
+> behavior**, AC-2-6 verification 8/8, `v6-strict-relaxation` 910 sets / 0
+> violations, N=100 latency 2497ms → **2382ms** with finding sets **byte-identical**
+> (1126 each, 0 added, 0 removed). `pnpm check` exit 0.
+>
+> Methodology trap worth keeping: the agent's first latency corpus used bare digits,
+> tripping `GTWR_R6` and excluding all 100 requirements — measuring an empty solver
+> at 16ms, which would have read as a 150× speedup. Always confirm the corpus
+> actually reaches the tier being measured.
+
 **AC-2-8** — Ubiquitous. Any capability claiming to explore reachable state shall ship a committed feasibility gate with a latency budget that fails CI when exceeded.
 *Reuse the AC-33-0 precedent at `scripts/temporal-feasibility.ts`.*
 
@@ -429,6 +523,48 @@ Depends on: AC-1-1, AC-1-3, AC-1-7. **Not** AC-1-5 (see R4).
 > while the encoding is `O(k²)`-to-`O(k³)` in `k`.
 >
 > Budget headroom is ample: 122ms at 400 state variables (see AC-2-2).
+
+> **AC-2-8a DONE (the half that does not need the reachability tier).** All four
+> verified gaps closed, and **every gate was observed failing before being trusted**:
+>
+> | Gate | Injected defect | Observed |
+> |---|---|---|
+> | `gate:temporal` latency | `LATENCY_BUDGET_MS = 0.0001` | **exit 1**, "INFEASIBLE — sound but over latency budget" |
+> | `gate:temporal` polarity | consistent fixture made conflicting | **exit 1**, "manufactured one on a satisfiable set — do NOT ship" |
+> | `gate:temporal` crash | throw in a leg | **exit 2** |
+> | `check:agents` | appended a marker to AGENTS.md | **exit 1**, and it **aborts `pnpm check` after tsc, before vitest** |
+> | temporal latency ceiling | workload constant → 1 | vitest fail |
+> | temporal honesty | removed the `truncate` call so the tier skips silently | vitest fail |
+> | temporal monotonicity | hard-error at the exact band the lesson forbids | vitest fail |
+> | `--temporal-bound` | ceiling → `Infinity` | 34.3s / 3.4 GB RSS at k=2000 |
+>
+> `pnpm check` is now `biome ci . && tsc --noEmit && check:agents && gate:temporal
+> && vitest run && knip` — both tsx gates run **before** vitest (no build needed,
+> <1.5s, fail fast). This also closes **G2**: `check:agents` was pre-push-only, so
+> no CI path ever ran the AGENTS.md drift check.
+>
+> **`--temporal-bound` capped at 200**, justified by measurement rather than taste:
+> at N=100, k=150→8.1s/1.0GB, k=200→13.5s/2.0GB, k=250→24s/3.0GB, **k=300→55s/4.0GB
+> = Node's default old-space limit** (process aborts, exit 134, no envelope). Neither
+> `--timeout-ms` (a per-solver timeout) nor `--solver-budget-ms` (checked only
+> *before* the tier starts) can rescue it, because the cost is paid **encoding**,
+> before any solver sees the terms. Verified on the built CLI: 201 → `ERR_USAGE`
+> naming the max, 200 accepted, `2.5` and `0` rejected.
+>
+> **G3 correction — the brief's N=100 assumption was wrong.** At N=100 the O(N²)
+> tiers exhaust the budget and the temporal tier is **skipped** by check-before-work,
+> so a temporal blowup stays invisible even with `--temporal` on. The scale gate
+> therefore runs at **N=25**, where temporal is the dominant cost (0.39s off vs 1.3s
+> at k=100).
+>
+> **G5 signal worth keeping.** Re-pointing the script at the real `lowerAt` revealed
+> the hand-rolled encoding was **not equivalent** to the shipped one: a `lowerAt`-only
+> probe of `G(trig→F resp) ∧ G(¬resp)` returns **`sat`**, because `lowerAt` alone
+> gives the AC-2-6 relaxed reading with the pending literal free. The old script got
+> `unsat` only because it had frozen the **pre-AC-2-6 defective semantics**. The gate
+> now goes through `findTemporalContradictions`, which supplies the tail assertions
+> that force `pend` false and recover the real refutation — same verdict, but now it
+> means something.
 
 ---
 
