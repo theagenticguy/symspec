@@ -113,7 +113,7 @@ export const ErrCodeMeta = {
   ERR_SCHEMA_VERSION: z
     .literal('ERR_SCHEMA_VERSION')
     .describe(
-      "The document's schemaVersion does not equal the current SCHEMA_VERSION. Suggestion: re-create the document at the current schema with `symspec init` then re-add its requirements.",
+      "The document's schemaVersion does not equal the current SCHEMA_VERSION, though it does satisfy the current document schema. The suggestions therefore carry the exact ops that reproduce it: a `symspec init` step, one `symspec apply` JSONL op record per requirement and per edge in dependency order, the `symspec glossary`/`antonym`/`waive` commands for the tables `apply` has no op for, and an explicit statement of anything the ops do not reproduce. Suggestion: `symspec init <file>`, then pipe the reported op records through `symspec apply`.",
     ),
   ERR_IO: z
     .literal('ERR_IO')

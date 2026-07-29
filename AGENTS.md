@@ -156,7 +156,7 @@ waiving it (`symspec waive add <code> --ref <id>`) — waiving the
 | `ERR_USAGE` | Invalid or missing CLI arguments. Suggestion: consult the command usage string. |
 | `ERR_DOC_NOT_FOUND` | The requirements-document path did not resolve. Suggestion: run `symspec init <file>`, or set SYMSPEC_DOC to an existing document. |
 | `ERR_DOC_PARSE` | The document is not valid JSON or fails RequirementsDocSchema. Suggestion: fix the offending JSON path, or re-create the document from source with `symspec init` then `symspec parse`/`add`. |
-| `ERR_SCHEMA_VERSION` | The document's schemaVersion does not equal the current SCHEMA_VERSION. Suggestion: re-create the document at the current schema with `symspec init` then re-add its requirements. |
+| `ERR_SCHEMA_VERSION` | The document's schemaVersion does not equal the current SCHEMA_VERSION, though it does satisfy the current document schema. The suggestions therefore carry the exact ops that reproduce it: a `symspec init` step, one `symspec apply` JSONL op record per requirement and per edge in dependency order, the `symspec glossary`/`antonym`/`waive` commands for the tables `apply` has no op for, and an explicit statement of anything the ops do not reproduce. Suggestion: `symspec init <file>`, then pipe the reported op records through `symspec apply`. |
 | `ERR_IO` | An atomic write to the document failed (permissions or disk). The original file is left intact. Suggestion: check filesystem permissions and free space. |
 | `ERR_DUPLICATE_ID` | A CreateRequirement supplied a UUID that already exists. Suggestion: use `symspec update`, or omit --id to auto-mint a fresh UUID. |
 | `ERR_NOT_FOUND` | The referenced requirement id is not present. Suggestion: list existing ids with `symspec list`. |

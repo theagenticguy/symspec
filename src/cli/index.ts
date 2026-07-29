@@ -914,18 +914,25 @@ program
       if ('envelope' in loaded) emit(loaded.envelope, flags)
       const { doc, path } = loaded
 
+      // Resolve both endpoints so a stable key works wherever a UUID does, and
+      // so applyChange receives UUIDs its ChangeSchema accepts (same defect and
+      // same fix as runEdgeAdd above).
+      const source = requireRequirement(doc, fromId)
+      if (!source.ok) emit(source.envelope, flags)
+      const target = requireRequirement(doc, toId)
+      if (!target.ok) emit(target.envelope, flags)
+      const from = source.value.id
+      const to = target.value.id
+
       try {
         const next = applyChange(doc, {
           kind: 'RemoveRelationship',
-          from: fromId,
+          from,
           relation: rel.value,
-          to: toId,
+          to,
         })
         await saveOrEmit(next, path, flags)
-        emit(
-          success('remove-edge', { from: fromId, relation: rel.value, to: toId, removed: true }),
-          flags,
-        )
+        emit(success('remove-edge', { from, relation: rel.value, to, removed: true }), flags)
       } catch (e) {
         emit(toErrorEnvelope(e), flags)
       }
@@ -1390,15 +1397,25 @@ async function runEdgeAdd(
   if ('envelope' in loaded) emit(loaded.envelope, flags)
   const { doc, path } = loaded
 
-  // Fail fast with ERR_NOT_FOUND if the source requirement is absent, rather
-  // than surfacing applyChange's untyped "not found" throw (AC-6-10).
+  // Fail fast with ERR_NOT_FOUND if either endpoint is absent, rather than
+  // surfacing applyChange's untyped "not found" throw (AC-6-10). Both endpoints
+  // resolve through requireRequirement so a stable key works wherever a UUID
+  // does (`keyDescription`, schema.ts) — the RESOLVED ids are what reach
+  // applyChange, whose ChangeSchema validates them as UUIDs. Passing the raw
+  // refs made `derive G1 S3` dump a raw Zod uuid-format error, while `apply`'s
+  // batch AddRelationship op resolved keys correctly: the single-command and
+  // batch surfaces disagreed on the documented contract.
   const source = requireRequirement(doc, fromId)
   if (!source.ok) emit(source.envelope, flags)
+  const target = requireRequirement(doc, toId)
+  if (!target.ok) emit(target.envelope, flags)
+  const from = source.value.id
+  const to = target.value.id
 
   try {
-    const next = applyChange(doc, { kind: 'AddRelationship', from: fromId, relation, to: toId })
+    const next = applyChange(doc, { kind: 'AddRelationship', from, relation, to })
     await saveOrEmit(next, path, flags)
-    emit(success(type, { from: fromId, relation, to: toId, added: true }), flags)
+    emit(success(type, { from, relation, to, added: true }), flags)
   } catch (e) {
     emit(toErrorEnvelope(e), flags)
   }

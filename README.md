@@ -5,9 +5,9 @@
 **symspec writes software requirements you can *prove* consistent — and is honest
 when it can't.** You describe what a system should do in plain, structured
 sentences; symspec turns each into a clean requirement, and a mathematical prover
-(Z3, optionally re-checked in Lean 4) either **proves** that two of them can't
-both be true — naming the exact culprits — or tells you `verified: false` and
-hands back the precise work list to make the spec provable.
+(Z3, optionally cross-checked against a second solver) either **proves** that two
+of them can't both be true — naming the exact culprits — or tells you
+`verified: false` and hands back the precise work list to make the spec provable.
 
 That last part is the whole point. Most "spec review" is a language model writing
 a confident paragraph that misses the real conflict. symspec makes the check
@@ -71,11 +71,13 @@ requirements at fault and showing its work:
         "code": "FND_CONTRADICTION",
         "severity": "error",
         "requirementIds": ["586d8933-…", "d50c8fff-…"],
-        "message": "Requirements 586d8933…, d50c8fff… cannot all hold: on the same trigger, one grants access and the other revokes it.",
-        "evidence": { "...": "the exact reasoning the checker used" }
+        "message": "Requirements 586d8933-…, d50c8fff-… cannot all hold: their responses resolve to the same atom with opposite polarity under a reachable context.",
+        "evidence": { "...": "the atom table the checker compared, and the unsat core" }
       }
     ],
     "counts": { "error": 1, "warn": 0, "info": 0 }
+    // trimmed here: the real envelope also carries excluded, pairsChecked,
+    // waived, residualRisk, coverage, and verified
   }
 }
 # the command also exits with status 1 — a blocking problem was found
@@ -116,8 +118,10 @@ guessing.
 Two guarantees define how far that proof reaches, and symspec states both plainly
 rather than letting you assume more:
 
-- **When symspec proves a conflict, the conflict is real.** No false alarms — a
-  fabricated contradiction is the one error the tool is built never to make.
+- **When symspec proves a conflict, the conflict is real** as the requirements were
+  atomized. Every finding carries the atom table the solver compared, so you can
+  audit the one false-positive risk: normalization collapsing two distinct
+  conditions onto a single atom.
 - **Silence is not a certificate.** Because two differently-worded requirements
   can describe the same thing, symspec can *miss* a conflict hiding behind
   mismatched vocabulary. A clean result means *"nothing was proven wrong,"* not
@@ -178,10 +182,13 @@ introduced.
 
 Delete requirement 2 or 3 — the bridge — and the same `check` exits `0`: the two
 power rules alone are genuinely consistent. The conflict *is* the chain. That's the
-class of defect a prover catches and a careful human reader does not, because the
-prover composes every reachable state transition and asks Z3 whether any assignment
-survives. This is symspec's core job; the next section is about the case where even
-the chain is hidden behind mismatched *words*.
+class of defect a prover catches and a careful human reader does not. symspec takes
+each distinct set of triggers and preconditions the document uses — here, the
+overheat trigger — asserts that one context, conjoins every requirement in the
+document under it, and asks Z3 whether a single assignment satisfies them all. Z3
+weighs the whole set in one question, where a reader works through it a pair at a
+time. This is symspec's core job; the next section is about the case where even the
+chain is hidden behind mismatched *words*.
 
 ---
 
@@ -351,7 +358,7 @@ mathematical guarantee, not a heuristic.
 | **Ambiguity checker** | vague words, "and/or" read two ways, pronouns with no clear referent | fixed detectors; genuinely judgment-call ambiguity is flagged for a human/agent, never silently guessed |
 | **Meaning-similarity layer** *(core, always-on)* | conflicts hidden behind different wording, and possible opposites the prover can't yet see | a small language model running **locally** that *suggests*; you confirm with `glossary add`/`antonym add`, then the logic checker proves the conflict. A missing model fails the run rather than skipping the layer |
 | **Coverage accountant** | requirements the prover never compared, and suggestions left untriaged | a deterministic participation tally; anything uncovered demotes `verified` with a fix in `coverage.demotions` |
-| **Formal certificate** *(opt-in)* | a re-checkable proof artifact for the whole spec | the **Lean 4** proof assistant; a file anyone can independently verify later |
+| **Lean toolchain probe** *(opt-in)* | nothing about your spec yet: it emits placeholder `True` theorems, so it reports the same result for a spec `check` proves contradictory | the **Lean 4** proof assistant elaborates the generated file and reports its axiom provenance; `data.certified` stays `false` until a semantic EARS→Lean encoding lands |
 
 The rule that holds it together: **anything that can block your build is perfectly
 reproducible from the document plus a couple of pinned, version-controlled
@@ -359,7 +366,7 @@ inputs.** The one "smart" layer runs on every check but can only *suggest*; its
 decisions get reviewed by a person or agent and saved into the project
 (`glossary`, `antonyms`, `waivers`) so they never vary again.
 
-In numbers: **20 commands**, **75 stable result codes** (21 error, 24 lint, 30
+In numbers: **22 commands**, **75 stable result codes** (21 error, 24 lint, 30
 finding) that only ever get added — never renamed or removed — so automation built
 on them keeps working; a self-describing `manifest`, structured output
 everywhere, a compact `--dense` mode for token-limited agents, and the adversarial
@@ -408,10 +415,9 @@ nothing is saved and you're told which line failed.
 > resolving forward before the UUIDs existed — and it either all landed or none of
 > it did. Then `check` handed me stable codes with character spans and rewrite
 > suggestions I could act on without guessing, `waive` let me suppress intentional
-> style findings with a recorded reason, the meaning tier flagged one
-> genuinely-similar pair I kept distinct on purpose, and `certify` kernel-checked
-> the whole thing in Lean. It never made me parse prose to find out whether I'd
-> succeeded."
+> style findings with a recorded reason, and the meaning tier flagged one
+> genuinely-similar pair I kept distinct on purpose. It never made me parse prose
+> to find out whether I'd succeeded."
 >
 > — *An Opus 4.8 Claude Code agent*
 
@@ -421,7 +427,7 @@ nothing is saved and you're told which line failed.
 
 For the full pipeline — the regex-first parse ladder, atomization and the antonym
 table, the Z3 encoding and unsat-core extraction, the numeric/temporal/ambiguity
-tiers, the local-ONNX meaning tier, and the optional Lean 4 certificate — see the
+tiers, the local-ONNX meaning tier, and the optional Lean 4 tier — see the
 generated documentation tree under [`docs/`](docs/README.md): a module map,
 data-flow and sequence diagrams, the public API and CLI reference, a contract map,
 and a debugging guide, all cited to source.
@@ -486,7 +492,7 @@ Plain-language definitions for the terms used above.
 | **Sound modulo atomization** | The precise honesty guarantee: every reported conflict is real *as the requirements were atomized*; a conflict can still hide behind unmatched vocabulary, so silence is not a certificate. |
 | **LIA / LRA** | *Linear Integer / Real Arithmetic* — the number reasoning the solver uses to catch conflicting limits like "under 2 seconds" vs "over 3 seconds". |
 | **LTL / sound-for-UNSAT** | *Linear Temporal Logic* expresses timing/ordering rules; the timing checker is sound-for-UNSAT — a reported conflict is real, but a clean run over a bounded window isn't a full guarantee. symspec labels this in its output. |
-| **Lean 4** | A *proof assistant* — software that verifies proofs. symspec can optionally emit a Lean proof artifact anyone can independently re-check. Never required for `check`. |
+| **Lean 4** | A *proof assistant* — software that verifies proofs. `symspec certify` optionally runs it. The file it emits carries placeholder `True` theorems in place of your requirements, so a clean elaboration attests that the toolchain ran, and says nothing about whether your spec is consistent. Never required for `check`, and never a consistency gate. |
 | **Manifest** | One command (`symspec manifest`) that describes the entire tool as structured data, so an agent learns every command and option in one call. |
 | **JSON envelope** | The consistent shape every command returns: `{ apiVersion, type, data }` on success or `{ …, code, suggestions }` on error. |
 | **Result code** | A short, stable identifier for a finding or error (`FND_CONTRADICTION`, `ERR_DOC_NOT_FOUND`). Only ever added, never renamed. |

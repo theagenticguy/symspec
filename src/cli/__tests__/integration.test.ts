@@ -413,3 +413,79 @@ describe('CLI integration — parse + edge ops (AC-6-9 inventory)', () => {
     expect(shown.data.requirement.derives).toContain(b.data.id)
   })
 })
+
+describe('CLI integration — edge commands accept a stable key wherever a UUID works', () => {
+  // `keyDescription` (core/schema.ts) promises every id-taking command accepts a
+  // key wherever it accepts a UUID, and `apply`'s batch AddRelationship op has
+  // always honored that. The single-command edge surface did not: it validated the
+  // SOURCE through requireRequirement (which resolves keys) and then passed the
+  // RAW refs to applyChange, whose ChangeSchema demands UUIDs — so `derive G1 S3`
+  // died with a raw Zod uuid-format dump and an empty suggestions array, and
+  // `remove-edge` never resolved either endpoint. Both endpoints of all five
+  // commands now resolve before applyChange sees them.
+  async function seedTwo(): Promise<void> {
+    await runCli(['init', docPath])
+    for (const [key, response] of [
+      ['G1', 'issue a token'],
+      ['S3', 'log the event'],
+    ] as const) {
+      await runCli([
+        'add',
+        docPath,
+        '--key',
+        key,
+        '--pattern',
+        'ubiquitous',
+        '--system',
+        'system',
+        '--response',
+        response,
+      ])
+    }
+  }
+
+  for (const type of ['derive', 'satisfy', 'verify', 'refine'] as const) {
+    it(`\`${type}\` resolves both endpoints from stable keys`, async () => {
+      await seedTwo()
+      const { stdout, code } = await runCli([type, '--file', docPath, 'G1', 'S3'])
+      expect(code).toBe(0)
+      const env = lastJson(stdout) as {
+        type: string
+        data: { from: string; to: string; added: boolean }
+      }
+      expect(env.type).toBe(type)
+      expect(env.data.added).toBe(true)
+      // The envelope reports RESOLVED UUIDs, never the keys it was handed.
+      expect(env.data.from).toMatch(/^[0-9a-f-]{36}$/)
+      expect(env.data.to).toMatch(/^[0-9a-f-]{36}$/)
+    })
+  }
+
+  it('`remove-edge` resolves both endpoints from stable keys', async () => {
+    await seedTwo()
+    expect((await runCli(['derive', '--file', docPath, 'G1', 'S3'])).code).toBe(0)
+
+    const { stdout, code } = await runCli(['remove-edge', '--file', docPath, 'G1', 'derives', 'S3'])
+    expect(code).toBe(0)
+    const env = lastJson(stdout) as { type: string; data: { removed: boolean } }
+    expect(env.type).toBe('remove-edge')
+    expect(env.data.removed).toBe(true)
+
+    const shown = lastJson((await runCli(['show', '--file', docPath, 'G1'])).stdout) as {
+      data: { requirement: { derives: string[] } }
+    }
+    expect(shown.data.requirement.derives).toEqual([])
+  })
+
+  it('an unknown ref gives ERR_NOT_FOUND with an actionable suggestion, not a Zod dump', async () => {
+    await seedTwo()
+    const { stdout, code } = await runCli(['derive', '--file', docPath, 'G1', 'NOPE'])
+    expect(code).not.toBe(0)
+    const env = lastJson(stdout) as { code: string; error: string; suggestions: string[] }
+    expect(env.code).toBe('ERR_NOT_FOUND')
+    expect(env.error).toContain('NOPE')
+    // The defect surfaced a raw Zod issue array and no suggestions at all.
+    expect(env.error).not.toContain('invalid_format')
+    expect(env.suggestions.length).toBeGreaterThan(0)
+  })
+})

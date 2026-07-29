@@ -239,7 +239,21 @@ const numericSpec = [
   { id: 'REQ-SLOW', predicates: extractNumericPredicates('respond over 900 ms', 'api') },
 ]
 
-/** A response obligation vs a co-triggered absence ⇒ FND_TEMPORAL_CONTRADICTION. */
+/**
+ * Two same-trigger response obligations at OPPOSITE response polarity:
+ * `G(T → F resp)` vs `G(T → F ¬resp)`. These are jointly SATISFIABLE — respond
+ * at one step, don't at another — so this fixture measures `sat` and yields NO
+ * finding. Its comment used to claim it produced `FND_TEMPORAL_CONTRADICTION`,
+ * which it never has (corrected with AC-2-6).
+ *
+ * It is still the right fixture for these tests, and its behavior must not
+ * change: what AC-1-7 pins here is that the temporal tier CONFIGURES its solver
+ * and RESPECTS its budget, which needs a spec that reaches the solver at all —
+ * not one that proves a conflict. The `sat` verdict is load-bearing for the
+ * `unknown`-handling test too (a tier that can only withhold findings must be
+ * observed on input where a finding is not owed). Real temporal conflicts, and
+ * the AC-2-6 false-positive regressions, live in `temporal.test.ts`.
+ */
 const temporalSpec = [
   {
     id: 'REQ-RESPOND',
