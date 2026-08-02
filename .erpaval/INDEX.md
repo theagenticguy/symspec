@@ -37,6 +37,9 @@ lessons before starting work.
 - [For a sound checker's blind spots: SOLVE what's soundly recoverable (propose/decide), DETECT-AND-DEMOTE what isn't — never fabricate a solver](solutions/architecture/detect-and-demote-vs-solve-for-intractable-blind-spots.md)
 - [Lenient normalization that helps a PROPOSE signal must not touch the DECIDE key — it turns a suggestion into a fabricated verdict](solutions/architecture/normalization-for-a-propose-signal-must-not-touch-the-decide-key.md)
 
+- [Abandoning a z3 query WEDGES the module (Asyncify one-slot) — Z3_interrupt + await; V14/V21 revised](solutions/conventions/z3-asyncify-interrupt-not-abandon.md)
+- [Effect 4.0.0-beta.102 CLI/Layer API reality — 8 verified deltas incl. two silent manifest/help failures](solutions/conventions/effect-v4-beta102-cli-api-reality.md)
+
 ### orchestration
 
 - [Background subagents can instant-stop with 0 tool calls — SendMessage nudge recovers](solutions/orchestration/subagent-instant-stop-sendmessage-recovery.md)
