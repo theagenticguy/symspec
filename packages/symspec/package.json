@@ -1,0 +1,42 @@
+{
+  "name": "symspec",
+  "version": "1.0.0-alpha.0",
+  "private": true,
+  "type": "module",
+  "description": "symspec v5 greenfield: one operations table projected into a CLI, a machine-readable manifest, and help — built on Effect v4.",
+  "license": "Apache-2.0",
+  "bin": {
+    "symspec": "./bin/symspec.mjs"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=11"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check . --write",
+    "cli": "node dist/cli.mjs",
+    "bench": "./scripts/bench.sh",
+    "check": "biome ci . && tsc --noEmit && pnpm run build && vitest run"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.0.0-beta.102",
+    "effect": "4.0.0-beta.102"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.15",
+    "@types/node": "^25.7.0",
+    "tsdown": "^0.22.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  }
+}

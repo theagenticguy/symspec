@@ -1,6 +1,18 @@
+# The donor (symspec v4) remains the workspace ROOT package — pnpm always treats
+# the root as a project, so it keeps building without appearing in this glob.
+# `packages/*` adds the v5 greenfield (`packages/symspec`) alongside it. Both are
+# private during the alpha, so the shared name is a workspace-internal label
+# only; the v5 package owns the published `symspec` name at GA.
+packages:
+  - packages/*
+
 allowBuilds:
   esbuild: true
   lefthook: true
+  # A msgpackr optional native accelerator pulled in transitively by rolldown
+  # (tsdown). Its JS fallback is complete, so declining the native build costs
+  # nothing and keeps `pnpm install` non-interactive (S2 spike hit this prompt).
+  msgpackr-extract: false
   onnxruntime-node: set this to true or false
   protobufjs: set this to true or false
   sharp: set this to true or false
