@@ -58,8 +58,8 @@
  */
 
 import type { Requirement as DocumentRequirement, RequirementsDocument } from '../core/document.ts'
-import type { Doc } from './donor/core/doc.ts'
-import type { Requirement as DonorRequirement } from './donor/core/schema.ts'
+import type { Doc } from '../donor/core/doc.ts'
+import type { Requirement as DonorRequirement } from '../donor/core/schema.ts'
 
 /**
  * Project one v3 requirement onto the donor's requirement shape.

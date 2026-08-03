@@ -68,7 +68,7 @@
  */
 
 import { Context, Effect, Layer, Scope } from 'effect'
-import { primeZ3, resetZ3, type Z3Context, type Z3Module } from './donor/formal/backend.ts'
+import { primeZ3, resetZ3, type Z3Context, type Z3Module } from '../donor/formal/backend.ts'
 
 // ---------------------------------------------------------------------------
 // The concurrency bound, as a value

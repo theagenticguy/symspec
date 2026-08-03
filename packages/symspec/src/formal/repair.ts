@@ -46,9 +46,9 @@
  * OMITS — absence of a repair is the honest signal that no mechanical fix exists.
  */
 
+import type { CheckFinding, CoverageDemotion } from '../donor/pipeline/check.ts'
+import type { Exclusion } from '../donor/pipeline/gate.ts'
 import type { Repair } from '../kernel/envelope.ts'
-import type { CheckFinding, CoverageDemotion } from './donor/pipeline/check.ts'
-import type { Exclusion } from './donor/pipeline/gate.ts'
 
 /** The reason strings a {@link CoverageDemotion} may carry. */
 export type DemotionReason = CoverageDemotion['reason']

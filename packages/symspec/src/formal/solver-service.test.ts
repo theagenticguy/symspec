@@ -52,7 +52,7 @@
 
 import { Duration, Effect, Fiber, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { resetZ3, type Z3Context, type Z3Module } from './donor/formal/backend.ts'
+import { resetZ3, type Z3Context, type Z3Module } from '../donor/formal/backend.ts'
 import {
   interruptibleSolve,
   SOLVER_CONCURRENCY,

@@ -4,7 +4,7 @@
  * ## What this operation is, structurally
  *
  * A thin Effect shell over the TRANSPLANTED donor pipeline
- * (`../formal/donor/pipeline/check.ts`, byte-identical to the donor's), plus two
+ * (`../donor/pipeline/check.ts`, byte-identical to the donor's), plus two
  * v5 additions the donor's report shape did not carry. The pipeline itself is
  * untouched on purpose: the differential oracle (`../formal/differential.test.ts`)
  * runs the donor's `runCheck` and this operation over the same documents and
@@ -63,16 +63,16 @@
 import { Effect, Schema } from 'effect'
 import type { DocumentDiagnostic } from '../core/document.ts'
 import { DocPath, DocStore } from '../core/store.ts'
-import { toDonorDoc } from '../formal/compat.ts'
 import type {
   CheckFinding,
   CheckOptions,
   CheckReport,
   CheckSeverity,
   CoverageDemotion,
-} from '../formal/donor/pipeline/check.ts'
-import { filterReport, runCheck } from '../formal/donor/pipeline/check.ts'
-import type { Exclusion } from '../formal/donor/pipeline/gate.ts'
+} from '../donor/pipeline/check.ts'
+import { filterReport, runCheck } from '../donor/pipeline/check.ts'
+import type { Exclusion } from '../donor/pipeline/gate.ts'
+import { toDonorDoc } from '../formal/compat.ts'
 import { repairForDemotion } from '../formal/repair.ts'
 import { SolverService } from '../formal/solver-service.ts'
 import { ok, type Repair } from '../kernel/envelope.ts'

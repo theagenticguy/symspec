@@ -2,8 +2,9 @@
  * TRANSPLANT FIDELITY guards — the tests that make "verbatim" checkable rather
  * than asserted.
  *
- * The transplant copied ~39 donor files into `./donor/` with mechanical import
- * rewrites, and materially edited exactly FOUR. The risk that matters is not a
+ * The transplant copied the donor's check-path closure into `./donor/` with
+ * mechanical import rewrites, materially editing a handful. The risk that matters
+ * is not a
  * copy that fails to compile — `tsc` catches that — but a copy that DRIFTS: a code
  * string retyped with a typo, a description reworded, a code silently dropped from
  * the catalog. Any of those is invisible in review and changes what an agent is
@@ -35,9 +36,9 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import * as donorDoc from '../../../../src/core/doc.ts'
-import * as donorSchema from '../../../../src/core/schema.ts'
-import * as donorCodes from '../../../../src/formal/codes.ts'
+import * as donorDoc from '../../../src/core/doc.ts'
+import * as donorSchema from '../../../src/core/schema.ts'
+import * as donorCodes from '../../../src/formal/codes.ts'
 import * as transplantDoc from './donor/core/doc.ts'
 import * as transplantSchema from './donor/core/schema.ts'
 import * as transplantCodes from './donor/formal/codes.ts'
@@ -222,7 +223,7 @@ const verbatimBodies = (relative: string): { donor: string; transplant: string }
   const here = fileURLToPath(new URL('.', import.meta.url))
   return {
     transplant: stripSpecifierExtensions(readFileSync(`${here}donor/${relative}`, 'utf8')),
-    donor: stripSpecifierExtensions(readFileSync(`${here}../../../../src/${relative}`, 'utf8')),
+    donor: stripSpecifierExtensions(readFileSync(`${here}../../../src/${relative}`, 'utf8')),
   }
 }
 
