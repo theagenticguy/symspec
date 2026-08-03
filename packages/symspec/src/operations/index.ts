@@ -9,8 +9,8 @@
  *
  * - `manifest` — the self-description projection. Proves the table can describe
  *   itself, including its own row.
- * - `explain <code>` — the success AND failure paths, over the real 21-code
- *   catalog, with did-you-mean suggestions on an unknown code.
+ * - `explain <code>` — the success AND failure paths, over all 75 codes in the
+ *   three catalogs (G3), with did-you-mean suggestions on an unknown code.
  * - `version` — the minimal op: no input fields at all, which is its own edge
  *   case for the flag-derivation and manifest projections.
  *
@@ -36,8 +36,9 @@
 import { Effect, Schema } from 'effect'
 import { FND_CODES, FndCodeMeta } from '../donor/formal/codes.ts'
 import { GTWR_CODES, GtwrCodeMeta } from '../donor/lint/codes.ts'
+import { catalogCounts, lookupCode, nearestCodesAll } from '../kernel/catalog.ts'
 import { API_VERSION, ok } from '../kernel/envelope.ts'
-import { ErrNotFound, errCodeCatalog, explainCode, nearestCodes } from '../kernel/errors.ts'
+import { ErrNotFound, errCodeCatalog } from '../kernel/errors.ts'
 import {
   EXIT_CLEAN,
   EXIT_FINDINGS_FAILURE,
@@ -153,30 +154,55 @@ const manifestEnvelope = () =>
 /**
  * `explain <code>` — what one stable code means and what to do about it.
  *
- * The agent-loop primitive: an error envelope carries a `code`, and this turns
- * that code back into its meaning without the agent needing an out-of-band table.
+ * The agent-loop primitive: an envelope carries a `code`, and this turns that code
+ * back into its meaning without the agent needing an out-of-band table AND WITHOUT
+ * FETCHING THE MANIFEST (spec AC-A-3 / donor AC-3-8 — the manifest is ~48 KB of
+ * JSON to answer a question about one string).
+ *
+ * ## G3: all THREE catalogs, not one
+ *
+ * G1 reached only the 21 `ERR_*` classes, which was right for a build that could
+ * not yet emit a finding. G2b published `FND_*` and `GTWR_*` in the manifest, and
+ * that made the gap visible from the agent's side: the codes an agent branches on
+ * inside a fix loop were exactly the two families `explain` could not resolve, and
+ * a miss ranked did-you-mean over 21 of 75 candidates — so `explain GTWR_R7_VAGU`
+ * answered with a list of `ERR_*` codes.
+ *
+ * Both halves now go through `../kernel/catalog.ts`: {@link lookupCode} over all 75,
+ * {@link nearestCodesAll} over all 75. The payload gains `family`, `severity`,
+ * `tier`, the runnable `commands` the text names, and a worked `example` where the
+ * catalogs carry one — each read from the same description bytes the manifest
+ * publishes, never a second corpus.
+ *
  * On an unknown code it fails with {@link ErrNotFound} carrying DID-YOU-MEAN
  * suggestions, so a typo is self-correcting rather than a dead end.
  */
 export const explainOp = defineOperation({
   name: 'explain',
-  summary: 'Explain one stable diagnostic code: its meaning and its suggested remedy',
+  summary:
+    'Explain one stable diagnostic code (ERR_*, FND_*, or GTWR_*): its severity, meaning, and remedy',
   type: 'codeExplanation',
   input: Schema.Struct({
     code: Schema.String.annotate({
-      description: 'A stable diagnostic code, such as ERR_NOT_FOUND or ERR_SOLVER_MISSING',
+      description:
+        'A stable diagnostic code from any of the three catalogs — an operational error (ERR_SOLVER_MISSING), a check finding (FND_CONTRADICTION), or a GtWR lint rule (GTWR_R7_VAGUE). Case-sensitive; an unknown code returns ERR_NOT_FOUND with did-you-mean suggestions ranked across all 75.',
     }),
   }),
   handler: (input) => {
-    const explanation = explainCode(input.code)
-    if (explanation === undefined) {
-      const near = nearestCodes(input.code)
+    const entry = lookupCode(input.code)
+    if (entry === undefined) {
+      // Ranked across ALL 75 now. The family prefix keeps this from becoming noise:
+      // a misspelled FND_* shares 4 leading characters with every other FND_* and
+      // none with any ERR_*, so a cross-family suggestion only appears when nothing
+      // in the right family is close.
+      const near = nearestCodesAll(input.code)
+      const counts = catalogCounts()
       return Effect.fail(
         new ErrNotFound({
           error: `Unknown code: ${input.code}`,
           suggestions: [
             ...(near.length > 0 ? [`Did you mean: ${near.join(', ')}?`] : []),
-            'Run `symspec manifest` to list every known code.',
+            `Run \`symspec manifest\` to list every known code (${counts.ERR} ERR_*, ${counts.FND} FND_*, ${counts.GTWR} GTWR_*).`,
           ],
           // The remedy is a command an agent can run verbatim (AC-A-9). For a
           // near-miss the repair is the corrected invocation itself.
@@ -190,7 +216,7 @@ export const explainOp = defineOperation({
         }),
       )
     }
-    return Effect.succeed(ok('codeExplanation', explanation))
+    return Effect.succeed(ok('codeExplanation', entry))
   },
 })
 

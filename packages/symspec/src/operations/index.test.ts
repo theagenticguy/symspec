@@ -151,6 +151,93 @@ describe('explain — success', () => {
   })
 })
 
+/**
+ * AC-A-3 — the OPERATION reaches all three catalogs, not just the kernel function.
+ *
+ * `catalog.test.ts` covers the lookup exhaustively. What these add is the seam: the
+ * operation actually calls it, so the 54 codes G1's `explain` could not resolve now
+ * come back through a real `codeExplanation` envelope with exit 0. Before G3 every
+ * one of these was an `ERR_NOT_FOUND` at exit 2 — an agent holding an
+ * `FND_CONTRADICTION` from `check` could list it in the manifest and not explain it.
+ */
+describe('explain — AC-A-3: all 75 codes through the operation', () => {
+  it('resolves every code the MANIFEST publishes, across all three catalogs', async () => {
+    const manifest = currentManifest()
+    const published = [...manifest.errorCodes, ...manifest.findingCodes, ...manifest.lintCodes].map(
+      (row) => row.code,
+    )
+    expect(published).toHaveLength(75)
+
+    for (const code of published) {
+      const env = await Effect.runPromise(runOperation(explainOp, { code }))
+      expect(env.data.code, code).toBe(code)
+      // The description an agent gets from `explain` is byte-identical to the one the
+      // manifest published — the single-source claim, asserted at the seam where it
+      // would break.
+      const row = published.includes(code)
+        ? [...manifest.errorCodes, ...manifest.findingCodes, ...manifest.lintCodes].find(
+            (r) => r.code === code,
+          )
+        : undefined
+      expect(env.data.description, code).toBe(row?.description)
+      expect(exitCodeForEnvelope(env), code).toBe(0)
+    }
+  })
+
+  it('explains a FINDING code with its severity and tier', async () => {
+    const env = await Effect.runPromise(runOperation(explainOp, { code: 'FND_CONTRADICTION' }))
+    expect(env.data.family).toBe('FND')
+    expect(env.data.severity).toBe('error')
+    expect(env.data.tier).toBe('formal')
+    expect(env.data.meaning).toContain('unsat')
+  })
+
+  it('explains a LINT code with the honest null severity and the reason', async () => {
+    const env = await Effect.runPromise(runOperation(explainOp, { code: 'GTWR_R26_ABSOLUTE' }))
+    expect(env.data.family).toBe('GTWR')
+    // NOT a guess: R26 is error on a bare absolute and warn when a conditional
+    // qualifies it, so a per-code severity would be wrong exactly when it matters.
+    expect(env.data.severity).toBeNull()
+    expect(env.data.severityNote).toContain('PER FINDING')
+    expect(env.data.tier).toBe('lint')
+  })
+
+  it('carries the worked micro-example where the catalog has one', async () => {
+    const env = await Effect.runPromise(
+      runOperation(explainOp, { code: 'FND_OPPOSITION_CANDIDATE' }),
+    )
+    expect(env.data.example).toBe('"open the valve" vs "shut the valve"')
+    // And the runnable discharge, lifted out of the same description text.
+    expect(env.data.commands).toEqual(['symspec antonym add <verbA> <verbB>'])
+  })
+
+  it('did-you-mean now ranks across all 75, not the 21 ERR_* codes', async () => {
+    // The G1 miss this closes: a GTWR_* typo returned a list of ERR_* codes.
+    const r = await Effect.runPromise(
+      Effect.result(runOperation(explainOp, { code: 'GTWR_R7_VAGU' })),
+    )
+    expect(r._tag).toBe('Failure')
+    if (r._tag === 'Failure') {
+      const env = toErrorEnvelope(r.failure as Parameters<typeof toErrorEnvelope>[0])
+      expect(env.suggestions.join(' ')).toContain('GTWR_R7_VAGUE')
+      expect(env.repair?.commands).toEqual(['symspec explain --code GTWR_R7_VAGUE'])
+      // And it says how many codes exist, so an agent knows the corpus size.
+      expect(env.suggestions.join(' ')).toContain('30 FND_*')
+    }
+  })
+
+  it('needs NO manifest fetch — the answer is one code, not 48 KB of JSON', async () => {
+    // AC-3-8's actual requirement, asserted structurally: the explanation is small
+    // and self-contained, so an agent in a fix loop never pays for the whole contract
+    // to learn what one code means.
+    const one = await Effect.runPromise(runOperation(explainOp, { code: 'FND_VACUITY' }))
+    const explainBytes = JSON.stringify(one).length
+    const manifestBytes = JSON.stringify(currentManifest()).length
+    expect(explainBytes).toBeLessThan(2_000)
+    expect(explainBytes * 20).toBeLessThan(manifestBytes)
+  })
+})
+
 describe('explain — unknown code', () => {
   const run = (code: string) => Effect.runPromise(Effect.result(runOperation(explainOp, { code })))
 
