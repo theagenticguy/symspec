@@ -228,8 +228,8 @@ const verbatimBodies = (relative: string): { donor: string; transplant: string }
 }
 
 /**
- * The four files this transplant materially edited, each with the reason. Any
- * OTHER file diverging is a drift bug.
+ * The files this transplant materially edited, each with the reason. Any OTHER file
+ * diverging is a drift bug.
  *
  * - `core/schema.ts` — Zod dropped (greenfield is Effect Schema native); reduced
  *   to the three types the check path imports. Fidelity asserted above.
@@ -239,8 +239,24 @@ const verbatimBodies = (relative: string): { donor: string; transplant: string }
  *   Descriptions extracted programmatically. Fidelity asserted above.
  * - `formal/backend.ts` — the Layer seam (`primeZ3` / `resetZ3`). Behavior
  *   asserted by `solver-service.test.ts`.
- * - `formal/embed.ts` — reduced to `Embedder` + `cosine` + the model pin; the
- *   ONNX loader is the G2b semantic tier. `cosine` fidelity asserted below.
+ * - `formal/embed.ts` — reduced to `Embedder` + `cosine` + the model pin; the ONNX
+ *   loader lives in `../formal/embed.ts` (G2b). `cosine` fidelity asserted below.
+ *
+ * G2b additions:
+ *
+ * - `parse/result.ts` — Zod dropped (nine schemas, zero non-test consumers) AND the
+ *   `proposedSplits`→`proposedOps` rename collapsed to ONE name (spec AC-A-4). The
+ *   donor's tier3 suggestion text advertised `proposedOps` while the object it
+ *   returned had `proposedSplits`, so the field an agent was told to read did not
+ *   exist. Behavior fidelity asserted by `parse.test.ts`, which runs BOTH ladders
+ *   over one corpus and diffs outcome/pattern/slots/confidence/tier/code.
+ * - `parse/batch.ts` — Zod dropped (two schemas, zero non-test consumers). The line
+ *   policy is verbatim; `parse.test.ts` diffs the batch summaries too.
+ *
+ * Note what is NOT here: `parse/tier3.ts` is VERBATIM. Its suggestion text already
+ * said `proposedOps`, so the fix was to make the result carry that name — not to
+ * edit the tier. The one-name property therefore costs zero transplant fidelity,
+ * which is the whole reason it was worth doing this way round.
  */
 const EDITED = new Set([
   'core/schema.ts',
@@ -248,6 +264,8 @@ const EDITED = new Set([
   'formal/codes.ts',
   'formal/backend.ts',
   'formal/embed.ts',
+  'parse/result.ts',
+  'parse/batch.ts',
 ])
 
 /** Every transplanted file, relative to the `donor/` root. Enumerated explicitly
@@ -284,8 +302,14 @@ const TRANSPLANTED = [
   'formal/temporal.ts',
   'formal/vacuity.ts',
   'lint/gtwr.ts',
+  'parse/batch.ts',
+  'parse/negation.ts',
+  'parse/normalize.ts',
   'parse/preprocess.ts',
+  'parse/result.ts',
   'parse/tier1.ts',
+  'parse/tier2.ts',
+  'parse/tier3.ts',
   'pipeline/check.ts',
   'pipeline/gate.ts',
   'solvers/free/ambiguity.ts',

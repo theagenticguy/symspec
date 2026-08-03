@@ -51,6 +51,13 @@
  * therefore resolves against the COMPLETE requirement set, and a `to` written as a
  * stable key resolves even if the target was added later in the file.
  *
+ * ## Where the stream comes from
+ *
+ * `StreamSource` (`./stream.ts`) — a service, so this operation is unit-testable
+ * without a subprocess. It lived in THIS file through G1b, when `import` was its
+ * only consumer; G2b's `parse` and `apply` read text the same way, so it moved
+ * rather than having them depend on `import` for a reason no reader could infer.
+ *
  * ## Unresolvable edges are DROPPED and DISCLOSED, never invented
  *
  * An edge whose `from` or `to` names nothing in the finished document cannot be
@@ -61,7 +68,7 @@
  * do not paper over.
  */
 
-import { Context, Effect, FileSystem, Layer, Schema, Stdio, Stream } from 'effect'
+import { Effect, Schema } from 'effect'
 import {
   type AntonymPair,
   DOC_VERSION,
@@ -82,8 +89,9 @@ import { renderSentence } from '../core/render.ts'
 import { resolveId } from '../core/resolve.ts'
 import { DOC_PATH_CONVENTION, DocPath, DocStore } from '../core/store.ts'
 import { ok } from '../kernel/envelope.ts'
-import { ErrDocExists, ErrIo, ErrUsage } from '../kernel/errors.ts'
+import { ErrDocExists, ErrUsage } from '../kernel/errors.ts'
 import { defineOperation } from '../kernel/operation.ts'
+import { StreamSource } from './stream.ts'
 
 // ---------------------------------------------------------------------------
 // The op-record schema
@@ -828,61 +836,3 @@ export const importOp = defineOperation({
       })
     }),
 })
-
-// ---------------------------------------------------------------------------
-// The stream source
-// ---------------------------------------------------------------------------
-
-/**
- * Where `import` reads its op stream from — a SERVICE so the operation is testable
- * without a subprocess.
- *
- * stdin is the interesting half: it makes the migration one pipe, and it is
- * exactly the dependency that would otherwise force every `import` test to spawn a
- * process. With the source behind a service, the fold and the whole operation are
- * unit-testable, and `cli.test.ts` still exercises the real stdin path end to end
- * against the shipped bundle.
- */
-export class StreamSource extends Context.Service<
-  StreamSource,
-  {
-    /** Read the stream from `path`, or from stdin when `path` is null/undefined. */
-    readonly read: (path: string | null | undefined) => Effect.Effect<string, ErrIo>
-  }
->()('symspec/StreamSource') {}
-
-/** The production stream source: a file read, or stdin. */
-export const streamSourceLayer = Layer.effect(StreamSource)(
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem
-    const stdio = yield* Stdio.Stdio
-    return StreamSource.of({
-      read: (path) => {
-        if (path === null || path === undefined || path.length === 0) {
-          return stdio.stdin.pipe(
-            Stream.decodeText(),
-            Stream.mkString,
-            Effect.mapError(
-              (cause) =>
-                new ErrIo({
-                  error: `Failed to read the op stream from stdin: ${cause instanceof Error ? cause.message : String(cause)}`,
-                  suggestions: ['Pass --file <path> to read from a file instead.'],
-                }),
-            ),
-          )
-        }
-        return Effect.mapError(
-          fs.readFileString(path),
-          (cause) =>
-            new ErrIo({
-              error: `Failed to read the op stream at ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
-              suggestions: [
-                'Check the path exists and is readable.',
-                'Omit --file to read the stream from stdin instead.',
-              ],
-            }),
-        )
-      },
-    })
-  }),
-)

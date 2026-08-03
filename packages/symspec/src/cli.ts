@@ -35,6 +35,7 @@ import {
   initOp,
   listOp,
   manifestOp,
+  parseOp,
   showOp,
   versionOp,
 } from './operations/index.ts'
@@ -374,6 +375,31 @@ const importCommand = Command.make(
 ).pipe(Command.withDescription(importOp.summary))
 
 /**
+ * `parse [text]` — the sentence as an optional POSITIONAL, the file as a flag.
+ *
+ * The asymmetry with `import` (which makes both paths flags) is deliberate and comes
+ * from what is ambiguous. `import` has two PATHS (stream in, document out) and a bare
+ * `import a.jsonl b.json` would not say which is which. `parse` has one path and one
+ * sentence, and they are not confusable: a sentence is not a path. So
+ * `symspec parse "the auth service shall issue a token"` reads the way an agent
+ * types it, and `--file` names the batch case explicitly.
+ */
+const parseCommand = Command.make(
+  'parse',
+  {
+    text: Argument.optional(
+      Argument.string('text').pipe(
+        Argument.withDescription(
+          fieldMetadata(parseOp.input).find((f) => f.name === 'text')?.description ?? '',
+        ),
+      ),
+    ),
+    file: stringFlag(parseOp, 'file'),
+  },
+  (config) => emit(parseOp, { text: Option.getOrNull(config.text), file: config.file }),
+).pipe(Command.withDescription(parseOp.summary))
+
+/**
  * `check [file]` — the document path as an optional positional (matching `list` and
  * `show`, and matching what an agent types), every knob as a flag.
  *
@@ -419,6 +445,7 @@ const rootWithSubcommands = root.pipe(
   Command.withSubcommands([
     initCommand,
     importCommand,
+    parseCommand,
     listCommand,
     showCommand,
     checkCommand,

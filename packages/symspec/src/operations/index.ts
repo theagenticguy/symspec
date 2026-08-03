@@ -22,6 +22,10 @@
  *   v2 migration story.
  * - `list` / `show <ref>` — the reads, resolving a ref through the one chokepoint.
  *
+ * G2b adds the AUTHORING surface — `parse` (prose in, apply-ready ops out) and the
+ * mutation ops. `parse` is listed with the document lifecycle rather than with the
+ * analysis ops because it is where a document COMES FROM.
+ *
  * Appending an operation here is the ONLY edit needed to make it appear in the
  * manifest and in `--help`. (The CLI tree also needs one `Command.make` in
  * `../cli.ts`, because nothing in a JSON Schema says whether a field should be a
@@ -48,10 +52,13 @@ import { VERSION } from '../kernel/version.ts'
 import { checkOp } from './check.ts'
 import { initOp, listOp, showOp } from './document.ts'
 import { importOp } from './import.ts'
+import { parseOp } from './parse.ts'
 
 export { checkOp } from './check.ts'
 export { initOp, listOp, showOp } from './document.ts'
-export { importOp, streamSourceLayer } from './import.ts'
+export { importOp } from './import.ts'
+export { parseOp } from './parse.ts'
+export { StreamSource, streamSourceLayer } from './stream.ts'
 
 /**
  * The exit-code table the manifest publishes, single-sourced from the exit
@@ -183,6 +190,7 @@ export const versionOp = defineOperation({
 export const OPERATIONS = [
   initOp,
   importOp,
+  parseOp,
   listOp,
   showOp,
   checkOp,

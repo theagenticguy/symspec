@@ -31,10 +31,14 @@ describe('the table', () => {
    * edit visible in review rather than letting the agent-facing surface grow
    * silently.
    */
-  it('holds the eight shipped operations, in presentation order', () => {
+  it('holds the shipped operations, in presentation order', () => {
     expect(OPERATIONS.map((op) => op.name)).toEqual([
       'init',
       'import',
+      // G2b: `parse` sits with the document lifecycle rather than with the analysis
+      // ops, because it is where a document COMES FROM — prose in, apply-ready ops
+      // out. It reads no document and writes none.
+      'parse',
       'list',
       'show',
       // G2a: `check`, the operation the tool exists for, placed after the document
