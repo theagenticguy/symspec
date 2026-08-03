@@ -350,13 +350,43 @@ export interface ManifestOperation {
   readonly input: unknown
 }
 
-/** The manifest payload: the whole agent-facing contract in one object. */
+/** One row of a stable-code catalog: the code an agent switches on, and what it
+ * means. Shared by all three catalogs so an agent parses one shape. */
+export interface CodeRow {
+  readonly code: string
+  readonly description: string
+}
+
+/**
+ * The manifest payload: the whole agent-facing contract in one object.
+ *
+ * ## All THREE code catalogs, not one
+ *
+ * The spec's standing constraint is that all 75 stable codes (21 `ERR_*` / 24
+ * `GTWR_*` / 30 `FND_*`) survive with meanings intact, and that "codes are the API
+ * agents switch on". G1 published only `errorCodes`, which was honest for a build
+ * whose operations could not yet emit a finding — `check` did not exist. Once it
+ * did, an agent reading the manifest to learn what `FND_CONTRADICTION` means found
+ * nothing, and the codes it actually has to branch on were the two catalogs the
+ * manifest omitted.
+ *
+ * So `findingCodes` (FND_*) and `lintCodes` (GTWR_*) join it here, read from the
+ * transplanted catalogs' own description corpora — one projection each, no hand
+ * table. `manifest.test.ts` asserts the total is 75 and that each catalog's order is
+ * its append-only order.
+ */
 export interface Manifest {
   readonly apiVersion: number
   readonly version: string
   readonly operations: readonly ManifestOperation[]
   readonly exitCodes: readonly { readonly code: number; readonly meaning: string }[]
-  readonly errorCodes: readonly { readonly code: string; readonly description: string }[]
+  /** The 21 `ERR_*` operational-failure codes. An error envelope's `code`. */
+  readonly errorCodes: readonly CodeRow[]
+  /** The 30 `FND_*` finding codes. A `check` finding's `code`. */
+  readonly findingCodes: readonly CodeRow[]
+  /** The 24 `GTWR_*` lint rule codes. A lint-tier finding's `code`, and what a
+   * `waive` op names. */
+  readonly lintCodes: readonly CodeRow[]
 }
 
 /**
@@ -372,7 +402,9 @@ export const buildManifest = (args: {
   readonly apiVersion: number
   readonly version: string
   readonly exitCodes: readonly { readonly code: number; readonly meaning: string }[]
-  readonly errorCodes: readonly { readonly code: string; readonly description: string }[]
+  readonly errorCodes: readonly CodeRow[]
+  readonly findingCodes: readonly CodeRow[]
+  readonly lintCodes: readonly CodeRow[]
 }): Manifest => ({
   apiVersion: args.apiVersion,
   version: args.version,
@@ -384,6 +416,8 @@ export const buildManifest = (args: {
   })),
   exitCodes: args.exitCodes,
   errorCodes: args.errorCodes,
+  findingCodes: args.findingCodes,
+  lintCodes: args.lintCodes,
 })
 
 // ---------------------------------------------------------------------------

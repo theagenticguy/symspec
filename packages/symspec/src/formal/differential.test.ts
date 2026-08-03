@@ -339,6 +339,43 @@ const asV3 = (doc: DonorDoc): RequirementsDocument => ({
  */
 const EVAL_OPTIONS = { strict: true, temporalBound: 10 } as const
 
+/**
+ * One memoized (donor, greenfield) report pair per fixture id.
+ *
+ * Not an optimization for its own sake — it is what keeps the oracle AFFORDABLE
+ * enough to assert several claims about it. Each pair costs a full donor run plus a
+ * full greenfield run including a Z3 WASM boot and a k=10 temporal encoding; at
+ * ~2-4s per pair, a suite with four blocks each re-running all 12 fixtures does not
+ * finish inside a sane timeout (measured: it blew a 600s budget).
+ *
+ * Memoizing is also SOUNDER than re-running, not just faster: every block then
+ * compares the SAME two reports, so a claim proven in one block ("lint fired") is
+ * about the identical run another block diffed. Re-running would leave a gap where
+ * two invocations could differ — which for a tool whose central promise is
+ * determinism is a gap worth closing by construction.
+ *
+ * The determinism claim itself is NOT assumed away by this: `check.test.ts` asserts
+ * two runs over one document produce identical reports. Here it is relied upon.
+ */
+const pairCache = new Map<
+  string,
+  Promise<{ readonly donorReport: DonorReport; readonly payload: CheckPayload }>
+>()
+
+const reports = (testCase: {
+  readonly id: string
+  readonly doc: DonorDoc
+}): Promise<{ readonly donorReport: DonorReport; readonly payload: CheckPayload }> => {
+  const cached = pairCache.get(testCase.id)
+  if (cached !== undefined) return cached
+  const run = (async () => ({
+    donorReport: await donor(testCase.doc, EVAL_OPTIONS),
+    payload: await greenfield(asV3(testCase.doc), EVAL_OPTIONS),
+  }))()
+  pairCache.set(testCase.id, run)
+  return run
+}
+
 describe('DIFFERENTIAL ORACLE — the 12 adversarial eval rounds', () => {
   const cases = evalRoundCases()
 
@@ -352,11 +389,10 @@ describe('DIFFERENTIAL ORACLE — the 12 adversarial eval rounds', () => {
   it.each(
     cases.map((c) => [c.id, c] as const),
   )('%s — donor and greenfield agree byte-for-byte', async (_id, testCase) => {
-    const donorReport = await donor(testCase.doc, EVAL_OPTIONS)
-    const greenfieldPayload = await greenfield(asV3(testCase.doc), EVAL_OPTIONS)
+    const { donorReport, payload } = await reports(testCase)
 
     const donorText = canonicalText(comparableOfDonor(donorReport))
-    const greenfieldText = canonicalText(comparableOfGreenfield(greenfieldPayload))
+    const greenfieldText = canonicalText(comparableOfGreenfield(payload))
 
     // The whole gate, in one assertion. `toBe` on the canonical TEXT rather than
     // `toEqual` on the objects, because a text diff shows the first divergence in
@@ -378,9 +414,9 @@ describe('DIFFERENTIAL ORACLE — the 12 adversarial eval rounds', () => {
     let provenCases = 0
     let totalFindings = 0
     for (const testCase of cases) {
-      const report = await donor(testCase.doc, EVAL_OPTIONS)
-      totalFindings += report.findings.length
-      if (report.counts.error > 0) provenCases += 1
+      const { donorReport } = await reports(testCase)
+      totalFindings += donorReport.findings.length
+      if (donorReport.counts.error > 0) provenCases += 1
     }
     // The donor's own eval-rounds test asserts which cases prove; here the claim is
     // only that a substantial number DO, so agreement is agreement about content.
@@ -399,8 +435,7 @@ describe('DIFFERENTIAL ORACLE — the 12 adversarial eval rounds', () => {
    */
   it('reaches the donor verdict on every round (adversarial equivalence)', async () => {
     for (const testCase of cases) {
-      const donorReport = await donor(testCase.doc, EVAL_OPTIONS)
-      const payload = await greenfield(asV3(testCase.doc), EVAL_OPTIONS)
+      const { donorReport, payload } = await reports(testCase)
 
       expect(payload.verified, `${testCase.id}: verified`).toBe(donorReport.verified)
       expect(payload.counts.error, `${testCase.id}: error count`).toBe(donorReport.counts.error)
@@ -418,6 +453,288 @@ describe('DIFFERENTIAL ORACLE — the 12 adversarial eval rounds', () => {
         expect(localized, `${testCase.id}: culprits named — ${testCase.note}`).toBe(true)
       }
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// LINT PARITY — explicit, because "implicitly covered" is not a gate
+// ---------------------------------------------------------------------------
+
+/**
+ * The lint tier's parity, stated as its own claim.
+ *
+ * ## Why this block exists when the byte-diff already covers it
+ *
+ * It genuinely does: `findingOf` carries `tier`, so every `tier: 'lint'` finding is
+ * inside the canonical diff above, and 32 of the 63 findings the eval corpus produces
+ * are lint findings. So the gate was never formal-only.
+ *
+ * But "covered by a bigger assertion" and "gated" are different things, and the
+ * difference is exactly what the oracle blind-spot lesson is about. Two failure modes
+ * the byte-diff cannot distinguish:
+ *
+ * - lint could stop firing on BOTH sides — a shared-input bug (a `sentence` field
+ *   lost at the compat boundary, say) makes both pipelines lint an empty string and
+ *   agree perfectly on zero findings. The diff stays green; the tier is dead.
+ * - the lint tier could be excluded from the greenfield pipeline entirely while the
+ *   donor's stayed in, and if no fixture tripped a rule the diff would still pass.
+ *
+ * So this block asserts the tier is ALIVE (a substantial number of lint findings, over
+ * multiple distinct rules, on both sides) and that the two sides agree about them
+ * SPECIFICALLY — including the exclusion partition, which is the lint tier's real
+ * output: an `error`-severity lint finding EXCLUDES its requirement from the formal
+ * tier, so a lint disagreement silently changes what the solver ever sees.
+ */
+describe('DIFFERENTIAL ORACLE — LINT parity, explicitly', () => {
+  const cases = evalRoundCases()
+
+  /** Every lint finding, projected and canonically sorted. */
+  const lintOf = (findings: readonly { readonly tier: string }[]): readonly unknown[] =>
+    findings
+      .filter((f) => f.tier === 'lint')
+      .map((f) => findingOf(f as DonorFinding))
+      .map(canonical)
+
+  it.each(
+    cases.map((c) => [c.id, c] as const),
+  )('%s — the lint findings agree exactly', async (_id, testCase) => {
+    const { donorReport, payload } = await reports(testCase)
+    expect(canonicalText(lintOf(payload.findings))).toBe(
+      canonicalText(lintOf(donorReport.findings)),
+    )
+  })
+
+  it('the lint tier is ALIVE on both sides — not agreeing about nothing', async () => {
+    let donorLint = 0
+    let greenfieldLint = 0
+    const donorCodes = new Set<string>()
+    const greenfieldCodes = new Set<string>()
+
+    for (const testCase of cases) {
+      const { donorReport, payload } = await reports(testCase)
+      for (const f of donorReport.findings) {
+        if (f.tier === 'lint') {
+          donorLint += 1
+          donorCodes.add(f.code)
+        }
+      }
+      for (const f of payload.findings) {
+        if (f.tier === 'lint') {
+          greenfieldLint += 1
+          greenfieldCodes.add(f.code)
+        }
+      }
+    }
+
+    // Measured on this corpus: 32 lint findings over 4 distinct GTWR rules. Asserted
+    // as floors rather than exact numbers, so tightening a rule is not a failure —
+    // but a tier that went SILENT is.
+    expect(donorLint, 'the donor must actually produce lint findings').toBeGreaterThan(20)
+    expect(greenfieldLint, 'the greenfield must too').toBeGreaterThan(20)
+    expect(donorLint).toBe(greenfieldLint)
+    expect([...greenfieldCodes].sort()).toEqual([...donorCodes].sort())
+    // Multiple distinct rules, so parity is not one rule firing repeatedly.
+    expect(greenfieldCodes.size).toBeGreaterThanOrEqual(3)
+    // Every code is a real GTWR_* code, which is what ties the tier to the catalog
+    // the manifest publishes.
+    for (const code of greenfieldCodes) expect(code.startsWith('GTWR_')).toBe(true)
+  })
+
+  it('agrees about the empty EXCLUSION partition on every pinned fixture', async () => {
+    // The lint tier's load-bearing output is not its findings but its VERDICT on
+    // which requirements reach the solver: an error-severity lint finding excludes
+    // its requirement (donor AC-3-7). A disagreement would change what is proven
+    // while leaving most findings identical.
+    //
+    // On the 12 pinned fixtures both partitions are EMPTY, and that is the honest
+    // thing to assert here — see the block below for why an empty agreement is not
+    // enough and what closes the gap.
+    for (const testCase of cases) {
+      const { donorReport, payload } = await reports(testCase)
+      expect(canonicalText(payload.excluded), `${testCase.id}: excluded`).toBe(
+        canonicalText(donorReport.excluded),
+      )
+      expect(payload.coverage.encoded, `${testCase.id}: encoded`).toBe(donorReport.coverage.encoded)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// THE EXCLUSION BLIND SPOT — a measured gap, closed with a purpose-built fixture
+// ---------------------------------------------------------------------------
+
+/**
+ * The gate's SECOND blind spot, found by trying to assert non-vacuity and failing.
+ *
+ * The first was `negated` (see `differential-oracle-is-blind-to-shared-input-bugs`):
+ * a field the boundary carried that no fixture made observable. This one is the same
+ * SHAPE at a different layer, and it was found the same way — by asking "which
+ * fixture would fail if this were dropped?" and discovering the answer was none.
+ *
+ * MEASURED across all 14 fixtures (12 adversarial + 2 hex-bonk production):
+ *
+ *   excluded requirements:            0
+ *   error-severity lint findings:     0
+ *   lint findings that DO fire:      32, every one of them `warn`
+ *
+ * So the whole AC-3-7 gate — the parse→lint→symbolize ordering the donor calls
+ * "forced" because a lint failure makes symbolization unsound — was inside the
+ * oracle's diff and never once exercised by it. Both sides partitioned nothing, and
+ * agreed perfectly about it.
+ *
+ * The stakes are not cosmetic. Six GtWR rules are `error` severity (R1_PATTERN,
+ * R6_MISSING_UNITS, R7_VAGUE, R8_ESCAPE, R9_OPEN_ENDED, R18_MULTIPLE_SHALL), and each
+ * one EXCLUDES its requirement from the solver. A greenfield that dropped the
+ * exclusion step would encode requirements the donor refuses to encode — changing
+ * `coverage.encoded`, the atom roster, `pairsChecked`, and potentially proving a
+ * conflict from a sentence the donor declared unsound to symbolize. Every pinned
+ * fixture would still pass.
+ *
+ * ## Why a NEW fixture rather than more of the same
+ *
+ * The lesson's own guidance: do not add fixtures until one happens to cover the
+ * field — enumerate what the boundary decides and write one OBSERVABLE case per
+ * decision. The decision here is binary (included / excluded), so it takes one
+ * document that lands requirements on both sides of it, plus the waiver case, which
+ * is the one path where an exclusion is REVERSED.
+ *
+ * These documents are authored here rather than harvested from the donor, and that is
+ * a deliberate exception to `donor-generated-fixtures-not-self-generated`: that rule
+ * is about a MIGRATION round trip, where the producer's real behavior is the thing
+ * under test. Here the input is a plain document both pipelines read directly, and
+ * the DONOR remains the oracle — nothing is asserted about what the exclusion should
+ * be, only that the two sides agree and that it is non-empty.
+ */
+describe('DIFFERENTIAL ORACLE — the exclusion partition, made OBSERVABLE', () => {
+  /** A minimal requirement with an explicit sentence, so the lint tier sees exactly
+   * the text under test rather than a re-render of it. */
+  const req = (
+    id: string,
+    sentence: string,
+    systemResponse: string,
+  ): DonorDoc['requirements'][string] => ({
+    id,
+    patternType: 'ubiquitous',
+    systemName: 'auth service',
+    systemResponse,
+    negated: false,
+    sentence,
+    priority: 'medium',
+    status: 'draft',
+    derives: [],
+    satisfies: [],
+    verifies: [],
+    refines: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  })
+
+  /**
+   * One document that straddles the partition: two requirements the lint tier
+   * ACCEPTS, and two it BLOCKS on distinct error-severity rules.
+   *
+   * Two blocked rather than one, on two DIFFERENT codes, because a single blocked
+   * requirement cannot distinguish "the gate works" from "this one rule works".
+   */
+  const straddling = (): DonorDoc => ({
+    schemaVersion: 2,
+    requirements: {
+      // CLEAN — proper EARS, no error-severity rule fires.
+      'aaaaaaaa-0000-4000-8000-000000000001': req(
+        'aaaaaaaa-0000-4000-8000-000000000001',
+        'The auth service shall issue a session token.',
+        'issue a session token',
+      ),
+      'aaaaaaaa-0000-4000-8000-000000000002': req(
+        'aaaaaaaa-0000-4000-8000-000000000002',
+        'The auth service shall revoke a session token.',
+        'revoke a session token',
+      ),
+      // BLOCKED by R7_VAGUE — "as appropriate" is a weasel term, error severity.
+      'aaaaaaaa-0000-4000-8000-000000000003': req(
+        'aaaaaaaa-0000-4000-8000-000000000003',
+        'The auth service shall throttle requests as appropriate.',
+        'throttle requests as appropriate',
+      ),
+      // BLOCKED by R18_MULTIPLE_SHALL — two obligations in one sentence.
+      'aaaaaaaa-0000-4000-8000-000000000004': req(
+        'aaaaaaaa-0000-4000-8000-000000000004',
+        'The auth service shall audit each login and the api shall retain the record.',
+        'audit each login',
+      ),
+    },
+    glossary: [],
+    antonyms: [],
+    waivers: [],
+  })
+
+  it('EXCLUDES the blocked requirements, and both sides agree exactly', async () => {
+    const doc = straddling()
+    const donorReport = await donor(doc, EVAL_OPTIONS)
+    const payload = await greenfield(asV3(doc), EVAL_OPTIONS)
+
+    // NON-VACUITY FIRST: the fixture genuinely exercises the gate. Without this the
+    // agreement below would be the same empty-vs-empty pass the pinned fixtures give.
+    expect(donorReport.excluded.length, 'the fixture must actually exclude something').toBe(2)
+    const codes = new Set(donorReport.excluded.flatMap((e) => e.findings.map((f) => f.code)))
+    expect(
+      codes.size,
+      'two DIFFERENT rules, so this is the gate and not one rule',
+    ).toBeGreaterThanOrEqual(2)
+    for (const exclusion of donorReport.excluded) {
+      expect(exclusion.reason).toBe('blocking-surface-check')
+    }
+
+    // And the two clean requirements were ENCODED — the other side of the partition.
+    expect(donorReport.coverage.encoded).toBe(2)
+
+    // THE PARITY CLAIM, on a partition that is finally non-empty.
+    expect(canonicalText(payload.excluded)).toBe(canonicalText(donorReport.excluded))
+    expect(payload.coverage.encoded).toBe(donorReport.coverage.encoded)
+    // Whole-report parity too, since a changed partition moves the atom roster,
+    // `pairsChecked`, and the coverage demotions downstream of it.
+    expect(canonicalText(comparableOfGreenfield(payload))).toBe(
+      canonicalText(comparableOfDonor(donorReport)),
+    )
+  })
+
+  it('a WAIVER re-admits a blocked requirement, on both sides identically', async () => {
+    // The one path where an exclusion REVERSES, and the donor's own note calls it a
+    // silent-unsoundness fix: previously a waived blocking finding disappeared from
+    // `findings[]` while the gate still excluded the requirement, so an author saw
+    // the finding "resolved" and the solver silently never reasoned about it.
+    //
+    // Untested by every pinned fixture for the same reason as the partition itself:
+    // the hex-bonk documents carry 8 real waivers, but none of them waives an
+    // error-severity lint code, because none of those documents trips one.
+    const doc = straddling()
+    const waived: DonorDoc = {
+      ...doc,
+      waivers: [
+        {
+          code: 'GTWR_R7_VAGUE',
+          requirementId: 'aaaaaaaa-0000-4000-8000-000000000003',
+          reason: 'reviewed: "as appropriate" is bounded by the rate-limit policy doc.',
+        },
+      ],
+    }
+
+    const before = await donor(doc, EVAL_OPTIONS)
+    const donorReport = await donor(waived, EVAL_OPTIONS)
+    const payload = await greenfield(asV3(waived), EVAL_OPTIONS)
+
+    // The waiver genuinely CHANGED the partition — one fewer exclusion, one more
+    // encoded requirement. Asserted as a DELTA, so a waiver that quietly did nothing
+    // (the exact bug this mechanism fixed) fails here.
+    expect(donorReport.excluded.length).toBe(before.excluded.length - 1)
+    expect(donorReport.coverage.encoded).toBe(before.coverage.encoded + 1)
+    expect(donorReport.waived).toBeGreaterThan(0)
+
+    // And the greenfield agrees about all of it — including the re-admission, which
+    // rides the waiver through the compat boundary's `waivers` projection.
+    expect(canonicalText(comparableOfGreenfield(payload))).toBe(
+      canonicalText(comparableOfDonor(donorReport)),
+    )
   })
 })
 

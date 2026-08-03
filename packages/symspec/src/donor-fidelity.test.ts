@@ -3,11 +3,10 @@
  * than asserted.
  *
  * The transplant copied the donor's check-path closure into `./donor/` with
- * mechanical import rewrites, materially editing a handful. The risk that matters
- * is not a
- * copy that fails to compile — `tsc` catches that — but a copy that DRIFTS: a code
- * string retyped with a typo, a description reworded, a code silently dropped from
- * the catalog. Any of those is invisible in review and changes what an agent is
+ * mechanical import rewrites, materially editing a handful. The risk that matters is
+ * not a copy that fails to compile — `tsc` catches that — but a copy that DRIFTS: a
+ * code string retyped with a typo, a description reworded, a code silently dropped
+ * from the catalog. Any of those is invisible in review and changes what an agent is
  * told.
  *
  * So these tests read the LIVE DONOR (the repo root's `src/`, importable straight
@@ -15,22 +14,26 @@
  * it against the transplant. The donor is frozen as the differential oracle from
  * G1 on, which is exactly what makes it a legitimate fixture.
  *
- * ## Which files are asserted here, and why only these
+ * ## Which files are asserted BY BEHAVIOR, and why only these
  *
- * The four materially-edited files, because they are the only places a human
- * retyped anything:
+ * The materially-edited ones, because they are the only places a human retyped
+ * anything. Everything else is checked as BYTES by {@link verbatimBodies}, which is
+ * both stronger and cheaper where it applies.
  *
- * 1. `formal/codes.ts` — 30 FND_* codes and their descriptions. The highest-value
- *    guard: these strings ARE the agent-facing code vocabulary, and the spec's
- *    standing constraint is that all 75 codes survive "with meanings intact".
- * 2. `core/schema.ts` — the enum constants (the type-level parts are checked by
+ * 1. `formal/codes.ts` — 30 FND_* codes and their descriptions.
+ * 2. `lint/codes.ts` — 24 GTWR_* codes and their descriptions, plus per-code
+ *    REACHABILITY against the rule source (a catalog is only honest if every code in
+ *    it is producible — the lexicon-reachability lesson applied to an enum).
+ *    Together with the 21 ERR_* classes in `kernel/errors.ts`, these two files are
+ *    two thirds of the spec's 75-code constraint that all codes survive "with
+ *    meanings intact".
+ * 3. `core/schema.ts` — the enum constants (the type-level parts are checked by
  *    `tsc` against every consumer, so a drift there is already a compile error).
- * 3. `core/doc.ts` — `listRequirements` behavior.
- * 4. `formal/backend.ts` — asserted by `solver-service.test.ts` (the memo seam is
+ * 4. `core/doc.ts` — `listRequirements` behavior.
+ * 5. `formal/backend.ts` — asserted by `solver-service.test.ts` (the memo seam is
  *    a behavior, not a string).
- *
- * The other ~35 files are byte-identical modulo the `.js`→`.ts` specifier rewrite,
- * which {@link verbatimBodies} checks wholesale.
+ * 6. `parse/result.ts` + `parse/batch.ts` — asserted by `operations/parse.test.ts`,
+ *    which runs BOTH ladders over one corpus and diffs every outcome field.
  */
 
 import { readFileSync } from 'node:fs'
@@ -39,9 +42,11 @@ import { describe, expect, it } from 'vitest'
 import * as donorDoc from '../../../src/core/doc.ts'
 import * as donorSchema from '../../../src/core/schema.ts'
 import * as donorCodes from '../../../src/formal/codes.ts'
+import * as donorGtwrCodes from '../../../src/lint/codes.ts'
 import * as transplantDoc from './donor/core/doc.ts'
 import * as transplantSchema from './donor/core/schema.ts'
 import * as transplantCodes from './donor/formal/codes.ts'
+import * as transplantGtwrCodes from './donor/lint/codes.ts'
 
 // ---------------------------------------------------------------------------
 // 1. The FND_* catalog — the highest-value fidelity guard
@@ -84,6 +89,55 @@ describe('formal/codes.ts — the FND_* catalog is verbatim from the donor', () 
   it('has the same structural and free-tier reachability bridges', () => {
     expect(transplantCodes.structuralKindToFndCode).toEqual(donorCodes.structuralKindToFndCode)
     expect(transplantCodes.solverKindToFndCode).toEqual(donorCodes.solverKindToFndCode)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 1b. The GTWR_* catalog — the other quarter of the code vocabulary
+// ---------------------------------------------------------------------------
+
+describe('lint/codes.ts — the GTWR_* catalog is verbatim from the donor', () => {
+  it('has the same 24 codes, in the same append-only ORDER', () => {
+    expect([...transplantGtwrCodes.GTWR_CODES]).toEqual([...donorGtwrCodes.GtwrCodes])
+  })
+
+  it('carries byte-identical descriptions for every code', () => {
+    // Same read-both-sides construction as the FND_* guard above: the donor's
+    // entries are `z.literal(code).describe(text)` so the text is on `.description`,
+    // the transplant's are plain `{code, description}`. Neither side is retyped here,
+    // which is what makes the comparison meaningful rather than circular.
+    const donorText: Record<string, string> = {}
+    for (const code of donorGtwrCodes.GtwrCodes) {
+      const entry = donorGtwrCodes.GtwrCodeMeta[code as keyof typeof donorGtwrCodes.GtwrCodeMeta]
+      donorText[code] = (entry as unknown as { description: string }).description
+    }
+    const transplantText: Record<string, string> = {}
+    for (const code of transplantGtwrCodes.GTWR_CODES) {
+      transplantText[code] = transplantGtwrCodes.GtwrCodeMeta[code].description
+    }
+    expect(transplantText).toEqual(donorText)
+  })
+
+  it('keeps every entry`s `code` equal to its own key', () => {
+    // The donor's `z.literal(code)` made this structural; a plain record can get it
+    // wrong, and a lookup-then-emit path would then report a different code than it
+    // looked up.
+    for (const code of transplantGtwrCodes.GTWR_CODES) {
+      expect(transplantGtwrCodes.GtwrCodeMeta[code].code).toBe(code)
+    }
+  })
+
+  it('covers every code the lint tier can actually EMIT — reachability, not just enumeration', () => {
+    // The catalog is only honest if every code in it is producible. `gtwr.ts` emits
+    // its codes as string literals, so the check is textual against the transplanted
+    // rule source — the same reachability discipline the donor's AC-6-3 test applied,
+    // and the one the lexicon lesson says an enum needs.
+    const here = fileURLToPath(new URL('.', import.meta.url))
+    const source = readFileSync(`${here}donor/lint/gtwr.ts`, 'utf8')
+    const unreachable = transplantGtwrCodes.GTWR_CODES.filter(
+      (code) => !source.includes(`'${code}'`),
+    )
+    expect(unreachable, 'every GTWR_* code must be emitted by a real rule').toEqual([])
   })
 })
 
@@ -251,7 +305,11 @@ const verbatimBodies = (relative: string): { donor: string; transplant: string }
  *   exist. Behavior fidelity asserted by `parse.test.ts`, which runs BOTH ladders
  *   over one corpus and diffs outcome/pattern/slots/confidence/tier/code.
  * - `parse/batch.ts` — Zod dropped (two schemas, zero non-test consumers). The line
- *   policy is verbatim; `parse.test.ts` diffs the batch summaries too.
+ *   policy is verbatim; `parse.test.ts` diffs the batch summaries too. ALSO carries
+ *   the wink-model memo (a donor bug fix — see that file's header).
+ * - `lint/codes.ts` — Zod dropped, same shape as `formal/codes.ts`: enum → const
+ *   tuple, meta → plain record, descriptions extracted programmatically. Fidelity
+ *   asserted above, including per-code REACHABILITY against the rule source.
  *
  * Note what is NOT here: `parse/tier3.ts` is VERBATIM. Its suggestion text already
  * said `proposedOps`, so the fix was to make the result carry that name — not to
@@ -266,6 +324,7 @@ const EDITED = new Set([
   'formal/embed.ts',
   'parse/result.ts',
   'parse/batch.ts',
+  'lint/codes.ts',
 ])
 
 /** Every transplanted file, relative to the `donor/` root. Enumerated explicitly
@@ -301,6 +360,7 @@ const TRANSPLANTED = [
   'formal/temporal-patterns.ts',
   'formal/temporal.ts',
   'formal/vacuity.ts',
+  'lint/codes.ts',
   'lint/gtwr.ts',
   'parse/batch.ts',
   'parse/negation.ts',

@@ -34,6 +34,8 @@
  */
 
 import { Effect, Schema } from 'effect'
+import { FND_CODES, FndCodeMeta } from '../donor/formal/codes.ts'
+import { GTWR_CODES, GtwrCodeMeta } from '../donor/lint/codes.ts'
 import { API_VERSION, ok } from '../kernel/envelope.ts'
 import { ErrNotFound, errCodeCatalog, explainCode, nearestCodes } from '../kernel/errors.ts'
 import {
@@ -113,7 +115,18 @@ const manifestEnvelope = () =>
       apiVersion: API_VERSION,
       version: VERSION,
       exitCodes: EXIT_CODE_TABLE,
+      // All THREE code catalogs, each a projection of its own transplanted
+      // description corpus. See `Manifest` for why publishing only ERR_* was a gap
+      // rather than a scope choice.
       errorCodes: errCodeCatalog(),
+      findingCodes: FND_CODES.map((code) => ({
+        code,
+        description: FndCodeMeta[code].description,
+      })),
+      lintCodes: GTWR_CODES.map((code) => ({
+        code,
+        description: GtwrCodeMeta[code].description,
+      })),
     }),
   )
 
