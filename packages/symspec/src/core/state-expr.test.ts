@@ -331,8 +331,10 @@ describe('multi-character operators are lexed BEFORE their single-character pref
   it('lexes `:=` as an assignment, not as a `:` followed by `=`', () => {
     const effect = parseEffect('lock_held := true')
     if (isExprError(effect)) throw new Error(effect.error)
-    expect(effect).toHaveLength(1)
-    expect(effect[0]?.target).toBe('lock_held')
+    expect(effect.assignments).toHaveLength(1)
+    expect(effect.assignments[0]?.target).toBe('lock_held')
+    // No `when` prefix, so the effect is UNGUARDED — the sound default.
+    expect(effect.guard).toBeUndefined()
   })
 
   it('tells an author who wrote `=` in an effect what the difference IS', () => {
@@ -372,8 +374,8 @@ describe('effects are SIMULTANEOUS updates, and a write-write conflict is refuse
   it('parses several comma-separated updates as one step', () => {
     const effect = validateEffect('run_state := RUNNING, retry_count := 0', MODEL)
     if (isExprError(effect)) throw new Error(effect.error)
-    expect(effect).toHaveLength(2)
-    expect([...writesOf(effect)].sort()).toEqual(['retry_count', 'run_state'])
+    expect(effect.assignments).toHaveLength(2)
+    expect([...writesOf(effect.assignments)].sort()).toEqual(['retry_count', 'run_state'])
   })
 
   /**
@@ -412,9 +414,63 @@ describe('effects are SIMULTANEOUS updates, and a write-write conflict is refuse
   it('ACCEPTS a self-referential increment', () => {
     const effect = validateEffect('retry_count := retry_count + 1', MODEL)
     if (isExprError(effect)) throw new Error(effect.error)
-    expect([...writesOf(effect)]).toEqual(['retry_count'])
+    expect([...writesOf(effect.assignments)]).toEqual(['retry_count'])
     // Both halves are references: it WRITES and READS the same variable.
     expect([...touchedByEffect(effect, declaredVars(MODEL))]).toEqual(['retry_count'])
+  })
+
+  /**
+   * ## The GUARD, and why its absence is the sound direction
+   *
+   * An EARS requirement is normally `WHEN <trigger>, the system shall <response>`, and
+   * the trigger is a guard. Without one, "acquire the lock" encodes as a transition
+   * available from EVERY state — including states where nothing requested it — which
+   * makes almost every interesting constraint trivially violable by a transition the
+   * document never licensed. (Found the hard way: the first `LOCK_SAFE` fixture in
+   * `reachability.test.ts` was genuinely VIOLATED for exactly this reason, and the
+   * solver was right.)
+   *
+   * It is OPTIONAL because an unguarded effect admits MORE transitions, so strictly
+   * fewer things are provable — a missing guard can only weaken a claim, the same
+   * principle as `frame: volatile` on the other axis.
+   */
+  it('parses a `when` GUARD and keeps it separate from the updates', () => {
+    const effect = validateEffect('when pending: lock_held := true', MODEL)
+    if (isExprError(effect)) throw new Error(effect.error)
+    expect(effect.guard).toBeDefined()
+    expect(effect.assignments).toHaveLength(1)
+    expect([...writesOf(effect.assignments)]).toEqual(['lock_held'])
+  })
+
+  it('counts a GUARD-ONLY reference as a reference, so `unstate` cannot strand it', () => {
+    // `pending` is neither written nor assigned — it appears only in the guard. A
+    // reference collector that walked assignments alone would let it be undeclared,
+    // stranding exactly the reference the guard depends on.
+    const names = referencedNames('when pending: lock_held := true', MODEL, 'effect')
+    expect([...(names ?? [])].sort()).toEqual(['lock_held', 'pending'])
+  })
+
+  it('refuses a non-PREDICATE guard rather than coercing it', () => {
+    const result = errorOf(validateEffect('when retry_count: lock_held := true', MODEL))
+    expect(result.error).toContain('PREDICATE')
+  })
+
+  it('refuses an undeclared reference in the GUARD', () => {
+    expect(errorOf(validateEffect('when ghost: lock_held := true', MODEL)).error).toContain('ghost')
+  })
+
+  it('refuses a `when` with no terminating colon, rather than swallowing the assignment', () => {
+    // Without the colon requirement the parser would absorb `lock_held` into the guard
+    // expression and then fail somewhere confusing.
+    const result = errorOf(parseEffect('when pending lock_held := true'))
+    expect(result.error).toContain('`:`')
+  })
+
+  it('reserves `when` globally, so a variable can never shadow the guard keyword', () => {
+    // Reserved GLOBALLY rather than only in effect position: a name that works in a
+    // constraint and fails in an effect is worse than one that never works, because the
+    // failure would surface only on reclassification.
+    expect([...RESERVED_WORDS]).toContain('when')
   })
 
   it('ACCEPTS a conditional value expression', () => {
@@ -427,8 +483,13 @@ describe('effects are SIMULTANEOUS updates, and a write-write conflict is refuse
 // ---------------------------------------------------------------------------
 
 describe('reserved words are not usable as names', () => {
-  it('exposes the five reserved words', () => {
-    expect([...RESERVED_WORDS]).toEqual(['and', 'or', 'not', 'true', 'false'])
+  it('exposes the six reserved words', () => {
+    // `when` joined the five connectives/literals when effect GUARDS landed: it
+    // introduces a guard, so a variable of that name would be unparseable at the one
+    // position an effect begins. Pinned as a list rather than a count so ADDING a
+    // reserved word is a visible edit — every addition invalidates documents that used
+    // the name, which is a decision and not a detail.
+    expect([...RESERVED_WORDS]).toEqual(['and', 'or', 'not', 'true', 'false', 'when'])
   })
 
   it('lexes a reserved word as SYNTAX even when a variable of that name is declared', () => {

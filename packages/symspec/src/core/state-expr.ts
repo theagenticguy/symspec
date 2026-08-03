@@ -29,7 +29,7 @@
  * ## The grammar, and why it is this small
  *
  * ```
- *   effect      ::= assignment ( ',' assignment )*
+ *   effect      ::= ( 'when' expr ':' )? assignment ( ',' assignment )*
  *   assignment  ::= IDENT ':=' expr
  *   expr        ::= disjunct ( 'or' disjunct )*
  *   disjunct    ::= conjunct ( 'and' conjunct )*
@@ -135,6 +135,35 @@ export interface Assignment {
   readonly value: Expr
 }
 
+/**
+ * A parsed EFFECT: an optional guard, plus the updates it licenses.
+ *
+ * ## Why a guard exists, and why it is OPTIONAL
+ *
+ * An EARS requirement is usually `WHEN <trigger>, the system shall <response>` — the
+ * trigger is a GUARD, and an effect with no guard fires from every state. Without
+ * guards, "acquire the lock" would be encoded as a transition available even from a
+ * state where nothing requested it, which makes almost every interesting constraint
+ * trivially violated by a transition the document never licensed.
+ *
+ * The guard is NOT extracted from the EARS `trigger` slot, deliberately. That slot is
+ * PROSE ("five consecutive failed logins occur within 10 minutes") and inferring a
+ * state predicate from it would be exactly the guessing the propose/decide split
+ * forbids on the decide side — a wrong guard makes Spacer prove or refute the wrong
+ * thing. So the guard is written explicitly, over declared variables, and validated
+ * like everything else.
+ *
+ * Optional because an unguarded effect is the SOUND default: it admits MORE
+ * transitions, so more states are reachable and strictly FEWER things are provable. A
+ * missing guard can only ever weaken a claim — the same principle as `frame:
+ * volatile`, on the transition axis.
+ */
+export interface StateEffect {
+  /** The predicate under which the updates fire. Absent means unguarded. */
+  readonly guard?: Expr
+  readonly assignments: readonly Assignment[]
+}
+
 // ---------------------------------------------------------------------------
 // Failure
 // ---------------------------------------------------------------------------
@@ -196,11 +225,20 @@ const fail = (error: string, suggestions: readonly string[], offset?: number): E
  */
 const IDENT = /^[A-Za-z_][A-Za-z0-9_.]*/
 
-/** The reserved words. A variable may not be named one of these. */
-export const RESERVED_WORDS = ['and', 'or', 'not', 'true', 'false'] as const
+/**
+ * The reserved words. A variable may not be named one of these.
+ *
+ * `when` is reserved for the same reason the connectives are: it introduces an
+ * effect's GUARD, so a variable named `when` would be unparseable at the one position
+ * an effect begins. It is reserved GLOBALLY rather than only in effect position,
+ * because a name that works in a constraint and fails in an effect is worse than a
+ * name that never works — the failure would surface only when the requirement was
+ * reclassified.
+ */
+export const RESERVED_WORDS = ['and', 'or', 'not', 'true', 'false', 'when'] as const
 
 interface Token {
-  readonly type: 'ident' | 'int' | 'op' | 'lparen' | 'rparen' | 'comma' | 'assign'
+  readonly type: 'ident' | 'int' | 'op' | 'lparen' | 'rparen' | 'comma' | 'assign' | 'colon'
   readonly text: string
   readonly offset: number
 }
@@ -263,6 +301,13 @@ const tokenize = (source: string): readonly Token[] | ExprError => {
       i += 1
       continue
     }
+    // A BARE `:` — the guard separator. Reached only after `:=` failed to match above,
+    // which is what keeps `x := 1` from lexing as `x : (= 1)`.
+    if (ch === ':') {
+      tokens.push({ type: 'colon', text: ch, offset: i })
+      i += 1
+      continue
+    }
     if (ch === '!') {
       tokens.push({ type: 'op', text: 'not', offset: i })
       i += 1
@@ -277,7 +322,7 @@ const tokenize = (source: string): readonly Token[] | ExprError => {
     const ident = IDENT.exec(source.slice(i))?.[0]
     if (ident !== undefined) {
       const lowered = ident.toLowerCase()
-      if (lowered === 'and' || lowered === 'or' || lowered === 'not') {
+      if (lowered === 'and' || lowered === 'or' || lowered === 'not' || lowered === 'when') {
         tokens.push({ type: 'op', text: lowered, offset: i })
       } else {
         tokens.push({ type: 'ident', text: ident, offset: i })
@@ -511,6 +556,35 @@ class Parser {
     }
     return false
   }
+
+  /**
+   * `( 'when' expr ':' )?` — the optional guard prefix of an effect.
+   *
+   * Returns `undefined` for an unguarded effect, which is the SOUND default (see
+   * {@link StateEffect}: an unguarded effect admits more transitions, so it can only
+   * weaken a claim). A `when` with no terminating `:` is an error rather than a
+   * best-effort parse, because the alternative would silently swallow the first
+   * assignment into the guard expression.
+   */
+  parseGuard(): Expr | undefined | ExprError {
+    const token = this.peek()
+    if (token?.type !== 'op' || token.text !== 'when') return undefined
+    this.next()
+    const guard = this.parseExpr()
+    if (isExprError(guard)) return guard
+    const colon = this.next()
+    if (colon?.type !== 'colon') {
+      return fail(
+        `A \`when\` guard must end with \`:\` in "${this.source}", got ${JSON.stringify(colon?.text ?? '<end>')}.`,
+        [
+          'Write `when <predicate>: <variable> := <value>`.',
+          'Example: `when pending: lock_held := true`.',
+        ],
+        colon?.offset ?? this.endOffset(),
+      )
+    }
+    return guard
+  }
 }
 
 /**
@@ -553,7 +627,7 @@ export const parseExpression = (source: string): Expr | ExprError => {
  * position, and it has to be refused rather than merged because the two orders give
  * different post-states.
  */
-export const parseEffect = (source: string): readonly Assignment[] | ExprError => {
+export const parseEffect = (source: string): StateEffect | ExprError => {
   const trimmed = source.trim()
   if (trimmed.length === 0) {
     return fail('An empty effect changes no state.', [
@@ -564,6 +638,8 @@ export const parseEffect = (source: string): readonly Assignment[] | ExprError =
   const tokens = tokenize(trimmed)
   if (isExprError(tokens)) return tokens
   const parser = new Parser(tokens, trimmed)
+  const guard = parser.parseGuard()
+  if (guard !== undefined && isExprError(guard)) return guard
   const assignments: Assignment[] = []
   for (;;) {
     const assignment = parser.parseAssignment()
@@ -582,7 +658,10 @@ export const parseEffect = (source: string): readonly Assignment[] | ExprError =
     if (!parser.takeComma()) break
   }
   const trailing = parser.requireEnd()
-  return trailing ?? assignments
+  if (trailing !== undefined) return trailing
+  // ABSENT, not `undefined`-valued, when there is no guard — the same
+  // exactOptionalPropertyTypes discipline the document schema uses.
+  return { ...(guard !== undefined ? { guard } : {}), assignments }
 }
 
 // ---------------------------------------------------------------------------
@@ -816,14 +895,29 @@ export const validateExpression = (
  * invariant the whole V14/V21 mitigation rests on, and it is enforced by this
  * function being the only producer of the type the encoder accepts.
  */
-export const validateEffect = (
-  source: string,
-  model: StateModel,
-): readonly Assignment[] | ExprError => {
-  const assignments = parseEffect(source)
-  if (isExprError(assignments)) return assignments
+export const validateEffect = (source: string, model: StateModel): StateEffect | ExprError => {
+  const effect = parseEffect(source)
+  if (isExprError(effect)) return effect
   const vars = declaredVars(model)
-  for (const assignment of assignments) {
+
+  // THE GUARD is a predicate over declared state, checked exactly like a constraint —
+  // it must resolve and it must be boolean. A guard that is an int (`when retry_count:`)
+  // would force the encoder to invent a coercion, which is the one thing it must not do.
+  if (effect.guard !== undefined) {
+    const guardSort = sortOf(effect.guard, vars)
+    if (isExprError(guardSort)) return guardSort
+    if (guardSort !== 'bool') {
+      return fail(
+        `A \`when\` guard must be a PREDICATE (boolean), but it is ${sortName(guardSort)} in "${source}".`,
+        [
+          'Compare it: `when retry_count > 0: ...` rather than `when retry_count: ...`.',
+          'The guard says WHEN the updates fire, so it has to be true-or-false in every state.',
+        ],
+      )
+    }
+  }
+
+  for (const assignment of effect.assignments) {
     const target = vars.get(assignment.target)
     if (target === undefined) return undeclared(assignment.target, vars)
     const want = sortOfVar(target)
@@ -840,7 +934,7 @@ export const validateEffect = (
       )
     }
   }
-  return assignments
+  return effect
 }
 
 /** A domain member to show in an example, for an enum target. */
@@ -898,21 +992,23 @@ export const writesOf = (assignments: readonly Assignment[]): ReadonlySet<string
   new Set(assignments.map((a) => a.target))
 
 /**
- * Every declared variable an effect TOUCHES — its write targets plus everything the
- * assigned values read.
+ * Every declared variable an effect TOUCHES — its write targets, everything the
+ * assigned values read, AND everything its guard reads.
  *
- * Both halves, because both are references: `retry_count := retry_count + 1` writes
- * one variable and reads it, and a caller asking "does this expression depend on
- * `retry_count`" needs the union. Separated by {@link writesOf} / {@link readsOf}
+ * All three, because all three are references: `retry_count := retry_count + 1` writes
+ * one variable and reads it, and `when pending: lock_held := true` depends on
+ * `pending` without writing or assigning it. A caller asking "may I remove this
+ * variable?" needs the union — missing the GUARD would let `unstate` strand exactly
+ * the reference the guard depends on. Separated by {@link writesOf} / {@link readsOf}
  * where the distinction matters (the frame logic partitions on writes alone).
  */
-export const touchedByEffect = (
-  assignments: readonly Assignment[],
-  vars: DeclaredVars,
-): ReadonlySet<string> => {
-  const found = new Set<string>(assignments.map((a) => a.target))
-  for (const assignment of assignments) {
+export const touchedByEffect = (effect: StateEffect, vars: DeclaredVars): ReadonlySet<string> => {
+  const found = new Set<string>(effect.assignments.map((a) => a.target))
+  for (const assignment of effect.assignments) {
     for (const read of readsOf(assignment.value, vars)) found.add(read)
+  }
+  if (effect.guard !== undefined) {
+    for (const read of readsOf(effect.guard, vars)) found.add(read)
   }
   return found
 }
@@ -937,9 +1033,9 @@ export const referencedNames = (
 ): ReadonlySet<string> | undefined => {
   const vars = declaredVars(model)
   if (kind === 'effect') {
-    const assignments = validateEffect(source, model)
-    if (isExprError(assignments)) return undefined
-    return touchedByEffect(assignments, vars)
+    const effect = validateEffect(source, model)
+    if (isExprError(effect)) return undefined
+    return touchedByEffect(effect, vars)
   }
   const expr = validateExpression(source, model, 'constraint')
   if (isExprError(expr)) return undefined

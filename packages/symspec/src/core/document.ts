@@ -409,7 +409,8 @@ const responseKindDescription = lines(
  * be complete.
  */
 const STATE_EXPR_GRAMMAR = lines(
-  'GRAMMAR: comparisons `=` `!=` `<` `<=` `>` `>=`; arithmetic `+` `-` on ints; connectives',
+  'GRAMMAR: an effect may be prefixed by a guard, `when <predicate>:`; then comparisons',
+  '`=` `!=` `<` `<=` `>` `>=`; arithmetic `+` `-` on ints; connectives',
   '`and` `or` `not` (the symbolic `&&` `||` `!` are accepted too); parentheses; the literals',
   '`true`/`false` and integer literals; and BARE names, which are resolved against the declared',
   'state model — a name that matches a declared variable IS that variable, otherwise it must be a',
@@ -424,9 +425,19 @@ const STATE_EXPR_GRAMMAR = lines(
 )
 
 const stateEffectDescription = lines(
-  'What this requirement CHANGES, as one or more comma-separated state updates (v3, reachability).',
-  'Each update is `<declared variable> := <expression>`. Note `:=` ASSIGNS; a single `=` is the',
-  'equality COMPARISON and belongs in `stateConstraint`.',
+  'What this requirement CHANGES, as an optional GUARD plus one or more comma-separated state',
+  'updates (v3, reachability).',
+  'Shape: `when <predicate>: <variable> := <value>, <variable> := <value>` — the `when …:` prefix',
+  'is OPTIONAL. Note `:=` ASSIGNS; a single `=` is the equality COMPARISON and belongs in',
+  '`stateConstraint`.',
+  'THE GUARD is what an EARS trigger means formally: `when granted = 0: granted := granted + 1`',
+  'says the update fires only from a state where nothing is granted. It is written EXPLICITLY over',
+  'declared variables rather than inferred from the prose `trigger` slot, because guessing a state',
+  'predicate from prose would make the solver prove or refute the wrong thing.',
+  'OMITTING the guard means the effect fires from EVERY state, which is the SOUND default: it',
+  'admits more transitions, so strictly fewer things are provable — a missing guard can only ever',
+  'weaken a claim. But it is usually not what a triggered requirement means, and an unguarded',
+  'effect makes most interesting constraints trivially violable.',
   'Several updates separated by commas happen in ONE step, which is why they belong on one',
   'requirement rather than being split across two: splitting them would admit an intermediate state',
   'the system never occupies. Assigning the same variable twice is REFUSED (a write-write conflict',
@@ -437,7 +448,8 @@ const stateEffectDescription = lines(
   'hang the WASM solver unkillably (donor findings V14/V21), so the write path refuses it where the',
   'author can still fix it.',
   STATE_EXPR_GRAMMAR,
-  "Examples: 'lock_held := true'; 'run_state := RUNNING, retry_count := retry_count + 1'.",
+  "Examples: 'lock_held := true' (unguarded); 'when pending: lock_held := true' (guarded);",
+  "'when granted = 0: granted := granted + 1'; 'run_state := RUNNING, retry_count := 0'.",
 )
 
 const stateConstraintDescription = lines(
@@ -525,8 +537,8 @@ const stateVarNameDescription = lines(
   'The variable name, as referenced by requirement predicates and by the reachability encoder.',
   'Use a stable identifier-shaped noun: letters, digits, underscore, dot. Case-sensitive.',
   'Must start with a letter or underscore, and must not be one of the reserved words',
-  '`and`, `or`, `not`, `true`, `false` — those are expression syntax, so a variable named',
-  'one of them would be unreferenceable.',
+  '`and`, `or`, `not`, `true`, `false`, `when` — those are expression syntax, so a variable',
+  'named one of them would be unreferenceable.',
   "Examples: 'run_state'; 'lock_held'; 'retry_count'.",
 )
 
@@ -567,7 +579,7 @@ const frameDescription = lines(
  * FLAGLESS regex, for the reason `KEY_PATTERN` documents: it is lowered into the
  * published JSON Schema as a `pattern`, and a JSON-Schema pattern carries no flags.
  */
-export const STATE_VAR_NAME_PATTERN = /^(?!(?:and|or|not|true|false)$)[A-Za-z_][A-Za-z0-9_.]*$/
+export const STATE_VAR_NAME_PATTERN = /^(?!(?:and|or|not|true|false|when)$)[A-Za-z_][A-Za-z0-9_.]*$/
 
 /** A declared state variable's name. */
 const StateVarName = Schema.String.pipe(Schema.check(Schema.isPattern(STATE_VAR_NAME_PATTERN)))

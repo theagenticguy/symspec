@@ -934,8 +934,8 @@ export const stateOp = defineOperation({
       lines(
         'The variable name, as referenced by every effect and constraint expression.',
         'Identifier-shaped: a letter or underscore, then letters, digits, underscores or dots.',
-        'Must NOT be one of the reserved words and, or, not, true, false — those are expression',
-        'syntax, so a variable named one of them could be declared and never referenced.',
+        'Must NOT be one of the reserved words and, or, not, true, false, when — those are',
+        'expression syntax, so a variable named one of them could be declared and never referenced.',
         'Examples: lock_held; run_state; retry_count.',
       ),
     ),
@@ -1203,8 +1203,14 @@ export const classifyOp = defineOperation({
     expression: optionalString(
       lines(
         'What the response does, in the state-model expression language.',
-        'For `--kind effect`: `<variable> := <value>`, comma-separated for simultaneous updates.',
+        'For `--kind effect`: an optional GUARD then the updates —',
+        '`when <predicate>: <variable> := <value>`, comma-separated for simultaneous updates.',
         'Note `:=` ASSIGNS; a single `=` is the equality COMPARISON and belongs in a constraint.',
+        'THE GUARD is what an EARS trigger means formally, written explicitly over declared',
+        'variables rather than inferred from the prose trigger slot (guessing one would make the',
+        'solver prove the wrong thing). OMITTING it means the effect fires from EVERY state — the',
+        'sound default, since it admits more transitions and so proves strictly less, but usually',
+        'not what a triggered requirement means.',
         'For `--kind constraint`: a predicate that must hold in every reachable state.',
         'GRAMMAR: comparisons = != < <= > >=; arithmetic + - on ints; and/or/not; parentheses;',
         'true/false and integer literals; and bare names resolved against the declared state model.',
@@ -1214,8 +1220,8 @@ export const classifyOp = defineOperation({
         'EVERY referenced name must be declared with `symspec state` first. An undeclared reference',
         'is refused HERE, at authoring time, because reaching the Horn encoder it would hang the',
         'solver unkillably rather than produce an error.',
-        'Examples: "lock_held := true"; "run_state := RUNNING, retry_count := 0";',
-        '"not (lock_held and pending)"; "retry_count <= 3".',
+        'Examples: "when pending: lock_held := true"; "when granted = 0: granted := granted + 1";',
+        '"run_state := RUNNING, retry_count := 0"; "not (lock_held and pending)"; "retry_count <= 3".',
       ),
     ),
     retract: Schema.withDecodingDefaultKey<Schema.Boolean>(Effect.succeed(false))(
