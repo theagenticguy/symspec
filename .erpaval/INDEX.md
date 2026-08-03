@@ -40,6 +40,8 @@ lessons before starting work.
 - [Abandoning a z3 query WEDGES the module (Asyncify one-slot) — Z3_interrupt + await; V14/V21 revised](solutions/conventions/z3-asyncify-interrupt-not-abandon.md)
 - [Effect 4.0.0-beta.102 CLI/Layer API reality — 8 verified deltas incl. two silent manifest/help failures](solutions/conventions/effect-v4-beta102-cli-api-reality.md)
 
+- [Corpus-size numbers in generated prose must interpolate — with a NEGATIVE guard](solutions/conventions/corpus-size-numbers-must-interpolate.md)
+
 ### orchestration
 
 - [Background subagents can instant-stop with 0 tool calls — SendMessage nudge recovers](solutions/orchestration/subagent-instant-stop-sendmessage-recovery.md)
