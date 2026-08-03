@@ -136,9 +136,6 @@ export const FND_CODES = [
 
 export type FndCode = (typeof FND_CODES)[number]
 
-/** Convenience: the tuple itself, under the donor's exported name. */
-export const FndCodes = FND_CODES
-
 /**
  * Per-code description corpus. The `satisfies` bound forces the corpus to cover
  * EXACTLY the enum members — the same guarantee the donor's
