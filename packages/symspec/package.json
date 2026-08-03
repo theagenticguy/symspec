@@ -1,25 +1,63 @@
 {
   "name": "symspec",
   "version": "1.0.0-alpha.0",
-  "private": true,
   "type": "module",
-  "description": "symspec v5 greenfield: one operations table projected into a CLI, a machine-readable manifest, and help \u2014 built on Effect v4.",
+  "description": "Prove your software requirements consistent, or get an honest work list. EARS authoring, INCOSE GtWR lint, Z3 SMT conflict proofs with unsat-core evidence, and unbounded state-model reachability — behind an agent-first CLI with typed JSON envelopes and 80 stable codes.",
+  "keywords": [
+    "requirements",
+    "requirements-engineering",
+    "ears",
+    "incose",
+    "gtwr",
+    "specification",
+    "formal-methods",
+    "formal-verification",
+    "smt",
+    "smt-solver",
+    "z3",
+    "spacer",
+    "reachability",
+    "model-checking",
+    "invariant",
+    "neurosymbolic",
+    "static-analysis",
+    "cli",
+    "agent",
+    "coding-agent",
+    "agent-friendly",
+    "mcp",
+    "claude-code",
+    "effect"
+  ],
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theagenticguy/symspec.git",
+    "directory": "packages/symspec"
+  },
+  "homepage": "https://github.com/theagenticguy/symspec/tree/main/packages/symspec#readme",
+  "bugs": {
+    "url": "https://github.com/theagenticguy/symspec/issues"
+  },
   "bin": {
     "symspec": "./bin/symspec.mjs"
   },
   "files": [
     "dist",
-    "bin",
-    "AGENTS.md",
+    "README.md",
     "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
   "engines": {
     "node": ">=24",
     "pnpm": ">=11"
   },
   "scripts": {
     "build": "tsdown",
+    "prepack": "tsdown",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
@@ -30,8 +68,9 @@
     "bench:budget": "tsx scripts/budget-curve.ts",
     "check": "biome ci . && tsc --noEmit && pnpm run check:agents && pnpm run gate:reachability && pnpm run build && vitest run",
     "gen:agents": "tsx scripts/gen-agents.ts",
-    "check:agents": "tsx scripts/gen-agents.ts --stdout | diff -u AGENTS.md - >/dev/null || (echo \"AGENTS.md is stale \u2014 run pnpm --filter symspec gen:agents\" >&2; exit 1)",
-    "gate:reachability": "tsx scripts/reachability-feasibility.ts"
+    "check:agents": "tsx scripts/gen-agents.ts --stdout | diff -u AGENTS.md - >/dev/null || (echo \"AGENTS.md is stale — run pnpm --filter symspec gen:agents\" >&2; exit 1)",
+    "gate:reachability": "tsx scripts/reachability-feasibility.ts",
+    "pack:dry": "npm pack --dry-run"
   },
   "dependencies": {
     "@effect/platform-node": "4.0.0-beta.102",

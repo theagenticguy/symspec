@@ -1,8 +1,13 @@
 # The donor (symspec v4) remains the workspace ROOT package — pnpm always treats
 # the root as a project, so it keeps building without appearing in this glob.
-# `packages/*` adds the v5 greenfield (`packages/symspec`) alongside it. Both are
-# private during the alpha, so the shared name is a workspace-internal label
-# only; the v5 package owns the published `symspec` name at GA.
+# `packages/*` adds the v5 greenfield (`packages/symspec`) alongside it.
+#
+# BOTH declare the name `symspec`, and only the ROOT is still `private: true`.
+# That asymmetry is the G5 publish posture: the greenfield is the package that
+# OWNS the published name, the donor is frozen as the differential oracle and must
+# never reach a registry. pnpm resolves workspace projects by path rather than by
+# name, so the duplicate label stays a workspace-internal detail — verified with
+# `pnpm install --frozen-lockfile` after the flip.
 packages:
   - packages/*
 
