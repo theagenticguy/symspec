@@ -3,7 +3,7 @@
   "version": "1.0.0-alpha.0",
   "private": true,
   "type": "module",
-  "description": "symspec v5 greenfield: one operations table projected into a CLI, a machine-readable manifest, and help — built on Effect v4.",
+  "description": "symspec v5 greenfield: one operations table projected into a CLI, a machine-readable manifest, and help \u2014 built on Effect v4.",
   "license": "Apache-2.0",
   "bin": {
     "symspec": "./bin/symspec.mjs"
@@ -11,6 +11,7 @@
   "files": [
     "dist",
     "bin",
+    "AGENTS.md",
     "LICENSE"
   ],
   "engines": {
@@ -26,7 +27,9 @@
     "lint:fix": "biome check . --write",
     "cli": "node dist/cli.mjs",
     "bench": "./scripts/bench.sh",
-    "check": "biome ci . && tsc --noEmit && pnpm run build && vitest run"
+    "check": "biome ci . && tsc --noEmit && pnpm run check:agents && pnpm run build && vitest run",
+    "gen:agents": "tsx scripts/gen-agents.ts",
+    "check:agents": "tsx scripts/gen-agents.ts --stdout | diff -u AGENTS.md - >/dev/null || (echo \"AGENTS.md is stale \u2014 run pnpm --filter symspec gen:agents\" >&2; exit 1)"
   },
   "dependencies": {
     "@effect/platform-node": "4.0.0-beta.102",
@@ -41,6 +44,7 @@
     "@biomejs/biome": "^2.4.15",
     "@types/node": "^25.7.0",
     "tsdown": "^0.22.0",
+    "tsx": "^4.21.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6"
   },
