@@ -928,7 +928,17 @@ describe('the reachability tier runs ONLY when a state model is committed (G4)',
     // SEQUENTIAL — `Promise.all` over two runs wedges Asyncify's single capability slot.
     const first = await expectOk(provableDoc())
     const second = await expectOk(provableDoc())
-    expect(second.reachability).toEqual(first.reachability)
+
+    // `elapsedMs` is EXCLUDED, and deliberately: it is a wall-clock measurement, so two
+    // runs legitimately differ (measured 30ms then 8ms — the second is faster because the
+    // WASM module is warm). Asserting on it would make the determinism guard a flaky
+    // benchmark, which is worse than no guard: it trains people to re-run rather than read.
+    //
+    // The claim that matters is that the VERDICTS are reproducible given (document +
+    // committed tables + pinned model), which is the determinism the whole tool rests on.
+    const { elapsedMs: _firstMs, ...firstVerdicts } = first.reachability ?? {}
+    const { elapsedMs: _secondMs, ...secondVerdicts } = second.reachability ?? {}
+    expect(secondVerdicts).toEqual(firstVerdicts)
     expect(
       second.findings.filter((f) => f.code.startsWith('FND_REACHABILITY')).map((f) => f.code),
     ).toEqual(
