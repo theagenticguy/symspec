@@ -38,6 +38,7 @@ import {
   glossaryOp,
   importOp,
   initOp,
+  installOp,
   linkOp,
   listOp,
   manifestOp,
@@ -688,6 +689,30 @@ const applyCommand = Command.make(
     }),
 ).pipe(Command.withDescription(applyOpDefinition.summary))
 
+/**
+ * `install` — everything as FLAGS, no positionals.
+ *
+ * `--mode` is a `stringFlag` even though the schema declares a closed literal set, for the
+ * same reason `check --min-severity` is: `effect/unstable/cli` has no enum flag
+ * constructor on beta.102, and the schema's `Schema.Literals` rejects an out-of-set value
+ * at decode time with the legal values named. Validation still happens exactly once, in
+ * the schema, and the manifest still publishes the `enum`.
+ */
+const installCommand = Command.make(
+  'install',
+  {
+    mode: stringFlag(installOp, 'mode'),
+    target: Flag.optional(stringFlag(installOp, 'target')),
+    global: booleanFlag(installOp, 'global'),
+  },
+  (config) =>
+    emit(installOp, {
+      mode: config.mode,
+      target: Option.getOrNull(config.target),
+      global: config.global,
+    }),
+).pipe(Command.withDescription(installOp.summary))
+
 /** The root command with every subcommand attached — the runnable tree. */
 const rootWithSubcommands = root.pipe(
   Command.withSubcommands([
@@ -708,6 +733,7 @@ const rootWithSubcommands = root.pipe(
     manifestCommand,
     explainCommand,
     versionCommand,
+    installCommand,
   ]),
 )
 

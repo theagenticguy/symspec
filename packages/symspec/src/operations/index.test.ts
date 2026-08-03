@@ -59,6 +59,11 @@ describe('the table', () => {
       'manifest',
       'explain',
       'version',
+      // G3: `install` sits with the self-description ops rather than the document
+      // lifecycle, because it acts on the developer's machine rather than on a document —
+      // it is how the tool describes itself to a HOST, which is the job `manifest` does
+      // for an agent.
+      'install',
     ])
   })
 

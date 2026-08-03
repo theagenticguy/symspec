@@ -55,6 +55,7 @@ import { VERSION } from '../kernel/version.ts'
 import { checkOp } from './check.ts'
 import { initOp, listOp, showOp } from './document.ts'
 import { importOp } from './import.ts'
+import { installOp } from './install.ts'
 import {
   addOp,
   antonymOp,
@@ -70,6 +71,7 @@ import { parseOp } from './parse.ts'
 export { checkOp } from './check.ts'
 export { initOp, listOp, showOp } from './document.ts'
 export { importOp } from './import.ts'
+export { installOp } from './install.ts'
 export {
   addOp,
   antonymOp,
@@ -267,6 +269,11 @@ export const OPERATIONS = [
   manifestOp,
   explainOp,
   versionOp,
+  // G3: `install` sits LAST, with the self-description ops rather than the document
+  // lifecycle, because it acts on the developer's machine rather than on a document — it
+  // is how the tool describes itself to a HOST, which is the same job `manifest` does for
+  // an agent.
+  installOp,
 ] as const
 
 /**
