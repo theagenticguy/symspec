@@ -34,7 +34,7 @@
  * CLI runtime itself requires the `Environment`). `provideMerge` composes top-down
  * and keeps both, which a bare `provide` would not.
  *
- * ## The solver Layer is merged, and it costs nothing until `check` runs
+ * ## The two EXPENSIVE Layers are merged, and cost nothing until `check` runs
  *
  * `solverServiceLayer` boots the Z3 WASM module, which is the single most expensive
  * thing this process can do (~200–1000ms measured). Merging it here does NOT pay
@@ -51,12 +51,13 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Effect, Layer, Logger } from 'effect'
 import { cli } from './cli.ts'
 import { storeLayer } from './core/store.ts'
+import { embedderServiceLayer } from './formal/embedder.ts'
 import { solverServiceLayer } from './formal/solver-service.ts'
 import { streamSourceLayer } from './operations/index.ts'
 
 /** Everything the operations require, over the platform services. */
 const appLayer = Layer.provideMerge(
-  Layer.mergeAll(storeLayer, streamSourceLayer, solverServiceLayer),
+  Layer.mergeAll(storeLayer, streamSourceLayer, solverServiceLayer, embedderServiceLayer),
   NodeServices.layer,
 )
 

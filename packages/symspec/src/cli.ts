@@ -279,6 +279,19 @@ const integerFlag = (
 ) => decorate(op, field, Flag.integer(flagName(field)))
 
 /**
+ * A FLOAT flag, decorated from the schema.
+ *
+ * Distinct from {@link integerFlag} because a cosine threshold is genuinely
+ * fractional — `Flag.integer` would reject `0.72`, and the ONE value this flag exists
+ * to set is a decimal. `Flag.float` keeps a malformed value a CLI usage error (exit 1)
+ * before any handler runs, which is where a numeric typo belongs.
+ */
+const floatFlag = (
+  op: { readonly name: string; readonly input: Schema.Struct<Schema.Struct.Fields> },
+  field: string,
+) => decorate(op, field, Flag.float(flagName(field)))
+
+/**
  * An OPTIONAL POSITIONAL argument for a doc-path field, decorated from the schema.
  *
  * A positional (not a flag) for the document path, matching the donor's shape:
@@ -426,6 +439,13 @@ const checkCommand = Command.make(
     failOnUnmatched: Flag.optional(integerFlag(checkOp, 'failOnUnmatched')),
     minSeverity: stringFlag(checkOp, 'minSeverity'),
     findingsOnly: booleanFlag(checkOp, 'findingsOnly'),
+    // The ONE flag here that defaults TRUE, so the spelling has to be
+    // `--semantic=false` rather than a bare `--no-semantic`. `Flag.boolean` +
+    // `Flag.withDefault(true)` (derived from the schema) gives exactly that.
+    semantic: booleanFlag(checkOp, 'semantic'),
+    // OPTIONAL for the same reason `--fail-on-unmatched` is: omitting it means "use
+    // the measured default", which is a different statement from any number.
+    semanticThreshold: Flag.optional(floatFlag(checkOp, 'semanticThreshold')),
   },
   (config) =>
     emit(checkOp, {
@@ -437,6 +457,8 @@ const checkCommand = Command.make(
       failOnUnmatched: Option.getOrNull(config.failOnUnmatched),
       minSeverity: config.minSeverity,
       findingsOnly: config.findingsOnly,
+      semantic: config.semantic,
+      semanticThreshold: Option.getOrNull(config.semanticThreshold),
     }),
 ).pipe(Command.withDescription(checkOp.summary))
 

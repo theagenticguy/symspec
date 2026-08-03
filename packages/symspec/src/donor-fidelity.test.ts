@@ -349,6 +349,7 @@ const TRANSPLANTED = [
   'formal/guard-implication.ts',
   'formal/incomplete.ts',
   'formal/lemma.ts',
+  'formal/model-cache.ts',
   'formal/needs-review.ts',
   'formal/numeric-contradiction.ts',
   'formal/numeric.ts',

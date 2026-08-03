@@ -63,6 +63,8 @@
 import { Effect, Schema } from 'effect'
 import type { DocumentDiagnostic } from '../core/document.ts'
 import { DocPath, DocStore } from '../core/store.ts'
+import type { Embedder } from '../donor/formal/embed.ts'
+import { DEFAULT_SEMANTIC_THRESHOLD } from '../donor/formal/semantic.ts'
 import type {
   CheckFinding,
   CheckOptions,
@@ -73,6 +75,7 @@ import type {
 import { filterReport, runCheck } from '../donor/pipeline/check.ts'
 import type { Exclusion } from '../donor/pipeline/gate.ts'
 import { toDonorDoc } from '../formal/compat.ts'
+import { EmbedderService } from '../formal/embedder.ts'
 import { repairForDemotion } from '../formal/repair.ts'
 import { SolverService } from '../formal/solver-service.ts'
 import { ok, type Repair } from '../kernel/envelope.ts'
@@ -323,6 +326,47 @@ const CheckInput = Schema.Struct({
       'untouched.',
     ),
   ),
+  // DEFAULTS TRUE — the opposite of every other boolean flag here, and the reason is
+  // a red-team result rather than a preference. The donor shipped the semantic tier
+  // opt-in, and an eval defeated `--strict` 25/30 by OMISSION: a certification gate
+  // whose opposition detector can be skipped is gameable by not running it. So the
+  // tier is on, and turning it OFF is the thing you have to ask for.
+  semantic: Schema.withDecodingDefaultKey<Schema.Boolean>(Effect.succeed(true))(
+    Schema.Boolean.annotate({
+      default: true,
+      description: lines(
+        'Run the semantic tier: embed response phrasings and PROPOSE glossary merges',
+        '(FND_SIMILAR_SEMANTIC) and opposition candidates (FND_OPPOSITION_CANDIDATE) for pairs that',
+        'did not already unify. ON by default.',
+        'PROPOSE-ONLY, and that is doctrine rather than caution: a cosine never decides a conflict.',
+        'The only durable output is a SUGGESTED `glossary add` / `antonym add` op you commit after',
+        'review, and the deterministic solver then reads the COMMITTED table — which is what keeps',
+        '`check` byte-reproducible given (document + tables + pinned model).',
+        'These findings are info severity and can DEMOTE `data.verified` toward abstention (an',
+        'untriaged opposition candidate means a conflict was not ruled out); they can NEVER promote it.',
+        'Pass --semantic=false to skip the tier. The skip is DISCLOSED as a `semantic-tier-skipped`',
+        'demotion, so `verified` cannot be true — silence is not a certificate.',
+        'A missing model FAILS CLOSED with ERR_EMBED_MODEL_MISSING rather than skipping quietly.',
+      ),
+    }),
+  ),
+  semanticThreshold: Schema.withDecodingDefaultKey<Schema.NullOr<Schema.Number>>(
+    Effect.succeed(null),
+  )(
+    Schema.NullOr(Schema.Number).annotate({
+      default: null,
+      description: lines(
+        `Cosine threshold for the paraphrase pass. Omit for the measured default of ${DEFAULT_SEMANTIC_THRESHOLD}.`,
+        'The default is MEASURED, not guessed, and the number is interpolated from the code constant so',
+        'this text cannot drift from it. Over this model with CLS pooling and NO instruction prefix,',
+        'cosines band at ~0.44-0.58 (unrelated), ~0.75-0.79 (divergent-wording paraphrase), and',
+        '~0.87-0.89 (near-identical). A previous default of 0.82 sat ABOVE the entire paraphrase band,',
+        'so every same-intent/different-wording pair was silently missed.',
+        'FAVOR RECALL when tuning: this tier is propose-only, so a false suggestion costs one ignored',
+        'op while a MISS hides a real paraphrased conflict behind two distinct atoms.',
+      ),
+    }),
+  ),
 })
 
 // ---------------------------------------------------------------------------
@@ -398,7 +442,19 @@ const validate = (input: typeof CheckInput.Type, path: string): Effect.Effect<vo
  * `{temporal: undefined}` and `{}` mean the same thing to the tier but the sentinel
  * translation must be explicit or a `0` bound would enable the tier with k=0.
  */
-const toCheckOptions = (input: typeof CheckInput.Type): CheckOptions => ({
+const toCheckOptions = (
+  input: typeof CheckInput.Type,
+  /**
+   * The loaded embedder, or `undefined` when the tier is off.
+   *
+   * Passed IN rather than loaded here, because loading is an Effect that can fail and
+   * this function is a pure translation. The `undefined` case is the same one the
+   * donor has always handled first-class: `options.semantic` absent means the tier
+   * did not run, which the pipeline reports as a `semantic-tier-skipped` demotion
+   * rather than treating as a clean run.
+   */
+  embedder: Embedder | undefined,
+): CheckOptions => ({
   timeoutMs: input.timeoutMs,
   // 0 is the "unbounded" sentinel; the donor expresses unbounded as an absent key.
   ...(input.solverBudgetMs > 0 ? { solverBudgetMs: input.solverBudgetMs } : {}),
@@ -409,6 +465,18 @@ const toCheckOptions = (input: typeof CheckInput.Type): CheckOptions => ({
   // atom), so the guard is on nullness — NOT on `> 0`, which would silently turn
   // the strictest legal setting into no gate at all.
   ...(input.failOnUnmatched !== null ? { failOnUnmatched: input.failOnUnmatched } : {}),
+  // The semantic tier is enabled by the PRESENCE of this key, so the embedder's
+  // absence and the flag being off converge on one code path — the donor's.
+  ...(embedder !== undefined
+    ? {
+        semantic: {
+          embedder,
+          ...(input.semanticThreshold !== null && Number.isFinite(input.semanticThreshold)
+            ? { threshold: input.semanticThreshold }
+            : {}),
+        },
+      }
+    : {}),
 })
 
 // ---------------------------------------------------------------------------
@@ -503,10 +571,19 @@ export const checkOp = defineOperation({
       // eagerly on beta.102 (probed), so reaching it proves nothing; yielding the
       // cached boot is the operative step.
       yield* (yield* SolverService).boot
+
+      // The SEMANTIC tier's embedder, loaded here — after validation and the document
+      // read, so a usage error or a missing document never pays the model load.
+      //
+      // Loaded BEFORE `runCheck` rather than lazily inside it, and that ordering is
+      // the fail-closed rule: a missing model must produce ERR_EMBED_MODEL_MISSING
+      // (exit 2) instead of a report whose opposition detector silently did not run.
+      // A detector that can be skipped is a gate that can be gamed by omission.
+      const embedder = input.semantic ? yield* (yield* EmbedderService).load : undefined
       const donorDoc = toDonorDoc(loaded.document)
 
       const full = yield* Effect.tryPromise({
-        try: () => runCheck(donorDoc, toCheckOptions(input)),
+        try: () => runCheck(donorDoc, toCheckOptions(input, embedder)),
         catch: (cause) =>
           // The tier's own typed failures (a `SolverBudgetExceededError` escaping
           // `findNeedsReview` to a direct caller) and any genuine defect both land

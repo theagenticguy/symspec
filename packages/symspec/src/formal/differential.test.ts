@@ -78,6 +78,7 @@ import { ErrDocNotFound } from '../kernel/errors.ts'
 import { runOperation } from '../kernel/operation.ts'
 import type { CheckPayload } from '../operations/check.ts'
 import { checkOp } from '../operations/check.ts'
+import { embedderLayerOf, stubEmbedder } from './embedder.ts'
 import { solverServiceLayer } from './solver-service.ts'
 
 // ---------------------------------------------------------------------------
@@ -224,7 +225,11 @@ const comparableOfGreenfield = (payload: CheckPayload): Comparable => ({
  */
 const greenfield = async (
   document: RequirementsDocument,
-  options: { readonly strict?: boolean; readonly temporalBound?: number } = {},
+  options: {
+    readonly strict?: boolean
+    readonly temporalBound?: number
+    readonly semantic?: boolean
+  } = {},
 ): Promise<CheckPayload> => {
   const store = Layer.succeed(DocStore)(
     DocStore.of({
@@ -241,9 +246,21 @@ const greenfield = async (
       file: 'doc.json',
       ...(options.strict === true ? { strict: true } : {}),
       ...(options.temporalBound !== undefined ? { temporalBound: options.temporalBound } : {}),
+      // Off unless a case asks for it, so `EVAL_OPTIONS` stays the one place that
+      // decides the configuration for both sides.
+      semantic: options.semantic === true,
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(store, Layer.succeed(DocPath)(makeDocPath({})), solverServiceLayer),
+        Layer.mergeAll(
+          store,
+          Layer.succeed(DocPath)(makeDocPath({})),
+          solverServiceLayer,
+          // The DETERMINISTIC STUB, and the same one the donor side gets. See
+          // `SEMANTIC_OPTIONS` for why a stub rather than the real model, and why
+          // giving the two sides different embedders would make the comparison
+          // meaningless rather than merely unfair.
+          embedderLayerOf(stubEmbedder()),
+        ),
       ),
     ),
   )
@@ -261,13 +278,22 @@ const greenfield = async (
  */
 const donor = (
   doc: DonorDoc,
-  options: { readonly strict?: boolean; readonly temporalBound?: number } = {},
+  options: {
+    readonly strict?: boolean
+    readonly temporalBound?: number
+    readonly semantic?: boolean
+  } = {},
 ): Promise<DonorReport> =>
   donorRunCheck(doc, {
     ...(options.strict === true ? { strict: true } : {}),
     ...(options.temporalBound !== undefined && options.temporalBound > 0
       ? { temporal: { bound: options.temporalBound } }
       : {}),
+    // The SAME stub instance shape as the greenfield side gets. Constructed here
+    // rather than shared, because `stubEmbedder` is a pure function of its input —
+    // two constructions produce identical vectors for identical text, which is the
+    // property that makes the tier comparable at all.
+    ...(options.semantic === true ? { semantic: { embedder: stubEmbedder() } } : {}),
   })
 
 /**
@@ -362,17 +388,27 @@ const pairCache = new Map<
   Promise<{ readonly donorReport: DonorReport; readonly payload: CheckPayload }>
 >()
 
-const reports = (testCase: {
-  readonly id: string
-  readonly doc: DonorDoc
-}): Promise<{ readonly donorReport: DonorReport; readonly payload: CheckPayload }> => {
-  const cached = pairCache.get(testCase.id)
+/**
+ * Keyed on (fixture id, CONFIGURATION), because the tier-on and tier-off runs are
+ * genuinely different runs and caching them together would silently answer one
+ * question with the other's report.
+ */
+const reports = (
+  testCase: { readonly id: string; readonly doc: DonorDoc },
+  options: {
+    readonly strict?: boolean
+    readonly temporalBound?: number
+    readonly semantic?: boolean
+  } = EVAL_OPTIONS,
+): Promise<{ readonly donorReport: DonorReport; readonly payload: CheckPayload }> => {
+  const key = `${testCase.id}|${JSON.stringify(options)}`
+  const cached = pairCache.get(key)
   if (cached !== undefined) return cached
   const run = (async () => ({
-    donorReport: await donor(testCase.doc, EVAL_OPTIONS),
-    payload: await greenfield(asV3(testCase.doc), EVAL_OPTIONS),
+    donorReport: await donor(testCase.doc, options),
+    payload: await greenfield(asV3(testCase.doc), options),
   }))()
-  pairCache.set(testCase.id, run)
+  pairCache.set(key, run)
   return run
 }
 
@@ -555,6 +591,95 @@ describe('DIFFERENTIAL ORACLE — LINT parity, explicitly', () => {
         canonicalText(donorReport.excluded),
       )
       expect(payload.coverage.encoded, `${testCase.id}: encoded`).toBe(donorReport.coverage.encoded)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SEMANTIC PARITY — the tier RUNS on both sides, under the same stub
+// ---------------------------------------------------------------------------
+
+/**
+ * The eval configuration WITH the semantic tier on, under the deterministic stub on
+ * BOTH sides.
+ *
+ * ## Why a stub and not the real model
+ *
+ * Determinism, which is the whole basis of the comparison. The real embedder needs a
+ * ~110 MB sha256-pinned download, so a CI run would either fetch it or fail — and
+ * more importantly a MODEL BUMP would change cosines and therefore findings, making
+ * the oracle report drift in the tier when nothing in either pipeline changed. The
+ * stub is a pure function of the input bytes, so both sides compute identical vectors
+ * for identical text and any divergence is genuinely a transplant divergence.
+ *
+ * ## Why the SAME stub on both sides is the load-bearing part
+ *
+ * Handing the donor one embedder and the greenfield another (or one side none) would
+ * manufacture a divergence that says nothing about the transplant — the failure mode
+ * G2a avoided by running both sides with NO embedder. Now that the tier exists, the
+ * honest configuration is both sides WITH it, identically.
+ *
+ * The stub's cosines are meaningless by construction, so this block does not assert
+ * that specific pairs are proposed — that is `embedder.test.ts`'s job, with a
+ * hand-authored vector table. What this block establishes is that the tier RUNS, that
+ * running it CHANGES the report, and that the two pipelines agree about the change.
+ */
+const SEMANTIC_OPTIONS = { strict: true, temporalBound: 10, semantic: true } as const
+
+describe('DIFFERENTIAL ORACLE — SEMANTIC parity, under the deterministic stub', () => {
+  const cases = evalRoundCases()
+
+  it.each(
+    cases.map((c) => [c.id, c] as const),
+  )('%s — agrees with the semantic tier ON', async (_id, testCase) => {
+    const { donorReport, payload } = await reports(testCase, SEMANTIC_OPTIONS)
+    expect(canonicalText(comparableOfGreenfield(payload))).toBe(
+      canonicalText(comparableOfDonor(donorReport)),
+    )
+  })
+
+  it('running the tier CHANGES the report — so parity is not about a no-op', async () => {
+    // NON-VACUITY, and the observable is the demotion rather than a finding: the stub's
+    // cosines are meaningless so it proposes nothing, but the tier having RUN is
+    // exactly what discharges `semantic-tier-skipped`.
+    //
+    // MEASURED across the 12 fixtures: 12 skipped-demotions with the tier off, 0 with
+    // it on. That is the strongest available signal here, and it is the right one —
+    // `semantic-tier-skipped` is the demotion whose whole purpose is to make an absent
+    // detector VISIBLE, so its presence/absence is the tier's own liveness bit.
+    let offDemotions = 0
+    let onDemotions = 0
+    for (const testCase of cases) {
+      const { donorReport: off } = await reports(testCase, EVAL_OPTIONS)
+      const { donorReport: on } = await reports(testCase, SEMANTIC_OPTIONS)
+      offDemotions += off.coverage.demotions.filter(
+        (d) => d.reason === 'semantic-tier-skipped',
+      ).length
+      onDemotions += on.coverage.demotions.filter(
+        (d) => d.reason === 'semantic-tier-skipped',
+      ).length
+    }
+    expect(offDemotions, 'every fixture must demote when the tier is absent').toBe(cases.length)
+    expect(onDemotions, 'and none of them when it ran').toBe(0)
+  })
+
+  it('the tier NEVER promotes `verified` — demotion-only, both sides', async () => {
+    // THE DOCTRINE, as a differential claim. Propose-only findings may push `verified`
+    // toward abstention and can never sound the all-clear, so turning the tier ON must
+    // never flip a `verified: false` to `true`. It may legitimately flip true→false
+    // (an untriaged opposition candidate is a reason to abstain), which is why the
+    // assertion is an IMPLICATION and not an equality.
+    for (const testCase of cases) {
+      const { donorReport: off } = await reports(testCase, EVAL_OPTIONS)
+      const { donorReport: on, payload: payloadOn } = await reports(testCase, SEMANTIC_OPTIONS)
+      if (on.verified) {
+        expect(
+          off.verified || on.coverage.demotions.length < off.coverage.demotions.length,
+          `${testCase.id}: the semantic tier must not PROMOTE verified`,
+        ).toBe(true)
+      }
+      // And the greenfield reaches the same verdict, which is the parity half.
+      expect(payloadOn.verified, `${testCase.id}: verified with the tier on`).toBe(on.verified)
     }
   })
 })

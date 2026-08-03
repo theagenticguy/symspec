@@ -34,6 +34,7 @@ import {
   type RequirementsDocument,
 } from '../core/document.ts'
 import { DocPath, DocStore, makeDocPath, type SaveInput } from '../core/store.ts'
+import { embedderLayerOf, stubEmbedder } from '../formal/embedder.ts'
 import { SolverService, solverServiceLayer } from '../formal/solver-service.ts'
 import { ErrDocNotFound, type OperationalError } from '../kernel/errors.ts'
 import {
@@ -188,6 +189,10 @@ const runCheckOp = (
           memoryStore(fs),
           Layer.succeed(DocPath)(makeDocPath({})),
           solverServiceLayer,
+          // The DETERMINISTIC stub, so these tests exercise the always-on semantic
+          // tier without the ~110 MB model. Not a fallback — a caller with no stub and
+          // no cached model still fails closed with ERR_EMBED_MODEL_MISSING.
+          embedderLayerOf(stubEmbedder()),
         ),
       ),
     ),
@@ -221,9 +226,41 @@ describe('check — the formal path reaches Z3 through the Layer', () => {
     expect(named.has('11111111-1111-4111-8111-111111111111')).toBe(true)
     expect(named.has('22222222-2222-4222-8222-222222222222')).toBe(true)
     expect(data.counts.error).toBeGreaterThan(0)
-    // A proven conflict means the run reached a verdict, so `verified` is false for
-    // a REASON — not for want of coverage.
+
+    // `verified` is TRUE here, and that is not a contradiction in terms — it is the
+    // distinction the field exists to make, which G2a could not observe.
+    //
+    // `verified` answers "was consistency CHECKED", not "is the document clean". A
+    // proven contradiction is the strongest possible evidence that the decide tier ran
+    // and reached a verdict, so coverage is complete. What says the document is bad is
+    // `counts.error` and the exit code (1), not this flag.
+    //
+    // Through G2a this assertion read `false`, and it PASSED — but for the wrong
+    // reason: no embedder was supplied, so every run carried a `semantic-tier-skipped`
+    // demotion and `verified` was false on every document regardless of its content.
+    // Now that the tier runs, the demotion is discharged and the flag reports what it
+    // was designed to report. A test that had asserted the G2a value would have
+    // encoded a configuration artifact as a contract.
+    expect(data.verified).toBe(true)
+    expect(data.coverage.demotions, 'nothing left to demote — the tier ran').toEqual([])
+    // The GRADIENT still says there is work: `verified` and `openFindings` are
+    // independent axes, which is exactly why `progress` reports both.
+    expect(data.progress.openFindings).toBeGreaterThan(0)
+  })
+
+  it('DEMOTES `verified` when the semantic tier is skipped, on the SAME document', async () => {
+    // The other half of the pair above, and the reason `--semantic=false` is not a
+    // quiet opt-out: skipping the tier is DISCLOSED as a demotion, so the identical
+    // document that verifies with the tier on cannot verify with it off.
+    //
+    // Demotion-only doctrine, observable in one comparison: turning a detector off
+    // can only move `verified` toward abstention.
+    const data = await expectOk(contradictoryDoc(), { semantic: false })
     expect(data.verified).toBe(false)
+    expect(data.coverage.demotions.map((d) => d.reason)).toContain('semantic-tier-skipped')
+    // The conflict is still proven — skipping the PROPOSE tier does not blind the
+    // DECIDE tier, which is the whole point of the split.
+    expect(data.counts.error).toBeGreaterThan(0)
   })
 
   it('an empty document is vacuously verified and clean', async () => {
@@ -465,6 +502,7 @@ describe('check — usage errors are ERR_USAGE with a runnable correction', () =
             memoryStore(fs),
             Layer.succeed(DocPath)(makeDocPath({})),
             solverServiceLayer,
+            embedderLayerOf(stubEmbedder()),
           ),
         ),
       ),
