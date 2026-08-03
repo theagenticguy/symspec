@@ -544,3 +544,100 @@ describe('every emitted repair is runnable rather than a placeholder to parse', 
     expect(finding?.repair?.commands?.length).toBeGreaterThan(0)
   })
 })
+
+// ---------------------------------------------------------------------------
+// 8. TOTALITY: every demoting verdict carries the SUPPLYING command (G5)
+// ---------------------------------------------------------------------------
+
+/**
+ * The established pattern, asserted exhaustively rather than per-case.
+ *
+ * `repair` is optional by design — an `uncovered-requirement` demotion discharges through a
+ * human rewrite and there is no command that performs one, so emitting
+ * `{ops:[],commands:[]}` would tell an agent "there is a repair, it is nothing". But every
+ * demotion THIS tier raises has a mechanical next step, because each names a missing input
+ * (a variable, a classification) or a knob (the per-query bound) rather than a judgment.
+ *
+ * So the totality claim is narrow and checkable: **for each of the four demotion reasons,
+ * the demotion carries at least one runnable command, and the command names the thing the
+ * reason is about.** The cross-product loop is what makes adding a fifth reason a failure
+ * rather than an omission — the existing per-case tests would all still pass.
+ */
+describe('every reachability demotion names the command that supplies what is missing', () => {
+  /** One report per demotion reason, so the loop below is exhaustive over the closed list. */
+  const byReason: ReadonlyArray<readonly [string, ReachabilityReport]> = [
+    // No state model at all: `state` is what supplies it.
+    ['reachability-not-checked', reportOf({ variables: 0 })],
+    // Proved only under the frame: the discharge is authoring the requirements that justify
+    // it, and the mechanical half is the `state` op that drops the declaration.
+    [
+      'reachability-frame-relied-upon',
+      reportOf({
+        results: [
+          resultOf({
+            verdict: 'PROVED_UNDER_HYPOTHESES',
+            strict: 'reachable',
+            framed: 'unreachable',
+            hypotheses: [{ variable: 'granted', writers: ['TX-A1'] }],
+          }),
+        ],
+      }),
+    ],
+    // Budget exhausted: raise THIS tier's bound.
+    [
+      'reachability-budget-exhausted',
+      reportOf({
+        results: [
+          resultOf({ verdict: 'UNKNOWN', unknownReason: 'budget-exhausted', elapsedMs: 2000 }),
+        ],
+      }),
+    ],
+    // Undecidable: bound the domains. More time is the WRONG answer, so the command must
+    // not be a timeout raise.
+    [
+      'reachability-undecidable',
+      reportOf({
+        results: [resultOf({ verdict: 'UNKNOWN', unknownReason: 'undecidable', elapsedMs: 40 })],
+      }),
+    ],
+  ]
+
+  it('covers every reason in the CLOSED list — a new reason fails here', () => {
+    // The cross-product guard. Without it, a fifth demotion reason could ship with no
+    // repair and every existing per-case test would stay green.
+    expect(byReason.map(([reason]) => reason).sort()).toEqual(
+      [...REACHABILITY_DEMOTION_REASONS].sort(),
+    )
+  })
+
+  it.each(byReason)('%s carries at least one runnable command', (reason, report) => {
+    const demotion = projectReachability(report, DOC).demotions.find((d) => d.reason === reason)
+    expect(demotion, `no demotion with reason ${reason}`).toBeDefined()
+    const commands = demotion?.repair?.commands ?? []
+    expect(commands.length, `${reason} has no runnable command`).toBeGreaterThan(0)
+    for (const command of commands) {
+      expect(command.startsWith('symspec ')).toBe(true)
+    }
+    // And the ACTION prose says what to do, so a reason with a command but no explanation
+    // is still a dead end for a human reviewer.
+    expect((demotion?.action ?? '').length).toBeGreaterThan(40)
+  })
+
+  it('routes the two UNKNOWN causes to DIFFERENT commands — the whole point of the split', () => {
+    const commandFor = (reason: string) => {
+      const report = byReason.find(([r]) => r === reason)?.[1]
+      if (report === undefined) throw new Error(`no fixture for ${reason}`)
+      return (
+        projectReachability(report, DOC).demotions.find((d) => d.reason === reason)?.repair
+          ?.commands ?? []
+      ).join(' ')
+    }
+    const budget = commandFor('reachability-budget-exhausted')
+    const undecidable = commandFor('reachability-undecidable')
+    // Budget exhaustion raises the TIER'S OWN bound (G5), not the shared one.
+    expect(budget).toContain('--reachability-timeout-ms')
+    // Undecidability must NOT recommend more time — that is the loop this split prevents.
+    expect(undecidable).not.toContain('timeout-ms')
+    expect(budget).not.toBe(undecidable)
+  })
+})

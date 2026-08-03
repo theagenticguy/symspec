@@ -31,6 +31,8 @@
  * makes that a property rather than an intention.
  */
 
+import { REACHABILITY_FND_CODES } from '../formal/reachability-codes.ts'
+import { catalogCounts } from '../kernel/catalog.ts'
 import { renderCraft } from '../kernel/craft.ts'
 import { SCOPE_ESSENTIAL } from '../kernel/scope.ts'
 import { allOperations } from '../operations/index.ts'
@@ -77,6 +79,12 @@ const CORE_LOOP = [
  */
 export const buildSkillBody = (binName = 'symspec'): string => {
   const table = new Map(allOperations().map((op) => [op.name, op.summary]))
+  // INTERPOLATED, never written out. The body said "all 75 stable codes" through G3, and
+  // G4 grew the vocabulary to 80 without either sentence noticing — an installed file
+  // telling an agent the tool has 75 codes while `explain` resolves 80 of them. Reading the
+  // count from the catalog makes the number a projection like everything else here, so the
+  // next append cannot leave a stale claim in a file nobody re-reads.
+  const counts = catalogCounts()
 
   const loop = CORE_LOOP.map((name) => {
     const summary = table.get(name)
@@ -108,9 +116,10 @@ the tool:
 ${binName} manifest
 \`\`\`
 
-It lists every operation with its JSON-Schema arguments, all 75 stable codes across the
-three catalogs (\`ERR_*\` operational failures, \`FND_*\` check findings, \`GTWR_*\` lint
-rules), the envelope shape, and the exit-code contract. Prefer it over guessing a flag.
+It lists every operation with its JSON-Schema arguments, all ${counts.total} stable codes across the
+three catalogs (${counts.ERR} \`ERR_*\` operational failures, ${counts.FND} \`FND_*\` check findings,
+${counts.GTWR} \`GTWR_*\` lint rules), the envelope shape, and the exit-code contract. Prefer it over
+guessing a flag.
 
 For ONE code, do not fetch the manifest — ask directly:
 
@@ -119,7 +128,8 @@ ${binName} explain --code FND_CONTRADICTION
 \`\`\`
 
 That returns the code's family, severity, tier, meaning, remedy, and a worked example
-where one exists, for any of the 75.
+where one exists, for any of the ${counts.total} — including the ${REACHABILITY_FND_CODES.length} \`FND_REACHABILITY_*\` codes the
+unbounded state-model tier emits.
 
 ## The core loop
 

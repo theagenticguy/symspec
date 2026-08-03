@@ -1,5 +1,5 @@
 /**
- * THE UNIFIED CODE CATALOG — one lookup across all 75 stable codes (spec AC-A-3).
+ * THE UNIFIED CODE CATALOG — one lookup across all 80 stable codes (spec AC-A-3).
  *
  * ## The gap this closes
  *
@@ -8,7 +8,7 @@
  * three catalogs in the manifest (`errorCodes` / `findingCodes` / `lintCodes`,
  * commit 83d32b1) — so an agent could LIST `FND_CONTRADICTION` but not EXPLAIN it,
  * and the two codes families it actually branches on in a fix loop were exactly the
- * two `explain` did not know. Worse, a miss reported did-you-mean over 21 of 75
+ * two `explain` did not know. Worse, a miss reported did-you-mean over 21 of the then-75
  * candidates, so `explain GTWR_R7_VAGU` answered with a list of `ERR_*` codes.
  *
  * This module is the single lookup: all three catalogs, one row shape, one
@@ -98,7 +98,7 @@ export interface CodeEntry {
   /**
    * A worked micro-example, when the catalog text carries one. Absent (not an empty
    * string) otherwise, so a consumer can tell "no example exists" from "the example
-   * is blank". 11 of the 75 codes carry one; see {@link extractExample}.
+   * is blank". 11 of the 80 codes carry one; see {@link extractExample}.
    */
   readonly example?: string
   /** Every runnable `symspec …` invocation the text names, in order. */
@@ -132,7 +132,7 @@ const SYMSPEC_COMMAND = /`(symspec [^`]+)`/g
  * A parenthesized `(e.g. …)` illustration, or a `such as "x" / "y"` enumeration.
  *
  * These are the two shapes the donor corpora actually use, verified by probing all
- * 75 descriptions: 11 carry one (3 `FND_*` with `e.g.`, 1 `GTWR_*` with `e.g.`, 7
+ * 80 descriptions: 11 carry one (3 `FND_*` with `e.g.`, 1 `GTWR_*` with `e.g.`, 7
  * `GTWR_*` with `such as`) and the rest carry none. A third shape does not exist,
  * so this is exhaustive rather than a sample — and a future description that
  * invents one loses its example silently, which is why `catalog.test.ts` pins the
@@ -413,7 +413,7 @@ export const lookupCode = (code: string): CodeEntry | undefined =>
   allCodes().find((row) => row.code === code)
 
 /**
- * Codes closest to a misspelling, across ALL 75 — the did-you-mean corpus.
+ * Codes closest to a misspelling, across ALL 80 — the did-you-mean corpus.
  *
  * Same deterministic ranking `nearestCodes` used over the 21: shared leading prefix
  * first (so `GTWR_R7_VAGU` suggests `GTWR_R7_VAGUE` before anything else), then

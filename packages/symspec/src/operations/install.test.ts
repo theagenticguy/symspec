@@ -28,6 +28,7 @@ import { join } from 'node:path'
 import { NodeServices } from '@effect/platform-node'
 import { Effect } from 'effect'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { REACHABILITY_FND_CODES } from '../formal/reachability-codes.ts'
 import { buildSkillBody } from '../install/skill-body.ts'
 import {
   AUTO_FALLBACK_TARGET,
@@ -39,6 +40,7 @@ import {
   TARGETS,
   targetById,
 } from '../install/targets.ts'
+import { catalogCounts } from '../kernel/catalog.ts'
 import { CRAFT_SECTIONS } from '../kernel/craft.ts'
 import type { OperationalError } from '../kernel/errors.ts'
 import { exitCodeForEnvelope } from '../kernel/exit.ts'
@@ -497,6 +499,38 @@ describe('the skill body is generated, never hand-written', () => {
     expect(body).toContain('Discover the surface first')
     // And the AC-3-8 affordance — one code without fetching 48 KB.
     expect(body).toContain('symspec explain --code FND_CONTRADICTION')
+  })
+
+  /**
+   * THE CODE COUNT IS A PROJECTION (G5).
+   *
+   * This body said "all 75 stable codes" through G4's growth of the vocabulary to 80 — an
+   * installed file, in an agent's context window, understating the tool by five codes while
+   * `explain` resolved every one of them. Nothing failed, because no test connected the
+   * sentence to the catalog.
+   *
+   * The number is now interpolated, and this asserts the LIVE count appears and the old one
+   * does not. The negative half is the load-bearing one: a re-hardcoded "75" is exactly the
+   * regression this exists to catch.
+   */
+  it('publishes the LIVE code count, not a hand-written one', () => {
+    const body = buildSkillBody()
+    const counts = catalogCounts()
+    expect(body).toContain(`all ${counts.total} stable codes`)
+    expect(body).toContain(`${counts.ERR} \`ERR_*\``)
+    expect(body).toContain(`${counts.FND} \`FND_*\``)
+    expect(body).toContain(`${counts.GTWR} \`GTWR_*\``)
+    // The stale claim must be GONE. `75` also appears in no other numeric role in this
+    // body, so the check is specific.
+    expect(body, 'the body re-hardcoded a code count').not.toContain('all 75')
+    expect(body).not.toContain('any of the 75')
+  })
+
+  it('names the reachability family so an agent knows the state-model codes exist', () => {
+    // The five G4 codes are the ones an agent cannot guess from the propositional families,
+    // and the count comes from the list rather than a literal.
+    const body = buildSkillBody()
+    expect(body).toContain(`${REACHABILITY_FND_CODES.length} \`FND_REACHABILITY_*\``)
   })
 
   it('does NOT restate every flag — the manifest carries those', () => {

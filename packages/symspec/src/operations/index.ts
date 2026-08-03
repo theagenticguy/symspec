@@ -9,7 +9,7 @@
  *
  * - `manifest` — the self-description projection. Proves the table can describe
  *   itself, including its own row.
- * - `explain <code>` — the success AND failure paths, over all 75 codes in the
+ * - `explain <code>` — the success AND failure paths, over all 80 codes in the
  *   three catalogs (G3), with did-you-mean suggestions on an unknown code.
  * - `version` — the minimal op: no input fields at all, which is its own edge
  *   case for the flag-derivation and manifest projections.
@@ -190,11 +190,11 @@ const manifestEnvelope = () =>
  * not yet emit a finding. G2b published `FND_*` and `GTWR_*` in the manifest, and
  * that made the gap visible from the agent's side: the codes an agent branches on
  * inside a fix loop were exactly the two families `explain` could not resolve, and
- * a miss ranked did-you-mean over 21 of 75 candidates — so `explain GTWR_R7_VAGU`
+ * a miss ranked did-you-mean over 21 of the then-75 candidates — so `explain GTWR_R7_VAGU`
  * answered with a list of `ERR_*` codes.
  *
- * Both halves now go through `../kernel/catalog.ts`: {@link lookupCode} over all 75,
- * {@link nearestCodesAll} over all 75. The payload gains `family`, `severity`,
+ * Both halves now go through `../kernel/catalog.ts`: {@link lookupCode} over all 80,
+ * {@link nearestCodesAll} over all 80. The payload gains `family`, `severity`,
  * `tier`, the runnable `commands` the text names, and a worked `example` where the
  * catalogs carry one — each read from the same description bytes the manifest
  * publishes, never a second corpus.
@@ -209,14 +209,17 @@ export const explainOp = defineOperation({
   type: 'codeExplanation',
   input: Schema.Struct({
     code: Schema.String.annotate({
-      description:
-        'A stable diagnostic code from any of the three catalogs — an operational error (ERR_SOLVER_MISSING), a check finding (FND_CONTRADICTION), or a GtWR lint rule (GTWR_R7_VAGUE). Case-sensitive; an unknown code returns ERR_NOT_FOUND with did-you-mean suggestions ranked across all 75.',
+      // The COUNTS ARE INTERPOLATED from the catalog, never written out. This exact
+      // sentence said "all 75" through G4's vocabulary growth to 80 — a manifest telling
+      // an agent the tool has 75 codes while `explain` resolved 80 of them. A number that
+      // has to be hand-updated on every append is a number that will be wrong.
+      description: `A stable diagnostic code from any of the three catalogs — an operational error (ERR_SOLVER_MISSING), a check finding (FND_CONTRADICTION), or a GtWR lint rule (GTWR_R7_VAGUE). Case-sensitive; an unknown code returns ERR_NOT_FOUND with did-you-mean suggestions ranked across all ${catalogCounts().total} (${catalogCounts().ERR} ERR_*, ${catalogCounts().FND} FND_*, ${catalogCounts().GTWR} GTWR_*).`,
     }),
   }),
   handler: (input) => {
     const entry = lookupCode(input.code)
     if (entry === undefined) {
-      // Ranked across ALL 75 now. The family prefix keeps this from becoming noise:
+      // Ranked across ALL 80 now. The family prefix keeps this from becoming noise:
       // a misspelled FND_* shares 4 leading characters with every other FND_* and
       // none with any ERR_*, so a cross-family suggestion only appears when nothing
       // in the right family is close.

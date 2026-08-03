@@ -6,6 +6,7 @@
 
 import { Effect } from 'effect'
 import { describe, expect, it } from 'vitest'
+import { REACHABILITY_FND_CODES } from '../formal/reachability-codes.ts'
 import { API_VERSION } from '../kernel/envelope.ts'
 import { ERR_CODES, errCodeCatalog, toErrorEnvelope } from '../kernel/errors.ts'
 import { exitCodeForEnvelope } from '../kernel/exit.ts'
@@ -240,6 +241,60 @@ describe('explain — AC-A-3: all 80 codes through the operation', () => {
       // this number moves on its own when the vocabulary grows.
       expect(env.suggestions.join(' ')).toContain('35 FND_*')
     }
+  })
+
+  /**
+   * THE FIVE REACHABILITY CODES, named individually (G5).
+   *
+   * The 80/80 loop above covers them by construction, which is the right way to make growth
+   * automatic and the wrong way to be sure. These five are the newest family and the one an
+   * agent is most likely to hold without a manifest — a `check` run over a state model hands
+   * back `FND_REACHABILITY_VIOLATED` and the agent's next call is `explain`.
+   *
+   * So each is asserted with its own severity and remedy, because the ONE fact that decides
+   * what an agent does about a reachability finding is whether it gates the build, and the
+   * ONE fact that decides how it fixes it is which knob the remedy names.
+   */
+  it('explains all five FND_REACHABILITY_* codes with the right severity', async () => {
+    expect(REACHABILITY_FND_CODES).toHaveLength(5)
+    for (const code of REACHABILITY_FND_CODES) {
+      const env = await Effect.runPromise(runOperation(explainOp, { code }))
+      expect(env.data.code, code).toBe(code)
+      expect(env.data.family, code).toBe('FND')
+      expect(env.data.tier, code).toBe('formal')
+      // VIOLATED is the only one that can fail a build; the other four demote instead.
+      expect(env.data.severity, code).toBe(code === 'FND_REACHABILITY_VIOLATED' ? 'error' : 'info')
+      expect(env.data.meaning.length, code).toBeGreaterThan(80)
+      expect(exitCodeForEnvelope(env), code).toBe(0)
+    }
+  })
+
+  it('the UNKNOWN remedy names the TIER`S OWN timeout flag, and the undecidable alternative', async () => {
+    // The distinction that keeps an agent out of a tuning loop: budget exhaustion and
+    // undecidability need opposite remedies, and the solver cannot be asked which applies
+    // (a timed-out Spacer query reports its reason as the literal string "ok").
+    const env = await Effect.runPromise(
+      runOperation(explainOp, { code: 'FND_REACHABILITY_UNKNOWN' }),
+    )
+    const text = [env.data.meaning, ...env.data.suggestions].join(' ')
+    // The tier's own flag (G5), NOT the shared `--timeout-ms`.
+    expect(text).toContain('--reachability-timeout-ms')
+    expect(text).toContain('bound the integer domains')
+    expect(text).toContain('more time will not help')
+  })
+
+  it('the NOT_CHECKED remedy names the two SUPPLYING commands, in order', async () => {
+    // The established pattern for a coverage demotion: say what is missing and which
+    // command supplies it. Declaring variables is the first half and classifying responses
+    // is the second, and naming only one would leave an agent stuck after step 1.
+    const env = await Effect.runPromise(
+      runOperation(explainOp, { code: 'FND_REACHABILITY_NOT_CHECKED' }),
+    )
+    const text = [env.data.meaning, ...env.data.suggestions].join(' ')
+    expect(text).toContain('symspec state')
+    expect(text).toContain('symspec classify')
+    // And it says what it IS, so a reader does not mistake a disclosure for a defect.
+    expect(text).toContain('coverage DISCLOSURE')
   })
 
   it('needs NO manifest fetch — the answer is one code, not 48 KB of JSON', async () => {
