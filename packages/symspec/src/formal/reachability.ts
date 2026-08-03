@@ -228,6 +228,42 @@ export const classifyUnknown = (elapsedMs: number, timeoutMs: number): UnknownRe
   elapsedMs >= timeoutMs * 0.9 ? 'budget-exhausted' : 'undecidable'
 
 /**
+ * HOW MUCH the transition relation frames — three modes, not two.
+ *
+ * ## Why a boolean was WRONG, and how the solver said so
+ *
+ * The AC-2-5 decision doc describes prove-twice as "strict vs framed", which reads as a
+ * boolean, and the first implementation made it one: the framed run pinned the variables
+ * declared `frame: stable` and nothing else. That is unsound, and the worked fixture
+ * caught it at error severity.
+ *
+ * With NO variable declared `stable`, "framed" and "strict" become the SAME encoding, so
+ * `reachable` in both runs is trivially true and the lattice reports `VIOLATED`. The
+ * fixture's trace made the problem plain: `init -> TX-A3 -> TX-C1` claimed a lock-count
+ * constraint was violated by a requirement that only touches `idle`, because with nothing
+ * framed `granted` may jump spontaneously between steps. A real error-severity finding
+ * about a defect the document does not contain — the exact failure the doc warns about in
+ * the other direction ("strict is the UNSOUND direction for reporting reachable").
+ *
+ * The two directions need two DIFFERENT encodings, and neither is the per-variable one:
+ *
+ * - `'none'` — nothing pinned. Sound for proving UNREACHABLE: if no violation exists even
+ *   when every variable may change freely, none exists under any weaker assumption.
+ * - `'full'` — every variable an effect does not write is pinned. Sound for reporting
+ *   REACHABLE: a violation reachable here uses only requirement-sanctioned changes, so
+ *   the counterexample is a real behavior of the described system.
+ * - `'declared'` — only the variables declared `frame: stable` are pinned. This is the
+ *   DOCUMENT's own stated assumption set, and it is what distinguishes a property that
+ *   holds under hypotheses the author committed from one that needs assumptions nobody
+ *   wrote down.
+ *
+ * So the per-variable declaration did not disappear; it moved from "which run to perform"
+ * to "which run licenses a PROOF". See {@link decideConstraint} for the resulting order of
+ * work.
+ */
+export type FrameMode = 'none' | 'declared' | 'full'
+
+/**
  * The frame-aware verdict for one constraint — the AC-2-5 lattice, as a value.
  *
  * `PROVED` and `PROVED_UNDER_HYPOTHESES` are deliberately SCREAMING_CASE machine
@@ -250,34 +286,45 @@ export type FrameVerdict =
   | 'UNKNOWN'
 
 /**
- * Decide the frame lattice from the two runs (AC-2-5, binding).
+ * Decide the frame lattice (AC-2-5, binding) from the runs that were performed.
  *
- * | strict run | framed run | verdict |
- * |---|---|---|
- * | unreachable | (not needed) | `PROVED` |
- * | reachable | reachable | `VIOLATED` |
- * | reachable | unreachable | `PROVED_UNDER_HYPOTHESES` |
- * | unknown (either) | | `UNKNOWN` |
+ * | `none` run | framed run | verdict | reasoning |
+ * |---|---|---|---|
+ * | unreachable | (not needed) | `PROVED` | holds with NOTHING assumed |
+ * | reachable | reachable | `VIOLATED` | reachable using only sanctioned changes |
+ * | reachable | unreachable | `PROVED_UNDER_HYPOTHESES` | the frame is load-bearing |
+ * | unknown (either) | | `UNKNOWN` | never reported as proven |
  *
- * The STRICT run is consulted first and short-circuits on `unreachable`, which is
- * both the cheap path and the honest one: a property that holds with nothing framed
- * needs no hypothesis, so there is nothing to disclose and no second query to pay for.
+ * This is the decision doc's table verbatim. What the doc leaves open — and what the first
+ * implementation got wrong — is WHICH frame the second run applies.
  *
- * `framed === undefined` means the framed run was not performed — legitimate when the
- * strict run already proved it, or when NO variable is declared `stable` (in which
- * case the two encodings are identical and running twice would be pure cost).
+ * ## Why the framed run pins EVERY unwritten variable, not just the declared ones
+ *
+ * Pinning only the variables declared `frame: stable` makes the framed run identical to
+ * the unpinned one whenever nothing is declared, so `reachable` in both is trivially true
+ * and every such constraint reports `VIOLATED` at error severity. The worked lock/grant
+ * fixture caught exactly that: a lock-count constraint reported violated by a requirement
+ * that only touches `idle`, because with nothing pinned `granted` may jump spontaneously.
+ * A confident error-severity finding about a defect the document does not contain.
+ *
+ * So the framed run pins every variable an effect does not write — the maximal frame — and
+ * the DECLARED set is then used to make the disclosed hypothesis as TIGHT as possible (see
+ * {@link decideConstraint}). That keeps both directions sound: nothing-pinned is the sound
+ * direction for proving unreachable, fully-pinned is the sound direction for reporting a
+ * counterexample, and the divergence between them is still the detector for "the frame was
+ * load-bearing here".
  */
 export const decideFrameVerdict = (
-  strict: ReachabilityVerdict,
+  none: ReachabilityVerdict,
   framed: ReachabilityVerdict | undefined,
 ): FrameVerdict => {
-  if (strict === 'unknown') return 'UNKNOWN'
-  if (strict === 'unreachable') return 'PROVED'
-  // strict === 'reachable' — the frame decides whether that is a real defect or an
-  // artifact of having assumed nothing.
-  if (framed === undefined || framed === 'reachable') return 'VIOLATED'
-  if (framed === 'unreachable') return 'PROVED_UNDER_HYPOTHESES'
-  return 'UNKNOWN'
+  if (none === 'unknown') return 'UNKNOWN'
+  if (none === 'unreachable') return 'PROVED'
+  // `none === 'reachable'`. On its own that is NOT evidence of a defect — with nothing
+  // pinned a variable may change spontaneously, so the witness may use a transition the
+  // document never licensed. The framed run is what distinguishes the two.
+  if (framed === undefined || framed === 'unknown') return 'UNKNOWN'
+  return framed === 'reachable' ? 'VIOLATED' : 'PROVED_UNDER_HYPOTHESES'
 }
 
 // ---------------------------------------------------------------------------
@@ -783,7 +830,7 @@ const buildSystem = (
   ctx: Ast,
   prepared: PreparedModel,
   constraint: ConstraintRule,
-  framed: boolean,
+  frame: FrameMode,
   timeoutMs: number,
 ): { readonly system: HornSystem; readonly refusedParams: readonly string[] } => {
   const sym = (s: string) => Z3.mk_string_symbol(ctx, s)
@@ -849,16 +896,21 @@ const buildSystem = (
         Z3.mk_eq(ctx, target, compile(Z3, ctx, assignment.value, preBinding, prepared.vars)),
       )
     }
-    // THE FRAME, and the only difference between the two runs. A `stable` variable this
-    // effect does not write is pinned; a `volatile` one is left free EVEN in the framed
-    // run, because the frame is per-variable and opt-in.
-    if (framed) {
-      for (const name of prepared.stableVars) {
-        if (written.has(name)) continue
-        const before = preBinding.get(name)
-        const after = postBinding.get(name)
-        if (before !== undefined && after !== undefined) updates.push(Z3.mk_eq(ctx, after, before))
-      }
+    // THE FRAME — the ONLY thing that differs between the runs. Which variables get
+    // pinned is the whole content of `FrameMode`; see its header for why this is three
+    // modes and not a boolean.
+    const pinned =
+      frame === 'none'
+        ? []
+        : frame === 'full'
+          ? prepared.variables.map((v) => v.name)
+          : prepared.stableVars
+    for (const name of pinned) {
+      // A variable this effect WRITES is never pinned — the write is the point.
+      if (written.has(name)) continue
+      const before = preBinding.get(name)
+      const after = postBinding.get(name)
+      if (before !== undefined && after !== undefined) updates.push(Z3.mk_eq(ctx, after, before))
     }
     const body = and([...updates, ...rangeConstraints(Z3, ctx, prepared.variables, postBinding)])
     transitions.push(body)
@@ -1252,7 +1304,7 @@ const runQuery = (
   ctx: Ast,
   prepared: PreparedModel,
   constraint: ConstraintRule,
-  framed: boolean,
+  frame: FrameMode,
   timeoutMs: number,
 ): Effect.Effect<
   {
@@ -1267,7 +1319,7 @@ const runQuery = (
 > =>
   Effect.gen(function* () {
     const solver = yield* SolverService
-    const { system, refusedParams } = buildSystem(Z3, ctx, prepared, constraint, framed, timeoutMs)
+    const { system, refusedParams } = buildSystem(Z3, ctx, prepared, constraint, frame, timeoutMs)
     const query = Z3.mk_app(ctx, system.badRelation, [])
 
     const startedAt = Date.now()
@@ -1308,22 +1360,32 @@ const runQuery = (
 /**
  * Decide ONE constraint, running the prove-twice protocol (AC-2-5).
  *
- * The order of work is chosen so the common case is cheap and the honest case is
- * complete:
+ * ## The order of work, and why each step is where it is
  *
- * 1. The STRICT run (nothing framed). If it says `unreachable`, that is `PROVED` — the
- *    strongest answer, needing no hypothesis — and no second query is paid for.
- * 2. Otherwise, if any variable is declared `stable`, the FRAMED run. Its divergence
- *    from the strict run is what distinguishes a real defect (`VIOLATED`) from a
- *    property that holds only under a declared hypothesis
- *    (`PROVED_UNDER_HYPOTHESES`).
- * 3. If NO variable is `stable`, the framed encoding is identical to the strict one, so
- *    the second run is skipped as pure cost. `framed` is then absent, and
- *    {@link decideFrameVerdict} treats a reachable-strict as `VIOLATED` — correct,
- *    because with no frame declared there is no hypothesis for the reachability to be
- *    an artifact of.
+ * 1. **The `none` run** (nothing pinned). `unreachable` here is `PROVED` — the strongest
+ *    answer available, holding with nothing assumed beyond the document — and no second
+ *    query is paid for. This is the cheap path AND the honest one.
+ * 2. A `none`-run `reachable` is NOT yet a defect: with nothing pinned a variable may
+ *    change spontaneously, so the witness may use a transition the document never
+ *    licensed. Which second run to make depends on what the document declared:
+ *    - variables declared `frame: stable` ⇒ the **`declared`** run, which asks whether
+ *      the property holds under the document's OWN stated assumptions. Unreachable there
+ *      is `PROVED_UNDER_HYPOTHESES` (demoted, hypotheses named); reachable is `VIOLATED`.
+ *    - nothing declared ⇒ the **`full`** run, which pins every variable an effect does
+ *      not write. Reachable there means every step is requirement-sanctioned, so the
+ *      counterexample is real and the verdict is `VIOLATED`. Unreachable means the only
+ *      route used an unsanctioned change: `UNKNOWN`, because that is neither a defect nor
+ *      a proof.
+ * 3. Any `unknown` at any point demotes and is never reported as proven.
  *
- * Cost is ~2× on the paths that need both runs, which the donor's measurements make
+ * The `full` run in step 2 is what the first implementation lacked, and its absence was a
+ * real soundness bug rather than a gap: with nothing declared `stable` the "framed" run
+ * was byte-identical to the strict one, so every `none`-reachable became an
+ * error-severity `VIOLATED`. The worked lock/grant fixture caught it — a lock-count
+ * constraint reported violated by a requirement that only touches `idle`. See
+ * {@link FrameMode}.
+ *
+ * Cost is ~2× on the paths needing both runs, which the donor's measurements make
  * immaterial: 122ms at 400 state variables.
  */
 export const decideConstraint = (
@@ -1334,11 +1396,11 @@ export const decideConstraint = (
   timeoutMs: number,
 ): Effect.Effect<ConstraintResult, never, SolverService> =>
   Effect.gen(function* () {
-    const strictRun = yield* runQuery(Z3, ctx, prepared, constraint, false, timeoutMs)
-    let elapsedMs = strictRun.elapsedMs
+    const openRun = yield* runQuery(Z3, ctx, prepared, constraint, 'none', timeoutMs)
+    let elapsedMs = openRun.elapsedMs
 
     /** Assemble the invariant evidence for a run that proved unreachable. */
-    const invariantOf = (run: typeof strictRun) =>
+    const invariantOf = (run: typeof openRun) =>
       Effect.gen(function* () {
         if (run.answer === undefined) {
           return {
@@ -1355,99 +1417,100 @@ export const decideConstraint = (
         } satisfies InvariantEvidence
       })
 
-    // (1) STRICT unreachable ⇒ PROVED, frame-closed. No second query.
-    if (strictRun.verdict === 'unreachable') {
-      const invariant = yield* invariantOf(strictRun)
+    const base = { label: constraint.label, requirementId: constraint.requirementId }
+
+    // (1) Unreachable with NOTHING assumed ⇒ PROVED, frame-closed. No second query.
+    if (openRun.verdict === 'unreachable') {
       return {
-        label: constraint.label,
-        requirementId: constraint.requirementId,
+        ...base,
         verdict: 'PROVED' as const,
-        strict: strictRun.verdict,
-        invariant,
+        strict: openRun.verdict,
+        invariant: yield* invariantOf(openRun),
         elapsedMs,
-        refusedParams: strictRun.refusedParams,
+        refusedParams: openRun.refusedParams,
       }
     }
 
-    if (strictRun.verdict === 'unknown') {
+    if (openRun.verdict === 'unknown') {
       return {
-        label: constraint.label,
-        requirementId: constraint.requirementId,
+        ...base,
         verdict: 'UNKNOWN' as const,
-        strict: strictRun.verdict,
+        strict: openRun.verdict,
         // OUT-OF-BAND (V15): `reason_unknown` says "ok" on a timeout, so the clock
         // decides. `"ok"` never reaches a caller.
-        unknownReason: classifyUnknown(strictRun.elapsedMs, timeoutMs),
+        unknownReason: classifyUnknown(openRun.elapsedMs, timeoutMs),
         elapsedMs,
-        refusedParams: strictRun.refusedParams,
+        refusedParams: openRun.refusedParams,
       }
     }
 
-    // (2/3) STRICT reachable. Only a declared frame can make that an artifact.
-    if (prepared.stableVars.length === 0) {
-      const trace = extractTrace(Z3, ctx, strictRun.system.fp)
-      return {
-        label: constraint.label,
-        requirementId: constraint.requirementId,
-        verdict: 'VIOLATED' as const,
-        strict: strictRun.verdict,
-        trace,
-        elapsedMs,
-        refusedParams: strictRun.refusedParams,
-      }
-    }
-
-    const framedRun = yield* runQuery(Z3, ctx, prepared, constraint, true, timeoutMs)
+    // (2) Reachable with nothing pinned. The FRAMED run — every unwritten variable pinned
+    // — decides whether that is a real defect or an artifact of assuming nothing.
+    const framedRun = yield* runQuery(Z3, ctx, prepared, constraint, 'full', timeoutMs)
     elapsedMs += framedRun.elapsedMs
-    const verdict = decideFrameVerdict(strictRun.verdict, framedRun.verdict)
+    let refusedParams = [...new Set([...openRun.refusedParams, ...framedRun.refusedParams])]
+    const verdict = decideFrameVerdict(openRun.verdict, framedRun.verdict)
 
     if (verdict === 'PROVED_UNDER_HYPOTHESES') {
-      const invariant = yield* invariantOf(framedRun)
       const writers = writeSetOf(prepared)
+      // MINIMIZE THE FRAME SET (decision-doc design rule 3), so the disclosure names what
+      // the proof actually needs rather than everything that happened to be pinned.
+      //
+      // One extra query, and only when the document declared something: if the DECLARED
+      // stable set alone carries the proof, the hypothesis is exactly what the author
+      // wrote down — a far more actionable disclosure than "all 6 variables". When it does
+      // not (or nothing was declared), the honest hypothesis is every variable the maximal
+      // frame pinned, and saying so is the point.
+      let hypothesisVars = prepared.variables.map((v) => v.name)
+      if (prepared.stableVars.length > 0) {
+        const declaredRun = yield* runQuery(Z3, ctx, prepared, constraint, 'declared', timeoutMs)
+        elapsedMs += declaredRun.elapsedMs
+        refusedParams = [...new Set([...refusedParams, ...declaredRun.refusedParams])]
+        if (declaredRun.verdict === 'unreachable') hypothesisVars = [...prepared.stableVars]
+      }
       return {
-        label: constraint.label,
-        requirementId: constraint.requirementId,
+        ...base,
         verdict,
-        strict: strictRun.verdict,
+        strict: openRun.verdict,
         framed: framedRun.verdict,
-        invariant,
-        // The variables the proof LEANED ON, each with its writers — which is what
-        // turns "this is conditional" into "this depends on lock_held changing only
-        // via TX-C1, TX-C4".
-        hypotheses: prepared.stableVars.map((variable) => ({
+        invariant: yield* invariantOf(framedRun),
+        // The variables the proof LEANED ON, each with its writers — which is what turns
+        // "this is conditional" into "this depends on granted changing only via TX-A1,
+        // TX-A2". A variable written by NO requirement is the V16 shape, and showing an
+        // empty writer list is how that becomes visible.
+        hypotheses: hypothesisVars.map((variable) => ({
           variable,
           writers: writers.get(variable) ?? [],
         })),
         elapsedMs,
-        refusedParams: [...new Set([...strictRun.refusedParams, ...framedRun.refusedParams])],
+        refusedParams,
       }
     }
 
     if (verdict === 'UNKNOWN') {
       return {
-        label: constraint.label,
-        requirementId: constraint.requirementId,
+        ...base,
         verdict,
-        strict: strictRun.verdict,
+        strict: openRun.verdict,
         framed: framedRun.verdict,
         unknownReason: classifyUnknown(framedRun.elapsedMs, timeoutMs),
         elapsedMs,
-        refusedParams: [...new Set([...strictRun.refusedParams, ...framedRun.refusedParams])],
+        refusedParams,
       }
     }
 
-    // VIOLATED — reachable both ways, so the trace is a real one. Taken from the
-    // STRICT run: it is the one whose reachability is not conditional on any frame.
-    const trace = extractTrace(Z3, ctx, strictRun.system.fp)
+    // VIOLATED. The trace comes from the FRAMED run, never the unpinned one: under full
+    // framing every step is a requirement-sanctioned change, so the witness is a real
+    // behavior of the described system. The unpinned run's witness may include a
+    // spontaneous change, which is exactly what would make the trace fiction.
     return {
-      label: constraint.label,
-      requirementId: constraint.requirementId,
+      ...base,
       verdict: 'VIOLATED' as const,
-      strict: strictRun.verdict,
+      strict: openRun.verdict,
       framed: framedRun.verdict,
-      trace,
+      trace: extractTrace(Z3, ctx, framedRun.system.fp),
       elapsedMs,
-      refusedParams: [...new Set([...strictRun.refusedParams, ...framedRun.refusedParams])],
+      refusedParams,
     }
   })
 

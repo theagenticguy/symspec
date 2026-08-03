@@ -732,3 +732,207 @@ describe('check — the solver Layer', () => {
     expect(DOC_VERSION).toBe(3)
   })
 })
+
+// ---------------------------------------------------------------------------
+// The reachability tier (G4) — wired in, and a PURE ADDITION
+// ---------------------------------------------------------------------------
+
+/**
+ * `check`'s reachability integration.
+ *
+ * Two claims, and the second matters as much as the first:
+ *
+ * 1. When a state model IS committed, the tier runs and its verdicts reach `findings[]`,
+ *    `coverage.demotions[]`, `counts`, `verified`, and the exit code.
+ * 2. When one is NOT committed, NOTHING changes — no key, no finding, no demotion. That
+ *    is what keeps the differential oracle a strict byte comparison rather than one that
+ *    excludes a new field, and it is asserted here as well as there because the oracle's
+ *    fixtures could all grow a state model one day without anyone noticing this property
+ *    had been the reason they were safe.
+ */
+describe('the reachability tier runs ONLY when a state model is committed (G4)', () => {
+  /** A UUID-shaped id, so the document schema accepts it. */
+  const rid = (n: number) => `bbbbbbbb-0000-4000-8000-00000000000${n}`
+
+  /** A lock model whose one constraint is PROVABLE with nothing assumed. */
+  const provableDoc = (): RequirementsDocument => ({
+    ...docOf(
+      req({
+        id: rid(1),
+        key: 'TX-A1',
+        sentence: 'The lock manager shall grant the lock.',
+        systemResponse: 'grant the lock',
+        responseKind: 'effect',
+        stateEffect: 'when granted = 0: granted := granted + 1',
+      }),
+      req({
+        id: rid(2),
+        key: 'TX-A2',
+        sentence: 'The lock manager shall release the lock.',
+        systemResponse: 'release the lock',
+        responseKind: 'effect',
+        stateEffect: 'when granted = 1: granted := granted - 1',
+      }),
+      req({
+        id: rid(3),
+        key: 'TX-C1',
+        sentence: 'The lock manager shall hold at most one lock.',
+        systemResponse: 'hold at most one lock',
+        responseKind: 'constraint',
+        stateConstraint: 'granted <= 1',
+      }),
+    ),
+    stateModel: {
+      variables: [
+        {
+          name: 'granted',
+          type: 'int',
+          frame: 'volatile',
+          initial: 'granted = 0',
+          domain: { min: 0, max: 4 },
+        },
+      ],
+    },
+  })
+
+  /** The SAME requirements with a genuine defect: an effect that violates the constraint. */
+  const violatedDoc = (): RequirementsDocument => {
+    const base = provableDoc()
+    return {
+      ...base,
+      requirements: {
+        ...base.requirements,
+        [rid(4)]: req({
+          id: rid(4),
+          key: 'TX-A3',
+          sentence: 'The lock manager shall force a second grant.',
+          systemResponse: 'force a second grant',
+          responseKind: 'effect',
+          // Unguarded, and it can push `granted` to 2 — a real violation of TX-C1 reached
+          // through a change this requirement itself makes.
+          stateEffect: 'granted := granted + 2',
+        }),
+      },
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // The tier is OFF without a state model
+  // -------------------------------------------------------------------------
+
+  it('emits NO `reachability` key and NO reachability finding without a state model', async () => {
+    const payload = await expectOk(
+      docOf(req({ id: rid(1), sentence: 'The system shall operate.' })),
+    )
+    // ABSENT, not empty — the key must not exist at all, which is what leaves the payload
+    // byte-identical to a G3 run and keeps the differential oracle strict.
+    expect('reachability' in payload).toBe(false)
+    expect(payload.findings.some((f) => f.code.startsWith('FND_REACHABILITY'))).toBe(false)
+    expect(
+      payload.coverage.demotions.some((d) => String(d.reason).startsWith('reachability')),
+    ).toBe(false)
+  })
+
+  it('is off for an EMPTY state model too, not merely for a missing one', async () => {
+    // `emptyDocument()` carries `stateModel: {variables: []}`, so "no state model" and
+    // "an empty state model" are the same document on disk. The gate is the variable
+    // COUNT, and this pins that rather than a key check.
+    const payload = await expectOk({
+      ...docOf(req({ id: rid(1), sentence: 'The system shall operate.' })),
+      stateModel: { variables: [] },
+    })
+    expect('reachability' in payload).toBe(false)
+  })
+
+  // -------------------------------------------------------------------------
+  // The tier is ON with one, and reaches every published surface
+  // -------------------------------------------------------------------------
+
+  it('PROVES a provable constraint, with the re-verified invariant as evidence', async () => {
+    const payload = await expectOk(provableDoc())
+    expect(payload.reachability).toBeDefined()
+    expect(payload.reachability?.variables).toBe(1)
+    expect(payload.reachability?.effects).toBe(2)
+    expect(payload.reachability?.proved).toBe(1)
+    expect(payload.reachability?.violated).toBe(0)
+
+    const proved = payload.findings.find((f) => f.code === 'FND_REACHABILITY_PROVED')
+    expect(proved?.severity).toBe('info')
+    expect(proved?.requirementIds).toEqual([rid(3)])
+    // The certificate check ran and passed — that is what makes the proof reportable.
+    expect(
+      (proved?.evidence as unknown as { certificateVerified?: boolean } | undefined)
+        ?.certificateVerified,
+    ).toBe(true)
+    // A PROVED verdict adds NO demotion, which is the mechanism by which `verified` may
+    // stay true.
+    expect(
+      payload.coverage.demotions.filter((d) => String(d.reason).startsWith('reachability')),
+    ).toEqual([])
+  })
+
+  it('reports a genuine violation at ERROR severity, with a trace naming requirements', async () => {
+    const payload = await expectOk(violatedDoc())
+    expect(payload.reachability?.violated).toBeGreaterThan(0)
+
+    const violated = payload.findings.find((f) => f.code === 'FND_REACHABILITY_VIOLATED')
+    expect(violated?.severity).toBe('error')
+    // The trace cites the requirement's own KEY, not an internal rule name (donor V29).
+    expect(violated?.message).toContain('TX-A3')
+
+    // And it flows into the tallies the exit contract reads, so exit 1 needs no new wiring.
+    expect(payload.counts.error).toBeGreaterThan(0)
+  })
+
+  it('the reachability finding count is INCLUDED in `counts`, not reported beside it', async () => {
+    // The counts must describe the same array the payload publishes, or the exit code and
+    // the findings disagree.
+    const payload = await expectOk(provableDoc())
+    const tallied = payload.counts.error + payload.counts.warn + payload.counts.info
+    expect(payload.findings).toHaveLength(tallied)
+  })
+
+  it('DEMOTES `verified` when a state model is declared but nothing is classified', async () => {
+    // The "silence made visible" case: declaring variables is the easy half, and a
+    // document stuck there must not look like one that passed.
+    const payload = await expectOk({
+      ...docOf(req({ id: rid(1), sentence: 'The system shall operate.' })),
+      stateModel: { variables: [{ name: 'granted', type: 'int', frame: 'volatile' }] },
+    })
+    const disclosure = payload.findings.find((f) => f.code === 'FND_REACHABILITY_NOT_CHECKED')
+    expect(disclosure).toBeDefined()
+    expect(payload.verified).toBe(false)
+    const demotion = payload.coverage.demotions.find(
+      (d) => String(d.reason) === 'reachability-not-checked',
+    )
+    // The demotion carries a RUNNABLE repair, not prose to parse.
+    expect(demotion?.repair?.commands?.join(' ')).toContain('symspec classify')
+  })
+
+  it('honors `--min-severity error`, dropping the info-tier reachability findings', async () => {
+    const payload = await expectOk(provableDoc(), { minSeverity: 'error' })
+    expect(payload.findings.some((f) => f.code === 'FND_REACHABILITY_PROVED')).toBe(false)
+    // But the SUMMARY still reports what happened — a presentation filter must not erase
+    // the fact that the tier ran.
+    expect(payload.reachability?.proved).toBe(1)
+  })
+
+  it('keeps an error-severity reachability finding under `--min-severity error`', async () => {
+    // The property that makes the filter safe for a gate: `error` is the top of the
+    // order, so it can never remove the finding the exit code keys on.
+    const payload = await expectOk(violatedDoc(), { minSeverity: 'error' })
+    expect(payload.findings.some((f) => f.code === 'FND_REACHABILITY_VIOLATED')).toBe(true)
+  })
+
+  it('is DETERMINISTIC: two runs over one document agree on every verdict', async () => {
+    // SEQUENTIAL — `Promise.all` over two runs wedges Asyncify's single capability slot.
+    const first = await expectOk(provableDoc())
+    const second = await expectOk(provableDoc())
+    expect(second.reachability).toEqual(first.reachability)
+    expect(
+      second.findings.filter((f) => f.code.startsWith('FND_REACHABILITY')).map((f) => f.code),
+    ).toEqual(
+      first.findings.filter((f) => f.code.startsWith('FND_REACHABILITY')).map((f) => f.code),
+    )
+  })
+})

@@ -173,13 +173,13 @@ describe('explain — success', () => {
  * one of these was an `ERR_NOT_FOUND` at exit 2 — an agent holding an
  * `FND_CONTRADICTION` from `check` could list it in the manifest and not explain it.
  */
-describe('explain — AC-A-3: all 75 codes through the operation', () => {
+describe('explain — AC-A-3: all 80 codes through the operation', () => {
   it('resolves every code the MANIFEST publishes, across all three catalogs', async () => {
     const manifest = currentManifest()
     const published = [...manifest.errorCodes, ...manifest.findingCodes, ...manifest.lintCodes].map(
       (row) => row.code,
     )
-    expect(published).toHaveLength(75)
+    expect(published).toHaveLength(80)
 
     for (const code of published) {
       const env = await Effect.runPromise(runOperation(explainOp, { code }))
@@ -224,7 +224,7 @@ describe('explain — AC-A-3: all 75 codes through the operation', () => {
     expect(env.data.commands).toEqual(['symspec antonym add <verbA> <verbB>'])
   })
 
-  it('did-you-mean now ranks across all 75, not the 21 ERR_* codes', async () => {
+  it('did-you-mean now ranks across all 80, not the 21 ERR_* codes', async () => {
     // The G1 miss this closes: a GTWR_* typo returned a list of ERR_* codes.
     const r = await Effect.runPromise(
       Effect.result(runOperation(explainOp, { code: 'GTWR_R7_VAGU' })),
@@ -234,8 +234,11 @@ describe('explain — AC-A-3: all 75 codes through the operation', () => {
       const env = toErrorEnvelope(r.failure as Parameters<typeof toErrorEnvelope>[0])
       expect(env.suggestions.join(' ')).toContain('GTWR_R7_VAGUE')
       expect(env.repair?.commands).toEqual(['symspec explain --code GTWR_R7_VAGUE'])
-      // And it says how many codes exist, so an agent knows the corpus size.
-      expect(env.suggestions.join(' ')).toContain('30 FND_*')
+      // And it says how many codes exist, so an agent knows the corpus size. 35 FND_*
+      // since G4: the donor's frozen 30 plus the 5 `FND_REACHABILITY_*`. Read from
+      // `catalogCounts()` at runtime rather than hardcoded in the message, which is why
+      // this number moves on its own when the vocabulary grows.
+      expect(env.suggestions.join(' ')).toContain('35 FND_*')
     }
   })
 

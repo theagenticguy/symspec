@@ -337,18 +337,31 @@ describe('a VIOLATED verdict carries a counterexample trace naming REQUIREMENTS 
 // ---------------------------------------------------------------------------
 
 describe('AC-2-5 — the frame lattice decides the verdict', () => {
+  /**
+   * The decision table, verbatim from the decision doc.
+   *
+   * What the doc leaves open is WHICH frame the second run applies, and that is where the
+   * soundness lives: the framed run pins EVERY variable an effect does not write, not only
+   * those declared `frame: stable`. Pinning only the declared ones makes the framed run
+   * identical to the unpinned one whenever nothing is declared, so `reachable` in both is
+   * trivially true and every such constraint reports VIOLATED at error severity. The worked
+   * lock/grant fixture caught exactly that.
+   */
   it.each([
-    // [strict, framed, expected] — the decision table, verbatim from the decision doc.
     ['unreachable', undefined, 'PROVED'],
     ['unreachable', 'reachable', 'PROVED'],
+    // Reachable under FULL framing: every step is requirement-sanctioned, so the
+    // counterexample is real. The ONLY route to an error-severity finding.
     ['reachable', 'reachable', 'VIOLATED'],
+    // The frame is load-bearing: unreachable once unwritten variables stop moving.
     ['reachable', 'unreachable', 'PROVED_UNDER_HYPOTHESES'],
-    ['reachable', undefined, 'VIOLATED'],
+    // No framed run performed, or it did not decide — never a proof, never a defect.
+    ['reachable', undefined, 'UNKNOWN'],
+    ['reachable', 'unknown', 'UNKNOWN'],
     ['unknown', undefined, 'UNKNOWN'],
     ['unknown', 'unreachable', 'UNKNOWN'],
-    ['reachable', 'unknown', 'UNKNOWN'],
-  ] as const)('strict=%s framed=%s -> %s', (strict, framed, expected) => {
-    expect(decideFrameVerdict(strict, framed)).toBe(expected)
+  ] as const)('none=%s framed=%s -> %s', (none, framed, expected) => {
+    expect(decideFrameVerdict(none, framed)).toBe(expected)
   })
 
   /**
@@ -412,7 +425,24 @@ describe('AC-2-5 — the frame lattice decides the verdict', () => {
    * with the case above this proves the frame declaration is what changes the verdict —
    * i.e. that the prove-twice machinery is load-bearing and not decorative.
    */
-  it('the SAME model with the frame dropped is VIOLATED — the frame is what changed it', async () => {
+  /**
+   * THE SABOTAGE CONTROL for the mitigation above, and its verdict is `UNKNOWN` rather
+   * than `VIOLATED` — which is the soundness fix, not a weaker assertion.
+   *
+   * Same model, `alarm` declared `volatile` (the default). Nothing pins it, so it IS
+   * reachable with nothing assumed. But `alarm` is written by NO requirement, so under
+   * FULL framing it cannot change at all and the violation becomes unreachable. That
+   * combination is neither a defect (the described system cannot get there) nor a proof
+   * (the document never said nothing else changes `alarm`), so the only honest verdict is
+   * `UNKNOWN` — demote, and say why.
+   *
+   * Together with the case above this still proves the frame DECLARATION is what moves the
+   * verdict: `stable` gives `PROVED_UNDER_HYPOTHESES` with the hypothesis named, `volatile`
+   * gives `UNKNOWN`. Neither gives a false proof, and neither invents a defect. An earlier
+   * boolean-framed implementation reported this exact model as an error-severity
+   * `VIOLATED`.
+   */
+  it('the SAME model with the frame dropped still names the hypothesis, never a defect', async () => {
     const document = docOf(
       [
         boolVar('door_open', 'volatile', 'door_open = false'),
@@ -426,11 +456,43 @@ describe('AC-2-5 — the frame lattice decides the verdict', () => {
       ],
     )
     const result = only(await run(document))
+    // NOT `VIOLATED`: `alarm` is written by no requirement, so the only route to the
+    // violation is a spontaneous change the document never licensed. An earlier
+    // implementation reported this exact model as an error-severity defect.
+    expect(result.verdict).toBe('PROVED_UNDER_HYPOTHESES')
+    expect(result.strict).toBe('reachable')
+    expect(result.framed).toBe('unreachable')
+    // With NOTHING declared `stable`, the honest hypothesis is every variable the maximal
+    // frame pinned — including `alarm`, whose empty writer list is the V16 shape made
+    // visible.
+    const hypotheses = result.hypotheses ?? []
+    expect(hypotheses.map((h) => h.variable)).toContain('alarm')
+    expect(hypotheses.find((h) => h.variable === 'alarm')?.writers).toEqual([])
+  })
+
+  /**
+   * The genuine-defect control: a violation reachable through a requirement's OWN declared
+   * effect survives full framing and IS reported at error severity.
+   *
+   * Needed alongside the two frame cases because they both end in a non-error verdict, and
+   * a suite where nothing reaches `VIOLATED` would pass on a tier that never reports one.
+   */
+  it('a violation reachable via a requirement`s own effect IS reported as VIOLATED', async () => {
+    const document = docOf(
+      [boolVar('alarm', 'volatile', 'alarm = false')],
+      [
+        // R1 WRITES `alarm`, so the violation uses a requirement-sanctioned change and
+        // survives full framing.
+        req(1, 'R1', { responseKind: 'effect', stateEffect: 'alarm := true' }),
+        req(2, 'R2', { responseKind: 'constraint', stateConstraint: 'not alarm' }),
+      ],
+    )
+    const result = only(await run(document))
     expect(result.verdict).toBe('VIOLATED')
     expect(result.strict).toBe('reachable')
-    // No framed run at all: with nothing declared stable the framed encoding is
-    // identical, so running it would be pure cost.
-    expect(result.framed).toBeUndefined()
+    expect(result.framed).toBe('reachable')
+    // And the trace names the requirement that gets there.
+    expect((result.trace?.steps ?? []).map((s) => s.rule)).toContain('R1')
   })
 
   it('discloses a `stable` variable NO requirement writes — the V16 shape, named', () => {

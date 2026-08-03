@@ -72,6 +72,7 @@ import type {
   CheckOptions,
   CheckReport,
   CheckSeverity,
+  CheckTier,
   CoverageDemotion,
 } from '../donor/pipeline/check.ts'
 import { filterReport, runCheck } from '../donor/pipeline/check.ts'
@@ -79,6 +80,8 @@ import type { Exclusion } from '../donor/pipeline/gate.ts'
 import { type BudgetHint, budgetHintFor } from '../formal/budget-hint.ts'
 import { toDonorDoc } from '../formal/compat.ts'
 import { EmbedderService } from '../formal/embedder.ts'
+import { type ReachabilityReport, runReachability } from '../formal/reachability.ts'
+import { projectReachability } from '../formal/reachability-report.ts'
 import { repairForDemotion } from '../formal/repair.ts'
 import { SolverService } from '../formal/solver-service.ts'
 import { ok, type Repair } from '../kernel/envelope.ts'
@@ -159,6 +162,39 @@ export interface CheckProgress {
 }
 
 /**
+ * What the reachability tier did, as numbers an agent can act on (G4).
+ *
+ * Reported alongside the findings rather than instead of them: the findings carry the
+ * evidence and the remedies, and this is the one-glance answer to "how much of my state
+ * model did the solver actually decide?" — the same job `coverage.encoded` does for the
+ * propositional tier.
+ *
+ * `elapsedMs` is REPORTED, never gated on. The latency budget lives in the feasibility
+ * gate, which is a separate artifact for a reason the donor learned the hard way: a
+ * budget enforced inside the tier is a budget that silently changes verdicts.
+ */
+export interface ReachabilitySummary {
+  /** Declared state variables. */
+  readonly variables: number
+  /** Requirements contributing a transition. */
+  readonly effects: number
+  /** Constraints the tier actually decided. */
+  readonly constraints: number
+  /** Constraints PROVED with nothing assumed (frame-closed). */
+  readonly proved: number
+  /** Constraints proved only under the declared frames — each DEMOTES. */
+  readonly provedUnderHypotheses: number
+  /** Constraints with a reachable violation, each an error-severity finding. */
+  readonly violated: number
+  /** Constraints the solver did not decide — each DEMOTES. */
+  readonly unknown: number
+  /** Total wall-clock ms across every reachability query. Reported only. */
+  readonly elapsedMs: number
+  /** The per-query timeout used, so an `unknownReason` is interpretable. */
+  readonly timeoutMs: number
+}
+
+/**
  * The `check` payload: the donor's report shape, plus the two v5 additions.
  *
  * Every donor field keeps its name and meaning — `findings`, `excluded`,
@@ -174,6 +210,21 @@ export interface CheckPayload extends Omit<CheckReport, 'coverage'> {
   }
   /** The v5 iteration gradient (AC-A-2). */
   readonly progress: CheckProgress
+  /**
+   * The unbounded reachability tier's own summary (G4) — present ONLY when a state model
+   * is committed.
+   *
+   * ABSENT, not empty, on a document with no state model, and that absence is what keeps
+   * the differential oracle strict: a document without a state model produces a payload
+   * with no `reachability` key at all, so the diff against the donor is unchanged rather
+   * than excluding-a-field. The tier's own "I did not run" disclosure travels as a
+   * FINDING (`FND_REACHABILITY_NOT_CHECKED`) rather than as this field, because a
+   * disclosure an agent has to know to look for is not a disclosure.
+   *
+   * See `../formal/reachability.ts` for what the numbers mean and
+   * `../formal/reachability-report.ts` for how they become findings.
+   */
+  readonly reachability?: ReachabilitySummary
   /** The resolved document path, so an agent can quote it in a follow-up. */
   readonly path: string
   /** The load's info-grade disclosures (V27 channel), surfaced on every read. */
@@ -517,6 +568,36 @@ const progressOf = (report: CheckReport): CheckProgress => ({
 })
 
 /**
+ * The severity order, as a predicate — so the reachability findings honor
+ * `--min-severity` through the SAME rule the transplanted tier does.
+ *
+ * Re-derived here rather than imported because the donor's `filterReport` applies the
+ * rule internally and exposes no predicate. Keeping it a three-element index comparison
+ * (rather than a set per level) is what makes "error is the top of the order, so
+ * `--min-severity error` can never hide the finding the exit gate keys on" true by
+ * construction instead of by inspection.
+ */
+const SEVERITY_ORDER: readonly CheckSeverity[] = ['error', 'warn', 'info']
+const severityAtLeast = (severity: CheckSeverity, minimum: CheckSeverity): boolean =>
+  SEVERITY_ORDER.indexOf(severity) <= SEVERITY_ORDER.indexOf(minimum)
+
+/** Roll a finished reachability run up into the payload's summary. */
+const summarizeReachability = (run: ReachabilityReport): ReachabilitySummary => {
+  const count = (verdict: string) => run.results.filter((r) => r.verdict === verdict).length
+  return {
+    variables: run.variables,
+    effects: run.effects,
+    constraints: run.results.length,
+    proved: count('PROVED'),
+    provedUnderHypotheses: count('PROVED_UNDER_HYPOTHESES'),
+    violated: count('VIOLATED'),
+    unknown: count('UNKNOWN'),
+    elapsedMs: run.elapsedMs,
+    timeoutMs: run.timeoutMs,
+  }
+}
+
+/**
  * Attach a runnable `repair` to every demotion (AC-A-1).
  *
  * The repairs are computed from the UNFILTERED report's findings, even when
@@ -643,6 +724,29 @@ export const checkOp = defineOperation({
 
       const measuredMs = Date.now() - startedAt
 
+      // ---------------------------------------------------------------------
+      // THE REACHABILITY TIER (G4) — runs only when a state model is committed
+      // ---------------------------------------------------------------------
+      //
+      // The gate is `stateModel.variables.length > 0`, and it is what keeps this a PURE
+      // ADDITION: a document with no state model takes the `undefined` branch, so its
+      // payload has no `reachability` key, no reachability findings, and no reachability
+      // demotions — byte-identical to G3. The differential oracle's fixtures are all
+      // state-model-free, so it stays a strict comparison rather than one that excludes a
+      // new field.
+      //
+      // Deliberately AFTER `runCheck` and outside the `--solver-budget-ms` measurement:
+      // the budget bounds the transplanted tiers, and folding a new tier into the number
+      // it measures would change the `budgetHint` on documents that gained a state model
+      // — a G3 output moving for a G4 reason.
+      const reachabilityRun =
+        loaded.document.stateModel.variables.length > 0
+          ? yield* runReachability(loaded.document, { timeoutMs: input.timeoutMs })
+          : undefined
+
+      const reachabilityProjection =
+        reachabilityRun !== undefined ? projectReachability(reachabilityRun, path) : undefined
+
       // Output shaping is applied AFTER the repairs are computed from the full
       // report, so a filter cannot strip a remedy. Presentation only: it never
       // touches `counts`, so the exit code is identical filtered or not.
@@ -660,26 +764,91 @@ export const checkOp = defineOperation({
       // info-tier truncation demotions that raise it.
       const budgetHint = budgetHintFor(full, input.solverBudgetMs, measuredMs)
 
+      // The reachability findings are SPLICED into the same `findings[]` every other
+      // tier writes to, and filtered by the SAME `--min-severity` rule — a second
+      // findings array would make an agent read two places to learn what `check` found,
+      // and would leave the exit contract reading only one of them.
+      const reachabilityFindings: readonly CheckFinding[] = (reachabilityProjection?.findings ?? [])
+        .filter((f) => severityAtLeast(f.severity, input.minSeverity))
+        .map(
+          (f): CheckFinding => ({
+            code: f.code,
+            severity: f.severity,
+            // `'formal'` because the reachability tier IS the formal tier's unbounded half
+            // — it runs Z3 over the document's own semantics. Not `'structural'`, which
+            // the catalog reserves for facts about the graph the solver never saw.
+            tier: 'formal' satisfies CheckTier,
+            requirementIds: [...f.requirementIds],
+            message: f.message,
+            ...(f.evidence !== undefined
+              ? // The donor's `Evidence` shape is an atom table plus an unsat core, which a
+                // reachability invariant is not. Cast at this ONE boundary rather than
+                // widening the transplanted type, so `donor-fidelity` stays byte-exact.
+                { evidence: f.evidence as unknown as NonNullable<CheckFinding['evidence']> }
+              : {}),
+          }),
+        )
+
+      const reachabilityDemotions: readonly RepairableDemotion[] = (
+        reachabilityProjection?.demotions ?? []
+      ).map((d) => ({
+        reason: d.reason as CoverageDemotion['reason'],
+        requirementIds: [...d.requirementIds],
+        action: d.action,
+        ...(d.repair !== undefined ? { repair: d.repair } : {}),
+      }))
+
+      const allFindings = [...shaped.findings, ...reachabilityFindings]
+      const allDemotions = [
+        ...withRepairs(
+          full.coverage.demotions,
+          full.findings,
+          full.excluded,
+          input,
+          path,
+          budgetHint?.recommendedBudgetMs,
+        ),
+        ...reachabilityDemotions,
+      ]
+
+      // Counts are RECOMPUTED over the merged set rather than incremented, so the exit
+      // code keys on the same numbers the payload publishes. A reachability VIOLATED
+      // finding is error-severity, so it drives exit 1 through the existing contract with
+      // no new wiring — which is the whole reason it goes in `findings[]`.
+      const counts = {
+        error:
+          shaped.counts.error + reachabilityFindings.filter((f) => f.severity === 'error').length,
+        warn: shaped.counts.warn + reachabilityFindings.filter((f) => f.severity === 'warn').length,
+        info: shaped.counts.info + reachabilityFindings.filter((f) => f.severity === 'info').length,
+      }
+
       const payload: CheckPayload = {
         ...shaped,
+        findings: allFindings,
+        counts,
         coverage: {
           ...shaped.coverage,
-          demotions: withRepairs(
-            full.coverage.demotions,
-            full.findings,
-            full.excluded,
-            input,
-            path,
-            budgetHint?.recommendedBudgetMs,
-          ),
+          demotions: allDemotions,
         },
-        progress: progressOf(full),
+        // `verified` is recomputed from the MERGED demotion set, preserving the donor's
+        // single-writer rule (`verified = demotions.length === 0`). A reachability
+        // demotion can therefore only push it toward false — the demotion-only doctrine,
+        // which holds because nothing here ever REMOVES a demotion.
+        verified: allDemotions.length === 0,
+        progress: {
+          ...progressOf(full),
+          demotions: allDemotions.length,
+          openFindings: counts.error,
+        },
         path,
         diagnostics: loaded.diagnostics,
         // ABSENT, not `undefined`. A run with nothing measured to say about its budget
         // emits no key at all — the same convention `repair` and `partial` follow, and
         // the reason `budgetHint?:` is optional rather than nullable.
         ...(budgetHint !== undefined ? { budgetHint } : {}),
+        ...(reachabilityRun !== undefined
+          ? { reachability: summarizeReachability(reachabilityRun) }
+          : {}),
       }
 
       return ok('check', payload)

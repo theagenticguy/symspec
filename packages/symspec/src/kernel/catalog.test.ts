@@ -1,5 +1,5 @@
 /**
- * The unified catalog: all 75 codes reachable, every derived field honest.
+ * The unified catalog: all 80 codes reachable, every derived field honest.
  *
  * ## What this file is actually guarding
  *
@@ -11,7 +11,7 @@
  *
  * So the assertions here are COUNTS and TOTALITY, not spot checks: all 30 `FND_*`
  * severities parse (not "some do"), the example extractor finds exactly the 11 codes
- * that carry one (not "at least one"), and every one of the 75 resolves through
+ * that carry one (not "at least one"), and every one of the 80 resolves through
  * `lookupCode`. A regex that stops matching fails a count; a regex that starts
  * over-matching fails it too.
  */
@@ -19,6 +19,7 @@
 import { describe, expect, it } from 'vitest'
 import { FND_CODES, FndCodeMeta } from '../donor/formal/codes.ts'
 import { GTWR_CODES, GtwrCodeMeta } from '../donor/lint/codes.ts'
+import { REACHABILITY_FND_CODES, ReachabilityFndCodeMeta } from '../formal/reachability-codes.ts'
 import {
   allCodeStrings,
   allCodes,
@@ -31,21 +32,26 @@ import {
 import { descriptionOf, ERR_CLASSES, tagOf } from './errors.ts'
 
 // ---------------------------------------------------------------------------
-// Coverage: all 75, in family order
+// Coverage: all 80, in family order
 // ---------------------------------------------------------------------------
 
 describe('the unified catalog spans all three code families', () => {
-  it('holds exactly 21 ERR_* / 30 FND_* / 24 GTWR_* = 75', () => {
-    expect(catalogCounts()).toEqual({ ERR: 21, FND: 30, GTWR: 24, total: 75 })
+  it('holds exactly 21 ERR_* / 35 FND_* / 24 GTWR_* = 80', () => {
+    // 35 FND_*: the donor's frozen 30, plus G4's 5 `FND_REACHABILITY_*`. The two live in
+    // different files because `donor/formal/codes.ts` is byte-identity-guarded against the
+    // live donor, so appending there would break the transplant-fidelity check. They
+    // report the same `family`, because an agent switches on a code and not on provenance.
+    expect(catalogCounts()).toEqual({ ERR: 21, FND: 35, GTWR: 24, total: 80 })
   })
 
   it('resolves EVERY code in every catalog', () => {
     const codes = [
       ...ERR_CLASSES.map((c) => tagOf(c)),
       ...FND_CODES,
+      ...REACHABILITY_FND_CODES,
       ...GTWR_CODES,
     ] as readonly string[]
-    expect(codes).toHaveLength(75)
+    expect(codes).toHaveLength(80)
     for (const code of codes) {
       const entry = lookupCode(code)
       expect(entry, `${code} must resolve`).toBeDefined()
@@ -58,11 +64,14 @@ describe('the unified catalog spans all three code families', () => {
   it('lists the families in order, each in its own append-only order', () => {
     const rows = allCodes()
     expect(rows.slice(0, 21).map((r) => r.family)).toEqual(Array(21).fill('ERR'))
-    expect(rows.slice(21, 51).map((r) => r.family)).toEqual(Array(30).fill('FND'))
-    expect(rows.slice(51).map((r) => r.family)).toEqual(Array(24).fill('GTWR'))
-    // The per-family order is the shipped append-only order, unreordered.
+    // 35 FND rows: the donor's 30 then G4's 5, both reporting `family: 'FND'`.
+    expect(rows.slice(21, 56).map((r) => r.family)).toEqual(Array(35).fill('FND'))
+    expect(rows.slice(56).map((r) => r.family)).toEqual(Array(24).fill('GTWR'))
+    // The per-family order is the shipped append-only order, unreordered — and WITHIN the
+    // FND family, provenance order: the frozen transplanted list, then the greenfield's.
     expect(rows.slice(21, 51).map((r) => r.code)).toEqual([...FND_CODES])
-    expect(rows.slice(51).map((r) => r.code)).toEqual([...GTWR_CODES])
+    expect(rows.slice(51, 56).map((r) => r.code)).toEqual([...REACHABILITY_FND_CODES])
+    expect(rows.slice(56).map((r) => r.code)).toEqual([...GTWR_CODES])
   })
 
   it('publishes the description VERBATIM — the manifest`s own bytes', () => {
@@ -73,6 +82,9 @@ describe('the unified catalog spans all three code families', () => {
     }
     for (const code of FND_CODES) {
       expect(lookupCode(code)?.description).toBe(FndCodeMeta[code].description)
+    }
+    for (const code of REACHABILITY_FND_CODES) {
+      expect(lookupCode(code)?.description).toBe(ReachabilityFndCodeMeta[code].description)
     }
     for (const code of GTWR_CODES) {
       expect(lookupCode(code)?.description).toBe(GtwrCodeMeta[code].description)
@@ -97,9 +109,9 @@ describe('severity is derived, and null where it genuinely is not per-code', () 
    * would report `null` for every code — which reads as "no severity" rather than
    * as a bug. Asserting all 30 parse is what makes the derivation trustworthy.
    */
-  it('parses a severity for ALL 30 FND_* codes', () => {
+  it('parses a severity for ALL 35 FND_* codes', () => {
     const fnd = allCodes().filter((r) => r.family === 'FND')
-    expect(fnd).toHaveLength(30)
+    expect(fnd).toHaveLength(35)
     for (const row of fnd) {
       expect(row.severity, `${row.code} severity must parse`).not.toBeNull()
       expect(['error', 'warn', 'info', 'warn/info']).toContain(row.severity)
@@ -131,6 +143,12 @@ describe('severity is derived, and null where it genuinely is not per-code', () 
       'FND_CERTIFY_FAILED',
       'FND_NUMERIC_CONTRADICTION',
       'FND_TEMPORAL_CONTRADICTION',
+      // G4. The ONLY error-severity code in the reachability family, and it earns that:
+      // the violation survived BOTH the strict and the framed run (AC-2-5), so it is a
+      // genuine defect rather than an artifact of assuming nothing about unwritten
+      // variables. The other four reachability codes are info — they DEMOTE rather than
+      // gate, because "I could not decide" must never fail a build the way a proof does.
+      'FND_REACHABILITY_VIOLATED',
     ])
   })
 
@@ -208,7 +226,7 @@ describe('tier names the pipeline stage that emits the code', () => {
 describe('worked examples are extracted where the corpus carries one', () => {
   /**
    * A COUNT, deliberately. The extractor handles two shapes (`(e.g. …)` and
-   * `such as …`), verified exhaustive against all 75 descriptions by probe. Pinning
+   * `such as …`), verified exhaustive against all 80 descriptions by probe. Pinning
    * the count means a regex that stops matching fails here, and so does one that
    * starts over-matching — neither of which a "some code has an example" assertion
    * would catch.
@@ -313,7 +331,7 @@ describe('suggestions split at the corpus marker', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Did-you-mean over 75, not 21
+// Did-you-mean over 80, not 21
 // ---------------------------------------------------------------------------
 
 describe('nearestCodesAll ranks across all three families', () => {
@@ -334,7 +352,7 @@ describe('nearestCodesAll ranks across all three families', () => {
   })
 
   /**
-   * The property that makes widening the corpus from 21 to 75 SAFE rather than
+   * The property that makes widening the corpus from 21 to 80 SAFE rather than
    * noisy: the family prefix dominates the ranking, so a near-miss never crosses
    * families while something in the right family is close.
    */
@@ -366,8 +384,8 @@ describe('nearestCodesAll ranks across all three families', () => {
     expect(nearestCodesAll('FND_', 5)).toHaveLength(5)
   })
 
-  it('draws from all 75 code strings', () => {
-    expect(allCodeStrings()).toHaveLength(75)
-    expect(new Set(allCodeStrings()).size, 'no duplicate codes across families').toBe(75)
+  it('draws from all 80 code strings', () => {
+    expect(allCodeStrings()).toHaveLength(80)
+    expect(new Set(allCodeStrings()).size, 'no duplicate codes across families').toBe(80)
   })
 })

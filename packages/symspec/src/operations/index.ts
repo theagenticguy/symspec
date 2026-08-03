@@ -46,6 +46,7 @@
 import { Effect, Schema } from 'effect'
 import { FND_CODES, FndCodeMeta } from '../donor/formal/codes.ts'
 import { GTWR_CODES, GtwrCodeMeta } from '../donor/lint/codes.ts'
+import { REACHABILITY_FND_CODES, ReachabilityFndCodeMeta } from '../formal/reachability-codes.ts'
 import { catalogCounts, lookupCode, nearestCodesAll } from '../kernel/catalog.ts'
 import { API_VERSION, ok } from '../kernel/envelope.ts'
 import { ErrNotFound, errCodeCatalog } from '../kernel/errors.ts'
@@ -158,10 +159,16 @@ const manifestEnvelope = () =>
       // description corpus. See `Manifest` for why publishing only ERR_* was a gap
       // rather than a scope choice.
       errorCodes: errCodeCatalog(),
-      findingCodes: FND_CODES.map((code) => ({
-        code,
-        description: FndCodeMeta[code].description,
-      })),
+      // BOTH FND sources, in provenance order — the donor's frozen 30 then v5's own 5.
+      // Published as ONE `findingCodes` array because an agent switches on a code, not on
+      // which file it came from.
+      findingCodes: [
+        ...FND_CODES.map((code) => ({ code, description: FndCodeMeta[code].description })),
+        ...REACHABILITY_FND_CODES.map((code) => ({
+          code,
+          description: ReachabilityFndCodeMeta[code].description,
+        })),
+      ],
       lintCodes: GTWR_CODES.map((code) => ({
         code,
         description: GtwrCodeMeta[code].description,

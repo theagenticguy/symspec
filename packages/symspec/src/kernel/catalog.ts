@@ -51,6 +51,7 @@
 
 import { FND_CODES, FndCodeMeta } from '../donor/formal/codes.ts'
 import { GTWR_CODES, GtwrCodeMeta } from '../donor/lint/codes.ts'
+import { REACHABILITY_FND_CODES, ReachabilityFndCodeMeta } from '../formal/reachability-codes.ts'
 import { descriptionOf, ERR_CLASSES, tagOf } from './errors.ts'
 
 // ---------------------------------------------------------------------------
@@ -268,6 +269,23 @@ const FND_TIER = {
 } as const satisfies Record<(typeof FND_CODES)[number], 'structural' | 'lint' | 'formal'>
 
 /**
+ * The G4 reachability codes' tier — all `'formal'`, because the reachability tier IS the
+ * formal tier's unbounded half: it runs Z3 over the document's declared semantics.
+ *
+ * A separate table from {@link FND_TIER} rather than an extension of it, because the two
+ * families have different PROVENANCE: `FND_TIER` is keyed on the donor's frozen
+ * `FND_CODES` (whose `satisfies` bound makes it exhaustive over a transplanted list), and
+ * widening that key would break the exhaustiveness guarantee that makes it useful.
+ */
+const REACHABILITY_TIER = {
+  FND_REACHABILITY_VIOLATED: 'formal',
+  FND_REACHABILITY_PROVED: 'formal',
+  FND_REACHABILITY_UNDER_HYPOTHESES: 'formal',
+  FND_REACHABILITY_UNKNOWN: 'formal',
+  FND_REACHABILITY_NOT_CHECKED: 'formal',
+} as const satisfies Record<(typeof REACHABILITY_FND_CODES)[number], 'formal'>
+
+/**
  * Why a `GTWR_*` row reports no severity. Single-sourced here so `explain`, the
  * craft corpus, and the generated AGENTS.md all quote ONE sentence.
  */
@@ -339,6 +357,30 @@ const gtwrRows = (): readonly CodeEntry[] =>
   })
 
 /**
+ * The 5 G4 `FND_REACHABILITY_*` rows, parsed by the SAME parsers as the transplanted
+ * families.
+ *
+ * That shared parsing is why `reachability-codes.ts` writes its descriptions in the
+ * donor's format (severity prefix with an em dash, trailing `Suggestion:`): one parser
+ * over one convention, rather than a second corpus with its own reader that could
+ * disagree about what a description means.
+ */
+const reachabilityRows = (): readonly CodeEntry[] =>
+  REACHABILITY_FND_CODES.map((code) => {
+    const description = ReachabilityFndCodeMeta[code].description
+    const prefix = FND_SEVERITY_PREFIX.exec(description)
+    const severity = prefix?.[1] ?? null
+    return {
+      code,
+      family: 'FND' as const,
+      severity,
+      tier: REACHABILITY_TIER[code],
+      description,
+      ...projectionsOf(description.replace(FND_SEVERITY_PREFIX, '')),
+    }
+  })
+
+/**
  * Every code, in FAMILY order (`ERR_*`, then `FND_*`, then `GTWR_*`), each family in
  * its own append-only order.
  *
@@ -347,7 +389,15 @@ const gtwrRows = (): readonly CodeEntry[] =>
  * the module boundary — a `ReferenceError` at import that `tsc --noEmit` does not
  * catch (G1 delta #13, which cost a vitest import crash).
  */
-export const allCodes = (): readonly CodeEntry[] => [...errRows(), ...fndRows(), ...gtwrRows()]
+export const allCodes = (): readonly CodeEntry[] => [
+  ...errRows(),
+  // The two FND sources in provenance order: the donor's frozen 30, then v5's own 5.
+  // Both report `family: 'FND'`, so an agent sees ONE finding-code vocabulary and cannot
+  // tell (or need to tell) which file the bytes live in.
+  ...fndRows(),
+  ...reachabilityRows(),
+  ...gtwrRows(),
+]
 
 /** Every code string, in the same order. The did-you-mean corpus. */
 export const allCodeStrings = (): readonly string[] => allCodes().map((row) => row.code)
