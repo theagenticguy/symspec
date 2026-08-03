@@ -44,7 +44,7 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -943,5 +943,170 @@ describe('check — exit codes and envelope integrity from the real process', ()
         expect(command, `placeholder survived into: ${command}`).not.toMatch(/<[a-z-]+>/)
       }
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// `install` through the SHIPPED bundle — the V11 fixes at the process boundary
+// ---------------------------------------------------------------------------
+
+/**
+ * The install surface, driven the way a developer actually drives it.
+ *
+ * `install.test.ts` covers the operation in-process against a temp filesystem, which is
+ * where the host→path matrix and the three V11 fixes are asserted exhaustively. What only a
+ * spawned process can show is that the CLI WIRING reaches all of it: that `--mode` and
+ * `--target` are registered with the spellings the schema names, that the flag layer does
+ * not drop a value on the floor, and that a `print` misuse produces exit 2 rather than a
+ * help dump.
+ *
+ * That distinction is not hypothetical here. Delta #21 records `--fail-on-unmatched -1`
+ * degrading to a help dump at exit 0 — a value that typechecks, decodes, and unit-tests
+ * perfectly and is untypeable at a shell. Every new flag surface earns one of these blocks.
+ */
+describe('install through the real process', () => {
+  const installDirs: string[] = []
+
+  const workspace = (): { cwd: string; home: string; env: NodeJS.ProcessEnv } => {
+    const root = mkdtempSync(join(tmpdir(), 'symspec-cli-install-'))
+    installDirs.push(root)
+    const cwd = join(root, 'proj')
+    const home = join(root, 'home')
+    mkdirSync(cwd, { recursive: true })
+    mkdirSync(home, { recursive: true })
+    // The roots are steered through the same overrides `processRoots` consults, so no test
+    // here can write into the developer's real `~/.claude`.
+    return { cwd, home, env: { ...process.env, SYMSPEC_TEST_CWD: cwd, SYMSPEC_TEST_HOME: home } }
+  }
+
+  afterAll(async () => {
+    const { rm } = await import('node:fs/promises')
+    await Promise.all(installDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
+  })
+
+  /** Run the shipped CLI with install roots pointed at a temp workspace. */
+  const runIn = (
+    env: NodeJS.ProcessEnv,
+    ...args: string[]
+  ): { envelope: Record<string, unknown>; code: number } => {
+    const r = spawnSync(process.execPath, [BUNDLE, ...args], { encoding: 'utf8', env })
+    return { envelope: JSON.parse(r.stdout ?? '') as Record<string, unknown>, code: r.status ?? -1 }
+  }
+
+  it('V11 fix #3: bare `install` in a marker-less repo WRITES a file and says it fell back', () => {
+    // The donor exited 0 here having written nothing. At the process boundary that is
+    // indistinguishable from success, which is why this assertion checks the FILE.
+    const { cwd, env } = workspace()
+    const { envelope, code } = runIn(env, 'install')
+    expect(code).toBe(0)
+    const data = envelope.data as { basis: string; note?: string }
+    expect(data.basis).toBe('fallback')
+    expect(data.note).toContain('No agent-host marker')
+    expect(existsSync(join(cwd, '.agents', 'skills', 'symspec', 'SKILL.md'))).toBe(true)
+  })
+
+  it('writes all five host paths under --target all, and no root instruction file', () => {
+    const { cwd, env } = workspace()
+    expect(runIn(env, 'install', '--target', 'all').code).toBe(0)
+    for (const relative of [
+      '.claude/skills/symspec/SKILL.md',
+      '.agents/skills/symspec/SKILL.md',
+      '.kiro/steering/symspec.md',
+      '.windsurf/rules/symspec.md',
+      '.github/instructions/symspec.instructions.md',
+    ]) {
+      expect(existsSync(join(cwd, relative)), relative).toBe(true)
+    }
+    for (const root of ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']) {
+      expect(existsSync(join(cwd, root)), root).toBe(false)
+    }
+  })
+
+  it('V11 fix #1: the Kiro glob written to disk covers markdown', () => {
+    const { cwd, env } = workspace()
+    runIn(env, 'install', '--target', 'kiro')
+    const written = readFileSync(join(cwd, '.kiro', 'steering', 'symspec.md'), 'utf8')
+    expect(written).toContain('inclusion: fileMatch')
+    expect(written).toContain('.{md,json}')
+    // The donor's JSON-only pattern, gone from the artifact rather than only from a constant.
+    expect(written).not.toContain('.requirements}.json"')
+  })
+
+  it('the installed file teaches CRAFT, not only the command surface', () => {
+    // AC-A-6 at the artifact: the whole point of the wave is that what lands on disk
+    // contains the authoring guidance, since that is the part no manifest can carry.
+    const { cwd, env } = workspace()
+    runIn(env, 'install', '--target', 'claude')
+    const written = readFileSync(join(cwd, '.claude', 'skills', 'symspec', 'SKILL.md'), 'utf8')
+    expect(written).toContain('Choosing an EARS pattern')
+    expect(written).toContain('Align vocabulary BEFORE writing')
+    expect(written).toContain('Anti-patterns')
+    expect(written).toContain('silence is not a consistency certificate')
+    // And it still points at the manifest first — thin pointer for reference material.
+    expect(written).toContain('symspec manifest')
+  })
+
+  it('is idempotent across processes, not merely within one', () => {
+    // `unchanged` has to hold when the SECOND run is a fresh process reading the file the
+    // first one wrote — an in-process test could pass on a cached value.
+    const { env } = workspace()
+    expect(
+      (
+        runIn(env, 'install', '--target', 'claude').envelope.data as {
+          targets: { files: { action: string }[] }[]
+        }
+      ).targets[0]?.files[0]?.action,
+    ).toBe('created')
+    expect(
+      (
+        runIn(env, 'install', '--target', 'claude').envelope.data as {
+          targets: { files: { action: string }[] }[]
+        }
+      ).targets[0]?.files[0]?.action,
+    ).toBe('unchanged')
+  })
+
+  it('--mode print with no --target is ERR_USAGE at exit 2, not a help dump', () => {
+    // Delta #21's shape: a misuse that must be a typed failure rather than the CLI runtime
+    // silently printing help and exiting 0.
+    const { env } = workspace()
+    const { envelope, code } = runIn(env, 'install', '--mode', 'print')
+    expect(code).toBe(2)
+    expect(envelope.code).toBe('ERR_USAGE')
+  })
+
+  it('an unknown --target is ERR_USAGE at exit 2 with the known set named', () => {
+    const { env } = workspace()
+    const { envelope, code } = runIn(env, 'install', '--target', 'not-a-host')
+    expect(code).toBe(2)
+    expect(envelope.code).toBe('ERR_USAGE')
+    expect(String(envelope.error)).toContain('not-a-host')
+    expect(String(JSON.stringify(envelope.suggestions))).toContain('agents-standard')
+  })
+
+  it('--mode check reports state and writes NOTHING', () => {
+    const { cwd, env } = workspace()
+    const { envelope, code } = runIn(env, 'install', '--mode', 'check', '--target', 'claude')
+    expect(code).toBe(0)
+    expect((envelope.data as { targets: { note?: string }[] }).targets[0]?.note).toBe('missing')
+    expect(existsSync(join(cwd, '.claude'))).toBe(false)
+  })
+
+  it('uninstall removes the file and repeats cleanly', () => {
+    const { cwd, env } = workspace()
+    runIn(env, 'install', '--target', 'claude')
+    const path = join(cwd, '.claude', 'skills', 'symspec', 'SKILL.md')
+    expect(existsSync(path)).toBe(true)
+    expect(runIn(env, 'install', '--target', 'claude', '--mode', 'uninstall').code).toBe(0)
+    expect(existsSync(path)).toBe(false)
+    // Repeating is a quiet no-op rather than a failure.
+    expect(runIn(env, 'install', '--target', 'claude', '--mode', 'uninstall').code).toBe(0)
+  })
+
+  it('--global routes to the home root and leaves the project untouched', () => {
+    const { cwd, home, env } = workspace()
+    expect(runIn(env, 'install', '--target', 'claude', '--global').code).toBe(0)
+    expect(existsSync(join(home, '.claude', 'skills', 'symspec', 'SKILL.md'))).toBe(true)
+    expect(existsSync(join(cwd, '.claude'))).toBe(false)
   })
 })

@@ -163,6 +163,29 @@ export const BUDGET_HEADROOM_THRESHOLD = 0.8
  */
 export const MIN_RECOMMENDED_BUDGET_MS = 2_000
 
+/**
+ * The recommendation when the run completed NO unit of work, so it has no evidence at all
+ * about solver cost.
+ *
+ * 30 seconds, and chosen rather than derived — which is why it is a named constant with a
+ * paragraph instead of an inline number. The measurements it is anchored to:
+ * `scripts/budget-curve.ts` puts an unbounded 10-requirement / 45-pair run at ~900 ms on a
+ * loaded machine and a 40-requirement / 780-pair run at ~30 s quiet, so 30 s covers a
+ * mid-size document under contention and is generous for a small one.
+ *
+ * Generous ON PURPOSE. A budget hint that under-recommends truncates again and costs the
+ * agent another full run plus the credibility of the field; one that over-recommends costs
+ * only a longer ceiling on a run that will finish sooner anyway, because the budget is a
+ * DEADLINE and not a reservation. The asymmetry is the whole argument, and it is why the
+ * first version's "scale the parse-and-lint time" approach was wrong in the dangerous
+ * direction.
+ *
+ * An agent that finds 30 s too coarse has the basis to compute its own: `basis.pairs` and
+ * `basis.unrunUnits` are published precisely so the recommendation is auditable rather than
+ * authoritative.
+ */
+export const NO_EVIDENCE_BUDGET_MS = 30_000
+
 // ---------------------------------------------------------------------------
 // Reading the run's own tallies
 // ---------------------------------------------------------------------------
@@ -228,10 +251,39 @@ export const wasTruncated = (report: CheckReport): boolean =>
  * costs about `measuredMs * totalUnits / completedUnits`. Times the headroom
  * multiplier, floored, rounded to a round number an agent can read.
  *
- * The degenerate case is handled rather than divided by: when a run truncated before
- * completing ANY unit (`completedUnits <= 0`), no per-unit rate is observable, so the
- * fallback is to scale the measured time by the headroom against the whole work set —
- * an under-estimate, and knowingly so. The alternative would be to invent a rate.
+ * ## Why `completedUnits` is NOT `pairsChecked`, and how that was found
+ *
+ * The first version divided by `report.pairsChecked`, which reads like "pairs the solver
+ * compared" and is not. `pairsChecked` counts candidate pairs the free-tier filter
+ * IDENTIFIED — measured on a 10-requirement document at a 1ms budget, it is 45 while five
+ * tiers truncated and no pair was solved at all. Dividing by 45 there produced a ratio of
+ * 45/(45+76) ≈ 0.37, i.e. it concluded the run had done a THIRD of the work when it had
+ * done none, and recommended roughly a third of what was needed.
+ *
+ * That defect was invisible in isolation and surfaced only in the full parallel suite,
+ * because in isolation the machine was quiet enough that even the under-estimate
+ * (2000 ms, the floor) exceeded the real cost (~650 ms). Under load the same document cost
+ * ~880 ms unbounded and the floor stopped covering it. A test that passes because the
+ * machine is fast is not a passing test, and the fix has to be an accounting change rather
+ * than a bigger floor.
+ *
+ * So the completed-work figure is `totalUnits - unrunUnits`: the truncation ledger's own
+ * count of what did NOT run, subtracted from the whole work set. That number comes from the
+ * tiers' own reports of stopping early, so it cannot claim work the solver never did.
+ *
+ * ## The degenerate case, and why it now dominates rather than being an edge
+ *
+ * When a run truncates before completing ANY unit — which is exactly what a very small
+ * budget does, and therefore the COMMON case rather than a corner — no per-unit rate is
+ * observable at all. `measuredMs` then reflects parse and lint, not solving, so scaling it
+ * by anything is meaningless.
+ *
+ * The honest answer there is not a cleverer extrapolation but an admission: the run has no
+ * evidence about solver cost, so the recommendation falls back to
+ * {@link NO_EVIDENCE_BUDGET_MS} — a figure chosen to be generous rather than derived, and
+ * documented as such. The alternative (scaling the parse-and-lint time by a headroom
+ * factor) is what shipped first, and it recommended 2000 ms for a run that needed more,
+ * which is the failure mode a hint exists to prevent.
  */
 const extrapolate = (args: {
   readonly measuredMs: number
@@ -239,10 +291,12 @@ const extrapolate = (args: {
   readonly completedUnits: number
 }): number => {
   const { measuredMs, totalUnits, completedUnits } = args
+  // NO EVIDENCE: nothing completed, so `measuredMs` says nothing about solver cost.
+  if (completedUnits <= 0) {
+    return roundToReadable(Math.max(MIN_RECOMMENDED_BUDGET_MS, NO_EVIDENCE_BUDGET_MS))
+  }
   const scaled =
-    completedUnits > 0 && totalUnits > completedUnits
-      ? (measuredMs * totalUnits) / completedUnits
-      : measuredMs
+    totalUnits > completedUnits ? (measuredMs * totalUnits) / completedUnits : measuredMs
   return roundToReadable(Math.max(MIN_RECOMMENDED_BUDGET_MS, Math.ceil(scaled * BUDGET_HEADROOM)))
 }
 
@@ -302,13 +356,30 @@ export const budgetHintFor = (
     unrunUnits,
   }
 
-  // A truncated run completed `pairs` of `pairs + unrunUnits` work; a
-  // low-headroom run completed everything, so the extrapolation is the identity and
-  // only the headroom multiplier applies.
+  // THE WORK ACCOUNTING — and the line the first version got wrong.
+  //
+  // A TRUNCATED run has NO observable solver rate, and that is the fact the arithmetic has
+  // to respect rather than route around.
+  //
+  // The first version divided by `report.pairsChecked`, which reads like "pairs the solver
+  // compared" and is not: it counts the candidate pairs the free-tier filter IDENTIFIED, and
+  // it reads 45 on a 10-requirement document even at a 1ms budget where all five tiers
+  // truncated and nothing was solved. So it computed 45/(45+76) ≈ 0.37 and concluded the run
+  // had done a third of the work when it had done none.
+  //
+  // The obvious repair — `completedUnits = totalUnits - unrunUnits` — is circular: with
+  // `totalUnits = pairs + unrunUnits` it reduces to `pairs` exactly, i.e. back to the bug.
+  // There is no arithmetic that recovers a rate here, because the run's `measuredMs` is
+  // parse-and-lint time, not solve time, and nothing in the report separates them.
+  //
+  // So a truncated run reports NO evidence (`completedUnits: 0`), which routes to
+  // `NO_EVIDENCE_BUDGET_MS`. A LOW-HEADROOM run is the opposite case and the only one with a
+  // real rate: it truncated nothing, so `measuredMs` genuinely bought `pairs` units and
+  // scaling by the headroom multiplier is sound.
   const recommendedBudgetMs = extrapolate({
     measuredMs,
     totalUnits: truncated ? pairs + unrunUnits : pairs,
-    completedUnits: pairs,
+    completedUnits: truncated ? 0 : pairs,
   })
 
   return {

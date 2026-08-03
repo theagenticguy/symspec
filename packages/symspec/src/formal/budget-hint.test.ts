@@ -11,10 +11,25 @@
  * and 8161ms at loadavg 21.7, a 4.5x spread on identical work).
  *
  * So the assertions are relational and total: the recommendation always EXCEEDS the
- * budget it replaces, always exceeds the time the run measured, is MONOTONE in the
- * work left unrun, and the absences are asserted as absences. The end-to-end
- * "applying the hint un-demotes the run" claim lives in `../operations/check.test.ts`,
- * where a real pipeline can produce a real truncation.
+ * budget it replaces, always exceeds the time the run measured, never DECREASES as the
+ * shortfall grows, and the absences are asserted as absences. The end-to-end "applying the
+ * hint un-demotes the run" claim lives in `../operations/check.test.ts`, where a real
+ * pipeline can produce a real truncation.
+ *
+ * ## Two of these tests were WRONG, and the record of that is deliberate
+ *
+ * The first version asserted the recommendation grows with unrun work and extrapolates
+ * "~linearly in pairs" on a truncated run. Both presumed an observable solver rate that a
+ * truncated run does not have: the arithmetic divided by `report.pairsChecked`, which counts
+ * candidate pairs IDENTIFIED rather than solved, and therefore concluded a run that had
+ * solved nothing had done a third of its work. The tests passed because they were checking a
+ * ratio built on the same misreading as the code.
+ *
+ * What exposed it was the FULL PARALLEL SUITE, not these unit tests: in isolation the
+ * machine was quiet enough that even the under-estimate exceeded the real cost, and only
+ * under contention did the recommendation stop covering the run. The replacements pin the
+ * arithmetic (`does NOT treat pairsChecked as completed work`) rather than the outcome, so
+ * they cannot pass again for the same reason.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -24,6 +39,7 @@ import {
   BUDGET_HEADROOM_THRESHOLD,
   budgetHintFor,
   MIN_RECOMMENDED_BUDGET_MS,
+  NO_EVIDENCE_BUDGET_MS,
   wasTruncated,
 } from './budget-hint.ts'
 import { repairForDemotion } from './repair.ts'
@@ -148,38 +164,62 @@ describe('a truncated run recommends a budget derived from the work it DID do', 
   })
 
   /**
-   * MONOTONICITY is the property that makes the recommendation trustworthy: more work
-   * left unrun must never recommend a smaller budget. This is the same discipline the
-   * `degradation-must-be-monotone-in-its-budget` lesson enforces on the other side of
-   * the knob, applied to the advice about it.
+   * MONOTONICITY, restated for the model that is actually sound.
+   *
+   * The first version of this test asserted the recommendation GROWS with unrun work, which
+   * presumed an observable solver rate that a truncated run does not have (see
+   * `extrapolate`'s header for how that presumption produced a real under-estimate). What
+   * holds instead is the weaker and true claim: more unrun work never recommends LESS. A
+   * truncated run reports no evidence and lands on the no-evidence figure regardless of how
+   * much was left unrun, which is flat — and flat satisfies monotone.
+   *
+   * Keeping the assertion rather than deleting it matters: it is what would catch a future
+   * change that made the recommendation SHRINK as the shortfall grew, which is the direction
+   * that would actually hurt.
    */
-  it('is MONOTONE in the work left unrun', () => {
+  it('is MONOTONE (never decreasing) in the work left unrun', () => {
     const at = (unrun: number) =>
       budgetHintFor(truncated(100, unrun, 5_000), 5_000, 4_800)?.recommendedBudgetMs ?? 0
     const values = [0, 50, 200, 800, 3_200].map(at)
     for (let i = 1; i < values.length; i++) {
-      expect(values[i], `unrun grew but the recommendation did not`).toBeGreaterThanOrEqual(
+      expect(values[i], 'the recommendation DECREASED as unrun work grew').toBeGreaterThanOrEqual(
         values[i - 1] as number,
       )
     }
-    // And strictly grows over a wide enough span, so it is not merely flat.
-    expect(at(3_200)).toBeGreaterThan(at(0))
   })
 
-  it('extrapolates ~linearly in pairs — the shape both sweeps agree on', () => {
-    // Half the work completed ⇒ roughly double the time, times the headroom margin.
-    // Asserted as a BAND, because the readable-rounding step legitimately perturbs it.
+  /**
+   * A truncated run has NO observable rate, so it does not extrapolate — it admits it.
+   *
+   * This replaces an assertion that the extrapolation was "~linear in pairs" on a truncated
+   * run. That assertion passed against arithmetic that divided by `pairsChecked` (candidate
+   * pairs IDENTIFIED, not solved) and was therefore measuring a ratio built on a
+   * misreading — which is exactly how the under-estimate shipped.
+   */
+  it('reports NO EVIDENCE on a truncated run rather than inventing a rate', () => {
     const hint = budgetHintFor(truncated(100, 100, 5_000), 5_000, 4_000)
-    const recommended = hint?.recommendedBudgetMs ?? 0
-    const naive = 4_000 * 2 * BUDGET_HEADROOM
-    expect(recommended).toBeGreaterThanOrEqual(naive)
-    expect(recommended).toBeLessThan(naive * 1.3)
+    expect(hint?.reason).toBe('truncated')
+    expect(hint?.recommendedBudgetMs).toBe(NO_EVIDENCE_BUDGET_MS)
   })
 
-  it('degrades honestly when NO unit completed — no rate is observable', () => {
-    // A run truncated before its first pair has no per-unit cost to extrapolate from.
-    // The fallback scales the measured time by the headroom, which is knowingly an
-    // UNDER-estimate — better than inventing a rate.
+  /**
+   * The LOW-HEADROOM case is the only one with a real rate, and it is where the
+   * linear-in-pairs shape both sweeps agree on actually applies: the run truncated nothing,
+   * so its measured time genuinely bought its pair count.
+   */
+  it('extrapolates from the measured time when the run COMPLETED its work', () => {
+    const hint = budgetHintFor(reportOf({ pairs: 100 }), 5_000, 4_500)
+    expect(hint?.reason).toBe('low-headroom')
+    // measured * headroom, rounded up to a readable step — no unit scaling, because
+    // nothing was left unrun.
+    expect(hint?.recommendedBudgetMs).toBe(9_000)
+    expect(hint?.recommendedBudgetMs).toBeGreaterThanOrEqual(4_500 * BUDGET_HEADROOM)
+  })
+
+  it('degrades honestly when NO unit completed at all', () => {
+    // A run truncated before its first pair. Same no-evidence answer as any other truncated
+    // run, which is the point: the model does not pretend the zero-pair case is special when
+    // every truncated case is equally rate-less.
     const hint = budgetHintFor(
       reportOf({ pairs: 0, demotions: [truncationDemotion('contradiction', 40, 100)] }),
       100,
@@ -187,9 +227,31 @@ describe('a truncated run recommends a budget derived from the work it DID do', 
     )
     expect(hint?.reason).toBe('truncated')
     expect(hint?.basis.pairs).toBe(0)
-    // Still a usable number: floored at the minimum, never zero or NaN.
+    expect(hint?.recommendedBudgetMs).toBe(NO_EVIDENCE_BUDGET_MS)
     expect(hint?.recommendedBudgetMs).toBeGreaterThanOrEqual(MIN_RECOMMENDED_BUDGET_MS)
     expect(Number.isFinite(hint?.recommendedBudgetMs)).toBe(true)
+  })
+
+  /**
+   * The regression guard for the actual bug, pinned by ARITHMETIC rather than by outcome.
+   *
+   * The defect was invisible in isolation and only surfaced in the full parallel suite,
+   * because on a quiet machine the under-estimate (2000 ms) still exceeded the real cost
+   * (~650 ms). Under load the same document cost ~880 ms and the floor stopped covering it.
+   * A test that passes because the machine is fast is not a passing test, so this pins the
+   * one thing that is machine-independent: the recommendation must NOT be derived from
+   * `pairsChecked` as if it measured completed work.
+   */
+  it('does NOT treat `pairsChecked` as completed work on a truncated run', () => {
+    // The exact numbers from the 10-requirement document that exposed it: 45 candidate
+    // pairs identified, 76 units reported unrun, ~120ms of parse-and-lint measured.
+    const hint = budgetHintFor(truncated(45, 76, 1), 1, 120)
+    expect(hint?.basis.pairs).toBe(45)
+    expect(hint?.basis.unrunUnits).toBe(76)
+    // The buggy arithmetic was 120 * (121/45) * 2 ≈ 646 → floored to 2000. Anything at or
+    // below that floor means the ratio is back.
+    expect(hint?.recommendedBudgetMs).toBeGreaterThan(MIN_RECOMMENDED_BUDGET_MS)
+    expect(hint?.recommendedBudgetMs).toBe(NO_EVIDENCE_BUDGET_MS)
   })
 
   it('yields `0` unrun units — not a crash — when the action prose does not parse', () => {
