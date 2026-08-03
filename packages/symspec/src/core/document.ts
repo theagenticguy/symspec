@@ -136,6 +136,63 @@ export const RELATIONS = ['derives', 'satisfies', 'verifies', 'refines'] as cons
 export type Relation = (typeof RELATIONS)[number]
 
 /**
+ * The attributes `update` may change. Verbatim from the donor's
+ * `UPDATABLE_ATTRS`, plus v3's `responseKind`.
+ *
+ * ## What is deliberately NOT here, and why each absence is a rule
+ *
+ * - `id` — the stable UUID. Every edge references it, so a mutable id would break
+ *   references silently.
+ * - `key` — the stable human key. Immutable for the SAME reason, which is what
+ *   makes "a key is as safe to reference as a UUID" true rather than hopeful. This
+ *   is the donor's rule and it is load-bearing for the whole key-addressing story.
+ * - `sentence` — a denormalized rendering of the slots. Writing it directly would
+ *   let a document assert a sentence its own slots do not produce, and the next
+ *   slot edit would silently overwrite the hand-written text. The load path
+ *   DISCLOSES that drift when it finds it (`sentence-drift`), which is only a
+ *   coherent thing to disclose if no write path can create it.
+ * - `negated` — response polarity. Absent for a narrower reason than the others:
+ *   it is a BOOLEAN, and `update`'s value is a string, so admitting it here would
+ *   mean parsing `"true"`/`"false"` out of a string field. Polarity changes go
+ *   through a delete-and-re-add, or through editing the document.
+ * - `createdAt` / `updatedAt` — runtime-owned timestamps.
+ */
+export const UPDATABLE_ATTRS = [
+  'patternType',
+  'preCondition',
+  'trigger',
+  'systemName',
+  'systemResponse',
+  'priority',
+  'status',
+  'verificationMethod',
+  'verificationNote',
+  // NEW in v3: the effect-or-constraint classification the reachability encoder
+  // needs. Updatable because it is a JUDGMENT an author refines as the state model
+  // takes shape, not a fact fixed at creation.
+  'responseKind',
+] as const
+export type UpdatableAttr = (typeof UPDATABLE_ATTRS)[number]
+
+/**
+ * Attributes that may be CLEARED (set to `null`), meaning "delete this optional
+ * field".
+ *
+ * Structural nullability only — it says the SCHEMA permits absence. It does NOT say
+ * the clear is always legal: `trigger` is structurally clearable but clearing it on
+ * an `event-driven` requirement would re-render `"When , the …"`, so the mutation
+ * path carries a second, pattern-aware guard on top of this set. Both checks are
+ * needed and they answer different questions.
+ */
+export const NULLABLE_ATTRS: ReadonlySet<UpdatableAttr> = new Set([
+  'preCondition',
+  'trigger',
+  'verificationMethod',
+  'verificationNote',
+  'responseKind',
+])
+
+/**
  * How a requirement's response relates to the state model — NEW in v3.
  *
  * - `'effect'` — the response CHANGES state. Encodes as a transition: a
