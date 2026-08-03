@@ -211,6 +211,56 @@ describe('the scope and craft corpora are projected whole', () => {
     expect(rendered).toContain('## Anti-patterns, and the code each one actually fires')
     expect(rendered).toContain('### Compound requirement')
   })
+
+  /**
+   * THE STATE-MODEL SECTION, covered explicitly (G5).
+   *
+   * The loop over `CRAFT_SECTIONS` above already asserts the TITLE appears, which is what
+   * makes adding a section automatic. That is not sufficient for the longest section in the
+   * corpus: a renderer regression that emitted the heading and dropped the body would pass
+   * the loop, and the byte-diff gate would happily regenerate the committed file to match.
+   * Same hole the donor's single-gate arrangement had, one level down.
+   *
+   * So the sub-headings AND the transcript's measured verdicts are pinned here, because
+   * those are the parts an author acts on.
+   */
+  it('projects the state-model section WHOLE — every sub-heading and the transcript', () => {
+    const rendered = doc()
+    for (const heading of [
+      '### When to declare a state variable',
+      '### Effect or constraint: the classification procedure',
+      '### The declared-vars-only rule',
+      '### Choosing a frame, per variable',
+      '### The worked example: the real TX-C1, proved and then broken',
+      '### Reading the other two verdicts',
+    ]) {
+      expect(rendered, `the state-model section is missing "${heading}"`).toContain(heading)
+    }
+    // The transcript's measured trace and the honest verdict, which are the two facts the
+    // section rests on. Both come from a real run; a projection that dropped them would
+    // leave the section advisory rather than worked.
+    expect(rendered).toContain('init -> TX-A1 -> TX-A3 -> TX-A2 -> TX-C2')
+    expect(rendered).toContain('"provedUnderHypotheses":1')
+    // And the state-authoring commands the section routes an author to.
+    expect(rendered).toContain('symspec classify')
+    expect(rendered).toContain('"op":"state"')
+  })
+
+  it('projects all five reachability codes into the FND table with their severities', () => {
+    // The tier's vocabulary reaching the reference table, not merely the craft prose: an
+    // agent branching on `FND_REACHABILITY_VIOLATED` needs the severity row to know it
+    // gates a build.
+    const rendered = doc()
+    expect(rendered).toContain('| `FND_REACHABILITY_VIOLATED` | error | formal |')
+    for (const code of [
+      'FND_REACHABILITY_PROVED',
+      'FND_REACHABILITY_UNDER_HYPOTHESES',
+      'FND_REACHABILITY_UNKNOWN',
+      'FND_REACHABILITY_NOT_CHECKED',
+    ]) {
+      expect(rendered, code).toContain(`| \`${code}\` | info | formal |`)
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------

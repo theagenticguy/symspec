@@ -49,6 +49,23 @@
  * `craft.test.ts` re-runs every one of these against the live detectors, so a claim
  * that stops being true is a test failure rather than stale documentation — which is
  * the only way prose about a detector stays honest.
+ *
+ * ## The state-model section holds itself to the same standard (G5)
+ *
+ * {@link STATE_MODEL} teaches the reachability tier, and its four-step transcript
+ * (prove → violate → fix → re-prove) was produced by running the built CLI on the real
+ * hex-bonk `TX-C1` rather than composed. `craft.test.ts` re-runs the same document through
+ * the real `check` operation and asserts the same four verdicts, including the two that are
+ * inconvenient to teach:
+ *
+ * - TX-C1 proves `PROVED_UNDER_HYPOTHESES`, not `PROVED`. With more than one state variable
+ *   the nothing-assumed run is essentially always reachable, so frame-closed proof is a
+ *   property of single-variable models. Writing `PROVED` there would have read better and
+ *   been false.
+ * - An effect-free model reports `PROVED` **and** `FND_REACHABILITY_NOT_CHECKED` at once,
+ *   because with no transitions the only reachable state is the initial one. Both are
+ *   asserted, because the pair is the lesson — a proof over one state is not evidence about
+ *   a running system.
  */
 
 // ---------------------------------------------------------------------------
@@ -542,6 +559,292 @@ document is bad is \`counts.error\` and the exit code, which went 0 → 1.
 }
 
 // ---------------------------------------------------------------------------
+// 6. The state model — the authoring craft for the unbounded reachability tier
+// ---------------------------------------------------------------------------
+
+/**
+ * How to AUTHOR a state model, measured on this build (G5, the G4 tier's craft half).
+ *
+ * ## Why this section is not "here are three commands"
+ *
+ * `state`, `state-initial`, and `classify` are in the manifest with their full flag
+ * documentation, so a reference table here would be the duplication the thin-pointer rule
+ * forbids. What the manifest cannot say is the DECISION PROCEDURE: which requirements
+ * deserve a state variable at all, how to tell an effect from a constraint when the prose
+ * reads like both, and what `frame` actually costs you.
+ *
+ * ## The V16 rationale, in plain language
+ *
+ * The one genuinely subtle thing in the whole tier is `frame`, and the reason it is subtle
+ * is a MEASUREMENT rather than a design taste. On a 3-variable model whose `alarm` is
+ * written by NO requirement, `frame: stable` returns UNREACHABLE *with an inductive
+ * invariant* while nothing-assumed returns REACHABLE — and `alarm` is genuinely reachable.
+ * So under a frame the solver proves a FALSE answer and hands back a certificate for it.
+ * That is why `volatile` is the default and why declaring `stable` shows up in the output
+ * as a named hypothesis rather than as a stronger proof.
+ *
+ * The section says that without the hazard numbering, because an author does not need to
+ * know it is called V16 — they need to know that a frame declaration is a claim about
+ * their system that the tool will hold them to.
+ *
+ * ## Every transcript below is REAL
+ *
+ * The four steps (prove → violate → fix → re-prove) were run against the built CLI on the
+ * real hex-bonk `TX-C1`, and `craft.test.ts` re-runs the same document through the real
+ * `check` operation and asserts the same four verdicts. The numbers in the section are the
+ * numbers that came back, including the ones that are inconvenient — TX-C1 proves
+ * PROVED_UNDER_HYPOTHESES rather than frame-closed, because with two state variables the
+ * nothing-assumed run is essentially always reachable. Writing `PROVED` there would have
+ * been a nicer story and a fiction.
+ */
+const STATE_MODEL: CraftSection = {
+  id: 'state-model',
+  title: 'Authoring a state model, so `check` can prove your invariants',
+  summary:
+    'Declare variables, classify responses as effect-or-constraint, choose a frame — and read PROVED_UNDER_HYPOTHESES correctly.',
+  codes: [
+    'FND_REACHABILITY_PROVED',
+    'FND_REACHABILITY_UNDER_HYPOTHESES',
+    'FND_REACHABILITY_VIOLATED',
+    'FND_REACHABILITY_UNKNOWN',
+    'FND_REACHABILITY_NOT_CHECKED',
+  ],
+  body: `The tiers in the sections above compare requirements against EACH OTHER. A state
+model buys something different: \`check\` proves your invariants over **every reachable
+state of the system your requirements describe**, with no bound on how many steps it takes
+to get there — and when an invariant is violable, it hands back the exact sequence of your
+own requirements that violates it.
+
+That is the capability. It is off until you author it, and it discloses its own absence:
+a document with no state model gets \`FND_REACHABILITY_NOT_CHECKED\` rather than silence,
+because a question never asked reads exactly like a question answered cleanly.
+
+### When to declare a state variable
+
+Not for every noun. Declare a variable when **two or more requirements disagree about the
+same piece of mutable system state, and no single requirement contains the disagreement.**
+That is the defect class this tier finds and the other tiers structurally cannot: the
+contradiction is not between two sentences, it is in the ORDER the sentences allow.
+
+The mechanical test, in order:
+
+1. **Is there something the system REMEMBERS between events?** A lock that is held or free,
+   a run that is pending or running, a retry counter. If every requirement is a pure
+   input→output rule with no memory, there is no state model to write and the propositional
+   tiers already cover you.
+2. **Do at least two requirements CHANGE it?** One writer is not an ordering problem. The
+   interesting models have an acquire and a release, an enqueue and a dequeue, a start and a
+   timeout.
+3. **Is there something you believe is always true of it?** "At most one holder." "The
+   counter never exceeds the limit." "Nothing waits on a free lock." If you cannot state
+   such a sentence, you have a state model with nothing to prove.
+
+If all three hold, declare it. If only 1 and 2 hold, the model will run and prove nothing —
+you will get \`FND_REACHABILITY_NOT_CHECKED\` telling you no requirement carries a
+constraint, which is the honest report.
+
+**Keep it small, and keep the integers bounded.** \`--type int --min 0 --max 3\` is a
+finite-domain variable, which is what lets a query be DECIDED rather than merely attempted.
+An unbounded integer is where \`FND_REACHABILITY_UNKNOWN\` with reason \`undecidable\`
+comes from, and its remedy is to bound the domain — more time will not help.
+
+### Effect or constraint: the classification procedure
+
+Every classified response is exactly one of two things, and the prose will not tell you
+which — the same sentence can read as either. Ask **does this response CHANGE the state, or
+RESTRICT it?**
+
+| | \`effect\` | \`constraint\` |
+|---|---|---|
+| What it is | a TRANSITION the system may take | a PREDICATE that must hold in every reachable state |
+| Expression | \`when <guard>: <var> := <value>\` | a boolean predicate over the variables |
+| What the tier does with it | builds the transition relation | tries to VIOLATE it |
+| Assignment vs comparison | \`:=\` assigns | \`=\` compares |
+
+The reliable discriminator: **an effect names a moment, a constraint names a forever.** If
+you can point at the event during which the response happens, it is an effect. If the
+response is a property you would check at any instant, it is a constraint.
+
+Two consequences worth knowing before you classify:
+
+- **A requirement classified \`effect\` with no guard fires from EVERY state.** That is the
+  sound default — it admits more transitions, so it proves strictly less — but it is almost
+  never what a triggered requirement means. **The guard is what an EARS trigger means
+  formally**, and you write it explicitly because the tool will not guess it from your
+  prose \`trigger\` slot: guessing would make the solver prove the wrong thing confidently.
+  So an \`event-driven\` requirement whose trigger is "an agent worker claims a run" gets a
+  guard like \`when held = 0\`, expressing the same condition over declared variables.
+- **Every name in every expression must already be declared.** \`classify\` refuses an
+  undeclared reference at authoring time — measured: \`"held" is not a declared state
+  variable\` at \`ERR_USAGE\` — rather than accepting it. That refusal is load-bearing:
+  reaching the Horn encoder, an undeclared name produces an UNKILLABLE solver hang, not an
+  error message. The same rule blocks \`state --remove\` on a variable expressions still
+  reference, and names the requirements that reference it.
+
+### The declared-vars-only rule
+
+**The state model is a CLOSED vocabulary.** The only names an expression may use are the
+ones \`symspec state\` declared, plus integer literals, \`true\`/\`false\`, and the enum
+members you listed in \`--domain\`. There is no implicit variable, no inferred type, and no
+name that springs into existence by being written.
+
+That is stricter than it needs to be for the encoder and exactly as strict as it needs to be
+for you: a typo'd variable in a constraint would otherwise become a fresh unconstrained
+variable, the predicate would be trivially satisfiable, and the tool would report a proof of
+something you did not write. Declared-vars-only converts that into a usage error you fix in
+one command.
+
+The grammar the expressions live in is small on purpose: comparisons
+(\`= != < <= > >=\`), \`+\` and \`-\` on ints, \`and\`/\`or\`/\`not\`, parentheses. **No
+multiplication** (it makes the transition relation nonlinear, where an unbounded solver hang
+was measured), no quantifiers, no chained comparisons — write \`a < b and b < c\`. And
+\`< <= > >=\` are INTEGER-ONLY, because an enum has a declared domain, not an order.
+
+### Choosing a frame, per variable
+
+\`--frame\` answers one question about ONE variable: **does it persist across a step that
+does not write it?**
+
+- **\`volatile\` (the default)** — it may change freely in any step. Nothing is assumed.
+- **\`stable\`** — it changes ONLY when some requirement's effect changes it.
+
+\`stable\` is the stronger assumption and it is a claim about your system that the document
+does not otherwise make. Here is why the default runs the other way, measured: on a model
+whose \`alarm\` variable is written by NO requirement, the framed run returns UNREACHABLE
+**with an inductive invariant** while the nothing-assumed run returns REACHABLE — and
+\`alarm\` is genuinely reachable. Under the frame the solver proves a false answer and hands
+back a certificate for it. A frame-by-default tool would therefore certify fictions, so
+\`volatile\` is the default and the safe direction is the one that proves less.
+
+What that means in practice is the verdict you will actually see most often:
+
+- **\`FND_REACHABILITY_PROVED\`** — proved with nothing assumed. Frame-closed, and the
+  strongest thing the tier says. Realistically a property of single-variable models.
+- **\`FND_REACHABILITY_UNDER_HYPOTHESES\`** — proved only once the unwritten variables are
+  held fixed. The message NAMES the variables relied upon together with the requirements
+  that write them, says **THE DOCUMENT DOES NOT STATE THAT**, and DEMOTES \`verified\`. With
+  more than one state variable this is the honest common outcome, not a failure.
+
+So do not chase \`PROVED\`. Declaring everything \`stable\` does not upgrade the verdict —
+it TIGHTENS the disclosed hypothesis, because the tier re-runs with your declared set and
+names exactly what you wrote down instead of all N variables. The discharge is to author the
+requirements that justify the assumption, which is spec work rather than a flag.
+
+### The worked example: the real TX-C1, proved and then broken
+
+Measured on the built CLI, on the hex-bonk \`agent-run-triggers\` production requirement:
+
+> **TX-C1** — The run service shall assign runs that share a conversation the Procrastinate
+> lock keyed on the conversation id so they execute sequentially.
+
+That is a mutual-exclusion invariant. Two variables and three effects express the lock's
+lifecycle.
+
+**Step 1 — declare, classify, and PROVE.**
+
+\`\`\`bash
+symspec init ./requirements.json
+cat > plan.jsonl <<'OPS'
+{"op":"state","name":"held","type":"int","min":0,"max":3,"initial":"held = 0"}
+{"op":"state","name":"queued","type":"bool","initial":"queued = false"}
+{"op":"add","key":"TX-A1","patternType":"event-driven","trigger":"an agent worker claims a run","systemName":"run service","systemResponse":"acquire the conversation lock"}
+{"op":"add","key":"TX-A2","patternType":"event-driven","trigger":"a run reaches a terminal state","systemName":"run service","systemResponse":"release the conversation lock"}
+{"op":"add","key":"TX-A3","patternType":"event-driven","trigger":"a run for a locked conversation is queued","systemName":"run service","systemResponse":"mark the run waiting"}
+{"op":"add","key":"TX-C1","patternType":"ubiquitous","systemName":"run service","systemResponse":"hold at most one conversation lock at a time"}
+{"op":"classify","ref":"TX-A1","kind":"effect","expression":"when held = 0: held := held + 1, queued := false"}
+{"op":"classify","ref":"TX-A2","kind":"effect","expression":"when held = 1: held := held - 1"}
+{"op":"classify","ref":"TX-A3","kind":"effect","expression":"when held = 1: queued := true"}
+{"op":"classify","ref":"TX-C1","kind":"constraint","expression":"held <= 1"}
+OPS
+symspec apply --ops plan.jsonl
+symspec check --field data.reachability
+\`\`\`
+
+\`\`\`json
+{"variables":2,"effects":3,"constraints":1,"proved":0,
+ "provedUnderHypotheses":1,"violated":0,"unknown":0,"elapsedMs":337,"timeoutMs":2000}
+\`\`\`
+
+TX-C1 holds — and the verdict is \`PROVED_UNDER_HYPOTHESES\`, not \`PROVED\`, exactly as
+the frame section predicts. The finding says so and names the hypothesis:
+
+\`\`\`
+TX-C1: PROVED_UNDER_HYPOTHESES — no reachable state violates this constraint, ASSUMING
+these variables change only when a requirement changes them: held (written by TX-A1,
+TX-A2); queued (written by TX-A1, TX-A3). THE DOCUMENT DOES NOT STATE THAT.
+\`\`\`
+
+**Step 2 — add a second invariant that sounds obviously true, and watch it FAIL.**
+
+\`\`\`bash
+symspec add --key TX-C2 --pattern-type ubiquitous --system-name "run service" \\
+  --system-response "hold the waiting flag only while the conversation lock is held"
+symspec classify TX-C2 --kind constraint --expression "not (queued and held = 0)"
+symspec check --field data.reachability
+\`\`\`
+
+\`\`\`json
+{"variables":2,"effects":3,"constraints":2,"proved":0,
+ "provedUnderHypotheses":1,"violated":1,"unknown":0,"elapsedMs":537,"timeoutMs":2000}
+\`\`\`
+
+Exit **1**, through the existing contract — the error-severity finding lands in
+\`counts.error\`, so nothing about the exit mapping had to learn about reachability. And the
+finding hands back the path:
+
+\`\`\`
+TX-C2: a reachable state VIOLATES this constraint. The solver reached it by firing:
+init -> TX-A1 -> TX-A3 -> TX-A2 -> TX-C2. Proven over all reachable states with no bound.
+\`\`\`
+
+Read that trace as a sentence about your own document: acquire the lock (TX-A1), a second
+run queues behind it (TX-A3), the first run finishes and releases (TX-A2) — and now a run is
+waiting on a free lock. **"Nothing waits for a free lock" is FALSE of the system as
+specified**, and it is false for an ordering reason no single requirement contains. This is
+the defect class a spec review misses.
+
+**Step 3 — fix the REQUIREMENT, not the constraint.**
+
+The temptation is to weaken TX-C2 until it passes. The trace says otherwise: the fault is
+that TX-A2 releases the lock without clearing the waiting flag.
+
+\`\`\`bash
+symspec classify TX-A2 --kind effect \\
+  --expression "when held = 1: held := held - 1, queued := false"
+symspec check --field data.reachability
+\`\`\`
+
+\`\`\`json
+{"variables":2,"effects":3,"constraints":2,"proved":0,
+ "provedUnderHypotheses":2,"violated":0,"unknown":0,"elapsedMs":350,"timeoutMs":2000}
+\`\`\`
+
+Exit **0**. Both invariants now hold, and the change was to the requirement the trace
+blamed. That is what makes the report a work list rather than a verdict: \`violated\` fell
+1 → 0 and \`provedUnderHypotheses\` rose 1 → 2, so the gradient moved in the direction the
+repair intended.
+
+### Reading the other two verdicts
+
+- **\`FND_REACHABILITY_UNKNOWN\`** — the solver did not decide, so NOTHING is claimed and
+  \`verified\` demotes. The message states which of two causes applies, because they need
+  opposite remedies and the solver cannot be asked: a timed-out Spacer query reports its
+  reason as the literal string \`"ok"\`, so the distinction is derived from measured elapsed
+  time against the budget. Budget exhaustion → raise \`--reachability-timeout-ms\` (this
+  tier's own per-query bound, which inherits \`--timeout-ms\` when absent). Genuine
+  undecidability → bound the integer domains; more time will not help.
+- **\`FND_REACHABILITY_NOT_CHECKED\`** — a coverage DISCLOSURE, not a defect. It fires when
+  no state model is committed, when variables are declared but nothing is classified, and —
+  the one worth watching for — when **the model admits no transitions at all**, i.e. no
+  requirement is classified \`effect\`. Measured on a document with one variable and one
+  constraint and zero effects: the constraint reports \`PROVED\` **and** the disclosure
+  fires, because with no transitions the only reachable state is the initial one and an
+  invariant that holds there holds almost vacuously. A \`PROVED\` on an effect-free model is
+  not evidence about a running system, and the disclosure is what stops you reading it as
+  one.`,
+}
+
+// ---------------------------------------------------------------------------
 // The corpus
 // ---------------------------------------------------------------------------
 
@@ -559,6 +862,12 @@ export const CRAFT_SECTIONS: readonly CraftSection[] = [
   DECOMPOSITION,
   ANTI_PATTERN_SECTION,
   WORKED_EXAMPLE,
+  // LAST, and the position is a claim about the reading order rather than an append. The
+  // state model is the only optional half of the tool: an author who never declares a
+  // variable still gets every tier above, while an author who starts here without the
+  // vocabulary discipline has a document whose reachability proofs are about requirements
+  // the propositional tiers never compared. Craft before capability.
+  STATE_MODEL,
 ] as const
 
 /** Every code any craft section names, deduplicated. Asserted to exist in the

@@ -22,7 +22,7 @@
 
 import { Effect, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { emptyDocument, type RequirementsDocument } from '../core/document.ts'
+import { emptyDocument, type Requirement, type RequirementsDocument } from '../core/document.ts'
 import { DocPath, DocStore, makeDocPath } from '../core/store.ts'
 import type { Requirement as DonorRequirement } from '../donor/core/schema.ts'
 import { detectAmbiguity } from '../donor/formal/ambiguity.ts'
@@ -85,13 +85,17 @@ const ambiguityCodes = (sentence: string): readonly string[] => [
 // ---------------------------------------------------------------------------
 
 describe('the craft corpus is well-formed', () => {
-  it('ships the five sections the spec names, in author order', () => {
+  it('ships the six sections the spec names, in author order', () => {
     expect(CRAFT_SECTIONS.map((s) => s.id)).toEqual([
       'ears-pattern-selection',
       'vocabulary-alignment-first',
       'decomposition',
       'anti-patterns',
       'worked-example',
+      // G5. LAST, because the state model is the only optional half of the tool and an
+      // author who starts here without the vocabulary discipline proves things about
+      // requirements the propositional tiers never compared.
+      'state-model',
     ])
   })
 
@@ -464,5 +468,359 @@ describe('the worked example produces the outcomes it claims', () => {
     // `verified` stays TRUE, and the section explains why: it answers "was consistency
     // CHECKED", not "is the document clean".
     expect(after.verified).toBe(true)
+  }, 60_000)
+})
+
+// ---------------------------------------------------------------------------
+// The state-model section, re-run against the real reachability tier (G5)
+// ---------------------------------------------------------------------------
+
+/**
+ * THE STATE-MODEL SECTION'S FOUR MEASURED OUTCOMES, re-derived.
+ *
+ * The section is the longest in the corpus and the only one whose subject an author cannot
+ * check by reading a lint message, so it is the one most able to rot into a plausible
+ * fiction. Every number and verdict it quotes came from the built CLI on the real hex-bonk
+ * `TX-C1`; this re-runs the same document through the real `check` operation and asserts
+ * the same verdicts.
+ *
+ * Two of the four are DELIBERATELY inconvenient, and they are the reason this file has to
+ * assert rather than describe:
+ *
+ * 1. TX-C1 proves `PROVED_UNDER_HYPOTHESES`, not `PROVED` — frame-closed proof is a
+ *    property of single-variable models, and a section claiming `PROVED` for a
+ *    two-variable lock would be teaching an outcome the tier does not produce.
+ * 2. An effect-free model reports `PROVED` AND `FND_REACHABILITY_NOT_CHECKED` together,
+ *    because with no transitions the only reachable state is the initial one. The section
+ *    tells an author to watch for exactly that pair.
+ */
+describe('the state-model section`s transcript is REAL', () => {
+  const sid = (n: number) => `dddddddd-0000-4000-8000-00000000000${n}`
+
+  /** A document-shaped requirement, defaulted so each case names only what it varies. */
+  const sreq = (
+    n: number,
+    key: string,
+    sentence: string,
+    over: Partial<Requirement>,
+  ): Requirement => ({
+    id: sid(n),
+    key,
+    patternType: 'ubiquitous',
+    systemName: 'run service',
+    systemResponse: 'operate',
+    negated: false,
+    sentence,
+    priority: 'high',
+    status: 'approved',
+    derives: [],
+    satisfies: [],
+    verifies: [],
+    refines: [],
+    createdAt: TS,
+    updatedAt: TS,
+    ...over,
+  })
+
+  /**
+   * STEP 1 of the section's transcript, verbatim: the two variables, the three guarded
+   * effects, and the real TX-C1 mutual-exclusion constraint.
+   */
+  const lockDoc = (): RequirementsDocument => ({
+    ...emptyDocument(),
+    requirements: {
+      [sid(1)]: sreq(
+        1,
+        'TX-A1',
+        'When an agent worker claims a run, the run service shall acquire the conversation lock.',
+        {
+          patternType: 'event-driven',
+          trigger: 'an agent worker claims a run',
+          systemResponse: 'acquire the conversation lock',
+          responseKind: 'effect',
+          stateEffect: 'when held = 0: held := held + 1, queued := false',
+        },
+      ),
+      [sid(2)]: sreq(
+        2,
+        'TX-A2',
+        'When a run reaches a terminal state, the run service shall release the conversation lock.',
+        {
+          patternType: 'event-driven',
+          trigger: 'a run reaches a terminal state',
+          systemResponse: 'release the conversation lock',
+          responseKind: 'effect',
+          stateEffect: 'when held = 1: held := held - 1',
+        },
+      ),
+      [sid(3)]: sreq(
+        3,
+        'TX-A3',
+        'When a run for a locked conversation is queued, the run service shall mark it waiting.',
+        {
+          patternType: 'event-driven',
+          trigger: 'a run for a locked conversation is queued',
+          systemResponse: 'mark the run waiting',
+          responseKind: 'effect',
+          stateEffect: 'when held = 1: queued := true',
+        },
+      ),
+      [sid(4)]: sreq(
+        4,
+        'TX-C1',
+        'The run service shall assign runs that share a conversation the Procrastinate lock keyed on the conversation id so they execute sequentially.',
+        {
+          systemResponse: 'hold at most one conversation lock at a time',
+          responseKind: 'constraint',
+          stateConstraint: 'held <= 1',
+        },
+      ),
+    },
+    stateModel: {
+      variables: [
+        {
+          name: 'held',
+          type: 'int',
+          frame: 'volatile',
+          initial: 'held = 0',
+          domain: { min: 0, max: 3 },
+        },
+        { name: 'queued', type: 'bool', frame: 'volatile', initial: 'queued = false' },
+      ],
+    },
+  })
+
+  /** STEP 2: the plausible-and-FALSE second invariant the section adds. */
+  const withTxC2 = (doc: RequirementsDocument): RequirementsDocument => ({
+    ...doc,
+    requirements: {
+      ...doc.requirements,
+      [sid(5)]: sreq(
+        5,
+        'TX-C2',
+        'The run service shall hold the waiting flag only while the conversation lock is held.',
+        {
+          systemResponse: 'hold the waiting flag only while the conversation lock is held',
+          responseKind: 'constraint',
+          stateConstraint: 'not (queued and held = 0)',
+        },
+      ),
+    },
+  })
+
+  /** STEP 3: the fix the section applies — to the REQUIREMENT the trace blamed. */
+  const withFixedTxA2 = (doc: RequirementsDocument): RequirementsDocument => ({
+    ...doc,
+    requirements: {
+      ...doc.requirements,
+      [sid(2)]: {
+        ...(doc.requirements[sid(2)] as Requirement),
+        stateEffect: 'when held = 1: held := held - 1, queued := false',
+      },
+    },
+  })
+
+  /** Run the REAL `check` operation over an in-memory document. */
+  const runCheck = (document: RequirementsDocument): Promise<CheckPayload> =>
+    Effect.runPromise(
+      runOperation(checkOp, { file: 'doc.json' }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(DocStore)(
+              DocStore.of({
+                load: (path) =>
+                  path === 'doc.json'
+                    ? Effect.succeed({ document, unknownKeys: {}, diagnostics: [] })
+                    : Effect.fail(
+                        new ErrDocNotFound({ error: `no document at ${path}`, suggestions: [] }),
+                      ),
+                save: () => Effect.void,
+                exists: () => Effect.succeed(true),
+              }),
+            ),
+            Layer.succeed(DocPath)(makeDocPath({})),
+            solverServiceLayer,
+            embedderLayerOf(stubEmbedder()),
+          ),
+        ),
+        Effect.map((envelope) => envelope.data),
+      ),
+    )
+
+  const section = () => {
+    const found = CRAFT_SECTIONS.find((s) => s.id === 'state-model')
+    if (found === undefined) throw new Error('the state-model section is missing')
+    return found
+  }
+
+  // --- The section's own shape ---------------------------------------------
+
+  it('teaches the DECISION PROCEDURES, not just the three commands', () => {
+    // A reference table for `state`/`state-initial`/`classify` would be the duplication the
+    // thin-pointer rule forbids — the manifest already carries every flag. What has to be
+    // here is the judgment the manifest cannot express.
+    const body = section().body
+    expect(body).toContain('When to declare a state variable')
+    expect(body).toContain('Effect or constraint')
+    expect(body).toContain('The declared-vars-only rule')
+    expect(body).toContain('Choosing a frame, per variable')
+  })
+
+  it('states the V16 rationale in PLAIN LANGUAGE, without the hazard number', () => {
+    // An author does not need to know it is called V16; they need to know that a frame
+    // declaration is a claim the tool will hold them to, and that the default runs the
+    // other way because a frame can make the solver certify a false answer.
+    const body = section().body
+    expect(body).toContain('proves a false answer and hands')
+    expect(body).toContain('volatile')
+    expect(body).toContain('stable')
+    // The hazard NUMBERS belong in the source, not in author-facing prose.
+    expect(body).not.toMatch(/\bV1[456]\b/)
+    expect(body).not.toMatch(/\bAC-2-5\b/)
+  })
+
+  it('tells an author NOT to chase PROVED, which is the honest advice', () => {
+    // The corollary that cost a gate rewrite in G4: with more than one variable the
+    // frame-none run is essentially always reachable, so PROVED_UNDER_HYPOTHESES is the
+    // normal outcome and a document tuned to reach PROVED is a document with one variable.
+    const body = section().body
+    expect(body).toContain('do not chase')
+    expect(body).toContain('PROVED_UNDER_HYPOTHESES')
+    expect(body).toContain('THE DOCUMENT DOES NOT STATE THAT')
+  })
+
+  it('names the tier`s OWN timeout flag for a budget-exhausted unknown', () => {
+    // Not the shared `--timeout-ms`: raising that to decide one fixedpoint query also hands
+    // seven per-pair solvers the same multiple.
+    expect(section().body).toContain('--reachability-timeout-ms')
+  })
+
+  it('names all five reachability codes, and they all resolve', () => {
+    const codes = section().codes
+    expect(codes).toHaveLength(5)
+    for (const code of codes) {
+      expect(code.startsWith('FND_REACHABILITY_'), code).toBe(true)
+      expect(lookupCode(code), `the section names ${code}, which no catalog holds`).toBeDefined()
+    }
+  })
+
+  // --- The transcript, re-run ----------------------------------------------
+
+  it('STEP 1: TX-C1 proves — as PROVED_UNDER_HYPOTHESES, exactly as written', async () => {
+    const payload = await runCheck(lockDoc())
+    expect(payload.reachability?.variables).toBe(2)
+    expect(payload.reachability?.effects).toBe(3)
+    expect(payload.reachability?.constraints).toBe(1)
+    // THE INCONVENIENT NUMBER. `proved: 0` and `provedUnderHypotheses: 1` is what the
+    // section quotes, and a section that had claimed `proved: 1` would be teaching an
+    // outcome a two-variable model does not produce.
+    expect(payload.reachability?.proved).toBe(0)
+    expect(payload.reachability?.provedUnderHypotheses).toBe(1)
+    expect(payload.reachability?.violated).toBe(0)
+    expect(payload.reachability?.unknown).toBe(0)
+
+    // And the finding NAMES the hypothesis with its writers, which is the sentence the
+    // section quotes verbatim.
+    const proof = payload.findings.find((f) => f.code === 'FND_REACHABILITY_UNDER_HYPOTHESES')
+    expect(proof?.message).toContain('THE DOCUMENT DOES NOT STATE THAT')
+    expect(proof?.message).toContain('held')
+    expect(proof?.message).toContain('TX-A1')
+  }, 60_000)
+
+  it('STEP 2: TX-C2 is VIOLATED, with the trace the section prints', async () => {
+    const payload = await runCheck(withTxC2(lockDoc()))
+    expect(payload.reachability?.constraints).toBe(2)
+    expect(payload.reachability?.violated).toBe(1)
+    expect(payload.reachability?.provedUnderHypotheses).toBe(1)
+
+    const violation = payload.findings.find((f) => f.code === 'FND_REACHABILITY_VIOLATED')
+    expect(violation?.severity).toBe('error')
+    // The EXACT path the section prints and then reads back as a sentence about the
+    // document. Pinned in full, because the section's whole argument is that the trace is
+    // an ordering story an author can follow — a different path would make the prose wrong
+    // even if the verdict were right.
+    expect(violation?.message).toContain('init -> TX-A1 -> TX-A3 -> TX-A2 -> TX-C2')
+    // Exit 1 through the EXISTING contract, which is the claim the section makes about
+    // wiring.
+    expect(payload.counts.error).toBeGreaterThan(0)
+  }, 60_000)
+
+  it('STEP 3: fixing TX-A2 discharges the violation and BOTH invariants prove', async () => {
+    const payload = await runCheck(withFixedTxA2(withTxC2(lockDoc())))
+    expect(payload.reachability?.violated).toBe(0)
+    // 1 -> 2, which is the gradient movement the section says the repair produces.
+    expect(payload.reachability?.provedUnderHypotheses).toBe(2)
+    expect(payload.findings.some((f) => f.code === 'FND_REACHABILITY_VIOLATED')).toBe(false)
+    // And nothing else became an error, so the exit code really does go back to 0.
+    expect(payload.findings.filter((f) => f.severity === 'error').map((f) => f.code)).not.toContain(
+      'FND_REACHABILITY_VIOLATED',
+    )
+  }, 60_000)
+
+  it('THE EFFECT-FREE PAIR: a model with no transitions reports PROVED *and* NOT_CHECKED', async () => {
+    // The section's closing warning, and the reason it is a warning: with no `effect` the
+    // only reachable state is the initial one, so an invariant that holds there holds
+    // almost vacuously. Both halves are asserted, because the PAIR is the lesson — the
+    // proof alone would read as evidence about a running system.
+    const base = lockDoc()
+    const effectFree: RequirementsDocument = {
+      ...base,
+      requirements: {
+        [sid(4)]: base.requirements[sid(4)] as Requirement,
+      },
+      stateModel: {
+        variables: [
+          {
+            name: 'held',
+            type: 'int',
+            frame: 'volatile',
+            initial: 'held = 0',
+            domain: { min: 0, max: 3 },
+          },
+        ],
+      },
+    }
+    const payload = await runCheck(effectFree)
+    expect(payload.reachability?.effects).toBe(0)
+    expect(payload.reachability?.proved).toBe(1)
+
+    const disclosure = payload.findings.find((f) => f.code === 'FND_REACHABILITY_NOT_CHECKED')
+    expect(disclosure, 'the vacuity disclosure must fire on an effect-free model').toBeDefined()
+    expect(disclosure?.message).toContain('NO transitions')
+    // And it DEMOTES, so a vacuous proof can never carry `verified: true`.
+    expect(payload.verified).toBe(false)
+  }, 60_000)
+
+  it('the declared-vars-only rule is REAL: an undeclared name is refused', async () => {
+    // The section says a typo'd variable is a usage error rather than a fresh unconstrained
+    // variable, and that the refusal exists because an undeclared name reaching the Horn
+    // encoder hangs the solver unkillably. Asserted through the fold that enforces it.
+    const doc = lockDoc()
+    const withTypo: RequirementsDocument = {
+      ...doc,
+      requirements: {
+        ...doc.requirements,
+        [sid(5)]: sreq(5, 'TX-C3', 'The run service shall bound the retry count.', {
+          systemResponse: 'bound the retry count',
+          responseKind: 'constraint',
+          // `retries` was never declared.
+          stateConstraint: 'retries <= 3',
+        }),
+      },
+    }
+    // The tier must not silently prove something about an undeclared name: it reports the
+    // constraint as SKIPPED and discloses the gap rather than encoding a free variable.
+    const payload = await runCheck(withTypo)
+    expect(payload.findings.some((f) => f.code === 'FND_REACHABILITY_NOT_CHECKED')).toBe(true)
+    // TX-C3 gets NO proof of its own — the honest outcome for a constraint the tier could
+    // not read.
+    expect(
+      payload.findings.some(
+        (f) =>
+          (f.code === 'FND_REACHABILITY_PROVED' ||
+            f.code === 'FND_REACHABILITY_UNDER_HYPOTHESES') &&
+          f.requirementIds.includes(sid(5)),
+      ),
+    ).toBe(false)
   }, 60_000)
 })

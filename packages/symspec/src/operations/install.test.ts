@@ -448,6 +448,37 @@ describe('the skill body is generated, never hand-written', () => {
     expect(body).toContain('FND_CONTRADICTION')
   })
 
+  /**
+   * THE STATE-MODEL SECTION reaches the INSTALLED body too (G5) — the second half of the
+   * two-part gate.
+   *
+   * The loop above asserts the title, which is automatic. This asserts the section's BODY
+   * survived the projection, because the installed skill is the surface an agent actually
+   * reads in a fix loop and a heading with nothing under it would satisfy the loop.
+   *
+   * Both projections are checked separately, deliberately: they render at different depths
+   * through different call sites, so a `renderCraft` regression can plausibly break one and
+   * not the other.
+   */
+  it('carries the STATE-MODEL section whole — sub-headings and the measured transcript', () => {
+    const body = buildSkillBody()
+    for (const heading of [
+      '### When to declare a state variable',
+      '### Effect or constraint: the classification procedure',
+      '### The declared-vars-only rule',
+      '### Choosing a frame, per variable',
+      '### The worked example: the real TX-C1, proved and then broken',
+    ]) {
+      expect(body, `the installed skill is missing "${heading}"`).toContain(heading)
+    }
+    // The trace and the honest verdict, from the real run.
+    expect(body).toContain('init -> TX-A1 -> TX-A3 -> TX-A2 -> TX-C2')
+    expect(body).toContain('PROVED_UNDER_HYPOTHESES')
+    // The three authoring commands, so the section is actionable from the installed file.
+    expect(body).toContain('symspec classify')
+    expect(body).toContain('"op":"state"')
+  })
+
   it('carries the two ESSENTIAL scope claims, and stays thin by omitting the rest', () => {
     const body = buildSkillBody()
     for (const claim of SCOPE_ESSENTIAL) {
