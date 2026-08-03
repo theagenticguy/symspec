@@ -387,3 +387,113 @@ describe('the shipped manifest is internally consistent', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Output flags, end to end — the invariant that matters
+// ---------------------------------------------------------------------------
+
+/**
+ * These duplicate `output.test.ts`'s in-process assertions ON PURPOSE.
+ *
+ * An in-process check computes the exit code from the same envelope object the
+ * renderer got, so it would pass even if the CLI WIRING rendered before computing
+ * the code, or swallowed a failure it had prettified. The only way to know an
+ * output flag cannot change the process's exit status is to observe the real
+ * process's exit status, which is what these do.
+ */
+describe('output flags never change the EXIT CODE of the real process', () => {
+  const FLAG_SETS: readonly (readonly string[])[] = [
+    [],
+    ['--pretty'],
+    ['--dense'],
+    ['--dense', '--evidence'],
+    ['--field', 'data'],
+    ['--field', 'nope.nothing'],
+    ['--pretty', '--field', 'data'],
+    ['--dense', '--field', 'data'],
+  ]
+
+  it('exit 0 stays 0 on a success, under every flag set', () => {
+    for (const flags of FLAG_SETS) {
+      expect(run('version', ...flags).code, flags.join(' ')).toBe(0)
+      expect(run('explain', '--code', 'ERR_IO', ...flags).code, flags.join(' ')).toBe(0)
+    }
+  })
+
+  it('exit 2 stays 2 on an operational error, under every flag set', () => {
+    for (const flags of FLAG_SETS) {
+      expect(run('explain', '--code', 'ERR_BOGUS', ...flags).code, flags.join(' ')).toBe(2)
+    }
+  })
+
+  it('accepts a shared flag BEFORE the subcommand too (npm-style)', () => {
+    expect(run('--pretty', 'version').code).toBe(0)
+    expect(run('--pretty', 'version').stdout).toBe(run('version', '--pretty').stdout)
+  })
+
+  it('leaves stderr EMPTY in every mode — envelopes own stdout, diagnostics own stderr', () => {
+    for (const flags of FLAG_SETS) {
+      expect(run('explain', '--code', 'ERR_BOGUS', ...flags).stderr, flags.join(' ')).toBe('')
+    }
+  })
+})
+
+describe('output flags on the wire', () => {
+  it('--pretty emits prose that is NOT JSON', () => {
+    const { stdout } = run('version', '--pretty')
+    expect(() => JSON.parse(stdout) as unknown).toThrow()
+    expect(stdout).toContain('version (apiVersion 1)')
+  })
+
+  it('--dense emits ONE minified line of valid JSON', () => {
+    const { stdout } = run('manifest', '--dense')
+    expect(stdout.trimEnd().split('\n')).toHaveLength(1)
+    expect(() => JSON.parse(stdout) as unknown).not.toThrow()
+  })
+
+  it('--dense output is never LARGER than the default', () => {
+    const dense = run('manifest', '--dense').stdout.length
+    const plain = run('manifest').stdout.length
+    expect(dense).toBeLessThanOrEqual(plain)
+  })
+
+  it('--field projects one value, nested under its path', () => {
+    const { stdout } = run('version', '--field', 'data.version')
+    expect(JSON.parse(stdout)).toEqual({ data: { version: manifest.version } })
+  })
+
+  it('--field on an unresolved path emits {} and still exits 0', () => {
+    const { stdout, code } = run('version', '--field', 'data.nope')
+    expect(JSON.parse(stdout)).toEqual({})
+    expect(code).toBe(0)
+  })
+
+  it('the default output is byte-identical to no flags at all', () => {
+    expect(run('version').stdout).toBe(run('version').stdout)
+  })
+
+  it('advertises all four output flags in --help, with non-blank docs', () => {
+    for (const flag of ['--pretty', '--dense', '--evidence', '--field']) {
+      expect(rootHelp, `${flag} missing from root help`).toContain(flag)
+    }
+    // Shared flags reach every subcommand's help too, which is the whole point of
+    // declaring them once on the root.
+    const subHelp = execFileSync(process.execPath, [BUNDLE, 'version', '--help'], {
+      encoding: 'utf8',
+    })
+    for (const flag of ['--pretty', '--dense', '--evidence', '--field']) {
+      expect(subHelp, `${flag} missing from version help`).toContain(flag)
+    }
+  })
+
+  it('does NOT publish the output flags in any operation`s manifest input', () => {
+    // They shape rendering, not behavior. Publishing them in an operation's input
+    // schema would tell an agent they affect what the operation DOES.
+    for (const op of manifest.operations) {
+      const props = Object.keys(propertiesOf(op))
+      for (const flag of ['pretty', 'dense', 'evidence', 'field']) {
+        expect(props, `${op.name} publishes ${flag}`).not.toContain(flag)
+      }
+    }
+  })
+})
