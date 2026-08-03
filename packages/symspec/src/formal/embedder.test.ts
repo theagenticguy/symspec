@@ -250,10 +250,11 @@ describe('PROPOSE-ONLY — the tier suggests ops, it never decides', () => {
       [req('r1', 'issue a session token'), req('r2', 'delete the audit log')],
       embedder,
     )
-    // cos(45deg) ~= 0.707, just under the 0.72 measured default.
-    expect(cosine(Float32Array.from([1, 0]), Float32Array.from([0.7071, 0.7071]))).toBeLessThan(
-      DEFAULT_SEMANTIC_THRESHOLD,
-    )
+    // cos(45deg) = SQRT1_2 ~= 0.707, just under the 0.72 measured default. Spelled
+    // with the standard-library constant rather than a 0.7071 literal, so the value is
+    // exact and the reader can see WHY it is that number.
+    const diagonal = Float32Array.from([Math.SQRT1_2, Math.SQRT1_2])
+    expect(cosine(Float32Array.from([1, 0]), diagonal)).toBeLessThan(DEFAULT_SEMANTIC_THRESHOLD)
     expect(findings).toHaveLength(0)
   })
 
