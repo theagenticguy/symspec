@@ -33,17 +33,30 @@
  * `NodeServices` and also need those services to remain in the final context (the
  * CLI runtime itself requires the `Environment`). `provideMerge` composes top-down
  * and keeps both, which a bare `provide` would not.
+ *
+ * ## The solver Layer is merged, and it costs nothing until `check` runs
+ *
+ * `solverServiceLayer` boots the Z3 WASM module, which is the single most expensive
+ * thing this process can do (~200–1000ms measured). Merging it here does NOT pay
+ * that cost on `symspec version`: a Layer's construction effect runs when a
+ * consumer first REACHES the service, and only `check`'s handler does. So
+ * `manifest`, `list`, `show`, and `import` boot no WASM at all, while `check` gets
+ * a scoped, disposable module whose release fires when the runtime tears down —
+ * which is what lets the process exit cleanly instead of hanging on a pending
+ * query. `cli.test.ts` pins the laziness so a future eager reference is a failure
+ * rather than a quiet regression in every command's latency.
  */
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Effect, Layer, Logger } from 'effect'
 import { cli } from './cli.ts'
 import { storeLayer } from './core/store.ts'
+import { solverServiceLayer } from './formal/solver-service.ts'
 import { streamSourceLayer } from './operations/index.ts'
 
-/** Everything the document operations require, over the platform services. */
+/** Everything the operations require, over the platform services. */
 const appLayer = Layer.provideMerge(
-  Layer.mergeAll(storeLayer, streamSourceLayer),
+  Layer.mergeAll(storeLayer, streamSourceLayer, solverServiceLayer),
   NodeServices.layer,
 )
 

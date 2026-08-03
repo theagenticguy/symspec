@@ -45,9 +45,11 @@ import {
   type Manifest,
 } from '../kernel/operation.ts'
 import { VERSION } from '../kernel/version.ts'
+import { checkOp } from './check.ts'
 import { initOp, listOp, showOp } from './document.ts'
 import { importOp } from './import.ts'
 
+export { checkOp } from './check.ts'
 export { initOp, listOp, showOp } from './document.ts'
 export { importOp, streamSourceLayer } from './import.ts'
 
@@ -172,8 +174,9 @@ export const versionOp = defineOperation({
  * only edit an operation needs to become visible everywhere.
  *
  * Order is the order `--help` and the manifest list them, so it is chosen for a
- * reader: the document lifecycle first (`init` → `import` → `list` → `show`),
- * then the self-description operations an agent uses to orient (`manifest`,
+ * reader: the document lifecycle first (`init` → `import` → `list` → `show`), then
+ * `check` — the operation the whole tool exists for, and the one an agent runs in a
+ * loop — then the self-description operations an agent uses to orient (`manifest`,
  * `explain`, `version`). Nothing depends on this order mechanically — it is
  * presentation, and the drift tests are order-agnostic.
  */
@@ -182,6 +185,7 @@ export const OPERATIONS = [
   importOp,
   listOp,
   showOp,
+  checkOp,
   manifestOp,
   explainOp,
   versionOp,

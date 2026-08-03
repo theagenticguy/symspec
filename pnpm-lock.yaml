@@ -66,6 +66,9 @@ importers:
       effect:
         specifier: 4.0.0-beta.102
         version: 4.0.0-beta.102
+      z3-solver:
+        specifier: ^5.0.0
+        version: 5.0.0
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.4.15

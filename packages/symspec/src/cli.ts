@@ -20,15 +20,16 @@
  * silently dropped value.
  */
 
-import { Console, Effect, Option, Schema } from 'effect'
+import { Console, Data, Effect, Option, Runtime, Schema } from 'effect'
 import { Argument, Command, Flag } from 'effect/unstable/cli'
 import { isErrorEnvelope } from './kernel/envelope.ts'
 import { toErrorEnvelope } from './kernel/errors.ts'
-import { exitCodeForEnvelope } from './kernel/exit.ts'
+import { EXIT_CLEAN, type ExitCode, exitCodeForEnvelope } from './kernel/exit.ts'
 import { fieldMetadata, flagName, type Operation, runOperation } from './kernel/operation.ts'
 import { type OutputFlags, renderOutput } from './kernel/output.ts'
 import { VERSION } from './kernel/version.ts'
 import {
+  checkOp,
   explainOp,
   importOp,
   initOp,
@@ -67,6 +68,33 @@ import {
  * from the envelope's semantics and the formatting flags have no channel to reach
  * it. "Output flags never change the exit code" is therefore structural here, not
  * a convention someone has to remember.
+ *
+ * ## The SUCCESS-path exit code, and the G1 gap it closes
+ *
+ * A success envelope is not automatically exit 0. `check` emits a perfectly valid
+ * success envelope and still has to exit 1 (an error-severity finding is present)
+ * or 3 (an opt-in strict gate tripped) — the findings ARE the data, so the envelope
+ * is right and the STATUS is the pass/fail signal.
+ *
+ * G1 shipped `exitCodeForEnvelope` fully implemented and fully tested, but never
+ * CALLED it on the success path, because no G1 operation produced findings — so
+ * every reachable success was genuinely exit 0 and the omission was invisible. It
+ * surfaced the moment `check` landed: `--strict` produced `data.strictGate:'fail'`
+ * in the envelope and exit 0 at the shell, which is the worst kind of gate bug (a
+ * CI job wired to `--strict` would pass on every inconclusive run).
+ *
+ * So the mapping is applied HERE, for every operation, from the ALREADY-RENDERED
+ * envelope's semantics. Three properties follow:
+ *
+ * - the envelope is written BEFORE the code is applied, so exit 1 and exit 3 both
+ *   still carry a full, parseable payload;
+ * - the code is computed from the envelope, not from the operation, so an operation
+ *   cannot express an exit code except by putting the facts in its payload — which
+ *   is what keeps `exit.ts` the single mapping;
+ * - a non-zero success code is raised by FAILING with the code marker rather than
+ *   calling `process.exit`, so finalizers still run. That matters concretely: the
+ *   solver Layer's release closes the WASM scope, and skipping it is how a process
+ *   with a pending Z3 query fails to drain.
  */
 const emit = <Fields extends Schema.Struct.Fields, T extends string, D, R>(
   op: Operation<Fields, T, D, R>,
@@ -84,8 +112,39 @@ const emit = <Fields extends Schema.Struct.Fields, T extends string, D, R>(
       yield* Console.log(renderOutput(envelope, flags))
       return yield* Effect.fail(failure)
     }
-    yield* Console.log(renderOutput(result.success, flags))
+    const envelope = result.success
+    yield* Console.log(renderOutput(envelope, flags))
+    // The envelope is out; now apply its exit semantics. `EXIT_CLEAN` returns
+    // normally so the common path costs nothing.
+    const code = exitCodeForEnvelope(envelope)
+    if (code !== EXIT_CLEAN) return yield* Effect.fail(new GateExit({ code }))
   })
+
+/**
+ * The carrier for a NON-ZERO exit on an otherwise SUCCESSFUL run.
+ *
+ * A deliberately unusual error class, and each of its three properties is doing
+ * work:
+ *
+ * - `Runtime.errorExitCode` is the code itself, so the runtime exits 1 or 3
+ *   declaratively — no `process.exit`, so every finalizer (notably the solver
+ *   Layer's release) still runs.
+ * - `Runtime.errorReported = false` suppresses the runtime's own human-shaped
+ *   report. Without it, `symspec check --strict` would print a stack trace AFTER
+ *   the JSON envelope an agent just parsed. Note the marker is INVERTED relative to
+ *   its name: `false` means "already reported".
+ * - It is NOT one of the 21 `ERR_*` catalog classes and never becomes an error
+ *   envelope. That is the point: the run SUCCEEDED, the envelope is a success
+ *   envelope, and only the process STATUS differs. Reusing an `ERR_*` class here
+ *   would have relabelled a findings-failure as an operational failure and
+ *   collapsed the 1-vs-2 distinction the exit contract exists to make.
+ */
+class GateExit extends Data.TaggedError('GateExit')<{ readonly code: ExitCode }> {
+  override readonly [Runtime.errorReported] = false
+  override get [Runtime.errorExitCode](): number {
+    return this.code
+  }
+}
 
 // ---------------------------------------------------------------------------
 // The root command and its shared output flags
@@ -205,6 +264,20 @@ const booleanFlag = (
 ) => decorate(op, field, Flag.boolean(flagName(field)))
 
 /**
+ * An INTEGER flag for `field`, spelled in kebab-case and decorated from the schema.
+ *
+ * `Flag.integer`, not `Flag.string` plus a parse: a non-numeric value is then a CLI
+ * usage error (exit 1) before any handler runs, which is where a malformed number
+ * belongs. The alternative — accept a string and let the schema reject it — would
+ * report a numeric typo as an operational failure through the error envelope, and
+ * `check`'s numeric knobs are the flags most likely to be typo'd.
+ */
+const integerFlag = (
+  op: { readonly name: string; readonly input: Schema.Struct<Schema.Struct.Fields> },
+  field: string,
+) => decorate(op, field, Flag.integer(flagName(field)))
+
+/**
  * An OPTIONAL POSITIONAL argument for a doc-path field, decorated from the schema.
  *
  * A positional (not a flag) for the document path, matching the donor's shape:
@@ -300,6 +373,47 @@ const importCommand = Command.make(
   (config) => emit(importOp, config),
 ).pipe(Command.withDescription(importOp.summary))
 
+/**
+ * `check [file]` — the document path as an optional positional (matching `list` and
+ * `show`, and matching what an agent types), every knob as a flag.
+ *
+ * `--min-severity` is a `stringFlag` even though the schema declares a closed
+ * literal set: `effect/unstable/cli` has no enum flag constructor on beta.102, and
+ * the schema's `Schema.Literals` rejects an out-of-set value at decode time with
+ * the legal values named. So the validation still happens exactly once, in the
+ * schema, and the manifest still publishes the `enum` — the flag layer just does
+ * not duplicate it.
+ */
+const checkCommand = Command.make(
+  'check',
+  {
+    file: pathArgument(checkOp, 'file'),
+    timeoutMs: integerFlag(checkOp, 'timeoutMs'),
+    solverBudgetMs: integerFlag(checkOp, 'solverBudgetMs'),
+    temporalBound: integerFlag(checkOp, 'temporalBound'),
+    strict: booleanFlag(checkOp, 'strict'),
+    // OPTIONAL, because omitting the flag is how the gate is disabled — a negative
+    // sentinel is unreachable here (`--fail-on-unmatched -1` parses `-1` as the next
+    // flag and dumps help), and 0 is the strictest legal threshold rather than a
+    // sentinel. `Flag.optional` yields an `Option`, unwrapped to `null` at the
+    // handler boundary, matching the schema's `NullOr` default.
+    failOnUnmatched: Flag.optional(integerFlag(checkOp, 'failOnUnmatched')),
+    minSeverity: stringFlag(checkOp, 'minSeverity'),
+    findingsOnly: booleanFlag(checkOp, 'findingsOnly'),
+  },
+  (config) =>
+    emit(checkOp, {
+      file: Option.getOrNull(config.file),
+      timeoutMs: config.timeoutMs,
+      solverBudgetMs: config.solverBudgetMs,
+      temporalBound: config.temporalBound,
+      strict: config.strict,
+      failOnUnmatched: Option.getOrNull(config.failOnUnmatched),
+      minSeverity: config.minSeverity,
+      findingsOnly: config.findingsOnly,
+    }),
+).pipe(Command.withDescription(checkOp.summary))
+
 /** The root command with every subcommand attached — the runnable tree. */
 const rootWithSubcommands = root.pipe(
   Command.withSubcommands([
@@ -307,6 +421,7 @@ const rootWithSubcommands = root.pipe(
     importCommand,
     listCommand,
     showCommand,
+    checkCommand,
     manifestCommand,
     explainCommand,
     versionCommand,

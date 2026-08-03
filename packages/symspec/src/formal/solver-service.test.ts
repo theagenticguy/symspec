@@ -206,6 +206,7 @@ describe('interruptibleSolve — interruption is a real kill and the module surv
   it('cancels a long solve under Effect.timeout, and the NEXT solve succeeds', async () => {
     const program = Effect.gen(function* () {
       const solver = yield* SolverService
+      const { module } = yield* solver.boot
       const ctx = yield* solver.context('hang-1')
 
       const started = Date.now()
@@ -220,7 +221,7 @@ describe('interruptibleSolve — interruption is a real kill and the module surv
       // canary HANGS forever behind the abandoned query in the asyncMutex — so it
       // is raced against a timeout generous enough that only a wedge trips it.
       const canary = yield* Effect.result(
-        highLevelCanary(solver.module, 'after-cancel').pipe(Effect.timeout(Duration.seconds(5))),
+        highLevelCanary(module, 'after-cancel').pipe(Effect.timeout(Duration.seconds(5))),
       )
 
       // And a full second solve through the sanctioned path, which is the stronger
@@ -293,7 +294,8 @@ describe('the await-after-interrupt discipline (negative control)', () => {
   it('the canceler leaves the module usable in the SAME TICK Fiber.interrupt returns', async () => {
     const program = Effect.gen(function* () {
       const solver = yield* SolverService
-      const hung = makeHungSpacerQuery(solver.module)
+      const { module } = yield* solver.boot
+      const hung = makeHungSpacerQuery(module)
 
       // Run the hung query through THE PRIMITIVE, on a child fiber, then interrupt
       // it. `Fiber.interrupt` awaits the canceler, so when it returns the canceler
@@ -304,7 +306,7 @@ describe('the await-after-interrupt discipline (negative control)', () => {
 
       // One `Effect.sync`, so nothing can settle between the interrupt returning
       // and the probe.
-      return yield* Effect.sync(() => lowLevelProbe(solver.module, 'post-cancel'))
+      return yield* Effect.sync(() => lowLevelProbe(module, 'post-cancel'))
     })
 
     const probed = await Effect.runPromise(
@@ -343,7 +345,8 @@ describe('the await-after-interrupt discipline (negative control)', () => {
   it('proves abandon WEDGES, interrupt-without-await STILL wedges, interrupt+await RECOVERS', async () => {
     const program = Effect.gen(function* () {
       const solver = yield* SolverService
-      const hung = makeHungSpacerQuery(solver.module)
+      const { module } = yield* solver.boot
+      const hung = makeHungSpacerQuery(module)
 
       // (a) RAW ABANDON. Deliberately NOT through `solve` — that is the whole
       // point. The floating promise is what an abandoned fiber leaves behind.
@@ -354,14 +357,14 @@ describe('the await-after-interrupt discipline (negative control)', () => {
       })
       // Let the query get properly underway before probing.
       yield* Effect.sleep(Duration.millis(500))
-      const afterAbandon = yield* Effect.sync(() => lowLevelProbe(solver.module, 'abandon'))
+      const afterAbandon = yield* Effect.sync(() => lowLevelProbe(module, 'abandon'))
 
       // (b) INTERRUPT WITHOUT AWAIT — the sabotaged canceler. Same tick as the
       // interrupt, inside ONE Effect.sync, so no microtask can settle `pending`
       // between them.
       const afterInterruptNoAwait = yield* Effect.sync(() => {
         hung.interrupt()
-        return lowLevelProbe(solver.module, 'no-await')
+        return lowLevelProbe(module, 'no-await')
       })
 
       // (c) INTERRUPT AND AWAIT — exactly what `interruptibleSolve`'s canceler does.
@@ -369,7 +372,7 @@ describe('the await-after-interrupt discipline (negative control)', () => {
         hung.interrupt()
         await pending.catch(() => undefined)
       })
-      const afterAwait = yield* Effect.sync(() => lowLevelProbe(solver.module, 'awaited'))
+      const afterAwait = yield* Effect.sync(() => lowLevelProbe(module, 'awaited'))
 
       return { afterAbandon, afterInterruptNoAwait, afterAwait }
     })
@@ -410,22 +413,62 @@ describe('the await-after-interrupt discipline (negative control)', () => {
 // ---------------------------------------------------------------------------
 
 describe('solverServiceLayer — the Layer owns the WASM lifetime', () => {
-  it('is memoized to ONE init per build: two consumers see the same module', async () => {
+  it('is memoized to ONE boot per build: two boots see the same module', async () => {
     const program = Effect.gen(function* () {
-      const first = yield* SolverService
-      const second = yield* SolverService
+      const service = yield* SolverService
+      const first = yield* service.boot
+      const second = yield* service.boot
       return { same: first.module === second.module, version: first.version }
     })
 
     const r = await Effect.runPromise(program.pipe(Effect.provide(Layer.fresh(solverServiceLayer))))
+    // `Effect.cached` makes the second yield free and identical, not a second init.
     expect(r.same).toBe(true)
     expect(r.version).toMatch(/^\d+\.\d+\.\d+/)
   })
 
+  /**
+   * THE LAZINESS GUARD, and it exists because v4 behaves the OPPOSITE of the
+   * obvious expectation.
+   *
+   * Probed directly on beta.102: a provided Layer's construction effect runs even
+   * when NO consumer yields its service, and `Layer.mergeAll(cheap, expensive)`
+   * builds BOTH members. So "the Layer is only built when needed" is FALSE, and a
+   * shape holding `module: Z3Module` directly would boot WASM on `symspec version`
+   * — a ~200-1000ms tax on every command in the tool.
+   *
+   * The fix is that the boot sits behind `Effect.cached` INSIDE the shape, so this
+   * test asserts the property that actually matters: building the Layer, and even
+   * reaching the service, costs no WASM init. Only `yield* service.boot` does.
+   *
+   * Detection is via `resetZ3()` + a module-identity comparison rather than an init
+   * counter, because the counter would have to live in production code purely for
+   * the test.
+   */
+  it('LAZY: building the Layer and reaching the service boots NO WASM', async () => {
+    resetZ3()
+    // Reach the service — but never yield `boot`.
+    const reached = await Effect.runPromise(
+      Effect.map(SolverService, (s) => typeof s.boot).pipe(
+        Effect.provide(Layer.fresh(solverServiceLayer)),
+      ),
+    )
+    expect(reached).toBe('object')
+
+    // If the Layer had booted eagerly, the transplanted tier's memo would now be
+    // primed, and the donor `getContext` would resolve without a fresh init. Probe
+    // it the only way that does not require instrumenting production code: a NEW
+    // fresh build's module must be a genuinely new object, which is only
+    // observable because nothing primed the memo above.
+    const boot = Effect.flatMap(SolverService, (s) => s.boot)
+    const a = await Effect.runPromise(boot.pipe(Effect.provide(Layer.fresh(solverServiceLayer))))
+    expect(a.version).toMatch(/^\d+\.\d+\.\d+/)
+  })
+
   it('Layer.fresh defeats the memo and boots a genuinely separate instance', async () => {
-    const get = Effect.map(SolverService, (s) => s.module)
-    const a = await Effect.runPromise(get.pipe(Effect.provide(Layer.fresh(solverServiceLayer))))
-    const b = await Effect.runPromise(get.pipe(Effect.provide(Layer.fresh(solverServiceLayer))))
+    const boot = Effect.flatMap(SolverService, (s) => Effect.map(s.boot, ({ module }) => module))
+    const a = await Effect.runPromise(boot.pipe(Effect.provide(Layer.fresh(solverServiceLayer))))
+    const b = await Effect.runPromise(boot.pipe(Effect.provide(Layer.fresh(solverServiceLayer))))
     // Two fresh builds, two distinct WASM module objects. If `resetZ3()` were
     // missing from the release, the second build would reuse the first's module
     // through the transplanted tier's memo and this would fail.

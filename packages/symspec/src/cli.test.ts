@@ -732,3 +732,216 @@ describe('the document lifecycle end to end', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// `check` through the real process — the exit-code gap G1 could not see
+// ---------------------------------------------------------------------------
+
+/**
+ * These MUST be end-to-end, and that is the lesson rather than a preference.
+ *
+ * `exitCodeForEnvelope` was fully implemented and fully unit-tested in G1, and the
+ * CLI never CALLED it on the success path. No G1 operation produced findings, so
+ * every reachable success genuinely was exit 0 and the omission was invisible to
+ * every in-process test — including the ones that asserted the mapping itself,
+ * which passed because the FUNCTION was right. The bug was in the shell.
+ *
+ * `check --strict` exposed it: `data.strictGate: 'fail'` in the envelope and exit 0
+ * at the shell. A CI job wired to `--strict` would have passed on every
+ * inconclusive run — the failure mode the whole exit contract exists to prevent.
+ *
+ * So the assertions below read the PROCESS STATUS, not a function's return value.
+ */
+describe('check — exit codes and envelope integrity from the real process', () => {
+  const workDirs: string[] = []
+  const work = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'symspec-check-'))
+    workDirs.push(dir)
+    return dir
+  }
+  afterAll(async () => {
+    const { rm } = await import('node:fs/promises')
+    await Promise.all(workDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
+  })
+
+  const TS = '2026-01-01T00:00:00.000Z'
+  const req = (
+    id: string,
+    trigger: string,
+    systemName: string,
+    systemResponse: string,
+  ): Record<string, unknown> => ({
+    id,
+    patternType: 'event-driven',
+    trigger,
+    systemName,
+    systemResponse,
+    negated: false,
+    sentence: `When ${trigger}, the ${systemName} shall ${systemResponse}.`,
+    priority: 'medium',
+    status: 'draft',
+    derives: [],
+    satisfies: [],
+    verifies: [],
+    refines: [],
+    createdAt: TS,
+    updatedAt: TS,
+  })
+
+  /** Write a v3 document and return its path. */
+  const docFile = (requirements: readonly Record<string, unknown>[]): string => {
+    const { writeFileSync } = require('node:fs') as typeof import('node:fs')
+    const path = join(work(), 'requirements.json')
+    writeFileSync(
+      path,
+      JSON.stringify({
+        docVersion: 3,
+        requirements: Object.fromEntries(requirements.map((r) => [r.id as string, r])),
+        stateModel: { variables: [] },
+        glossary: [],
+        antonyms: [],
+        waivers: [],
+      }),
+    )
+    return path
+  }
+
+  /** A provable grant/revoke contradiction under one trigger. */
+  const conflicted = (): string =>
+    docFile([
+      req(
+        '11111111-1111-4111-8111-111111111111',
+        'the user submits valid credentials',
+        'auth service',
+        'grant access',
+      ),
+      req(
+        '22222222-2222-4222-8222-222222222222',
+        'the user submits valid credentials',
+        'auth service',
+        'revoke access',
+      ),
+    ])
+
+  /** Two requirements with disjoint vocabulary — unverifiable, no error finding. */
+  const disjoint = (): string =>
+    docFile([
+      req('33333333-3333-4333-8333-333333333333', 'a payment settles', 'ledger', 'post the entry'),
+      req(
+        '44444444-4444-4444-8444-444444444444',
+        'a shipment departs',
+        'warehouse',
+        'decrement the count',
+      ),
+    ])
+
+  it('exits 1 on an error-severity finding, WITH a valid envelope on stdout', () => {
+    const { stdout, stderr, code } = run('check', conflicted())
+    expect(code).toBe(1)
+    // The findings ARE the data: exit 1 is the gate signal, not a crash, so the
+    // envelope must still be complete and parseable.
+    const envelope = JSON.parse(stdout) as { type: string; data: { counts: { error: number } } }
+    expect(envelope.type).toBe('check')
+    expect(envelope.data.counts.error).toBeGreaterThan(0)
+    // No second, human-shaped report after the JSON — `Runtime.errorReported=false`
+    // on the gate carrier is what buys this.
+    expect(stderr).toBe('')
+  })
+
+  it('exits 3 on a tripped --strict gate, WITH a valid envelope on stdout', () => {
+    const { stdout, stderr, code } = run('check', disjoint(), '--strict')
+    // THE regression this file exists for. Before the fix: envelope said
+    // `strictGate:'fail'` and the process exited 0.
+    expect(code).toBe(3)
+    const envelope = JSON.parse(stdout) as {
+      data: { strictGate: string; verified: boolean; counts: { error: number } }
+    }
+    expect(envelope.data.strictGate).toBe('fail')
+    expect(envelope.data.verified).toBe(false)
+    // 3, not 1: there is no error-severity finding, only an unverifiable run.
+    expect(envelope.data.counts.error).toBe(0)
+    expect(stderr).toBe('')
+  })
+
+  it('exits 3 on --fail-on-unmatched 0, and 0 when the flag is OMITTED', () => {
+    const doc = disjoint()
+    // 0 is the STRICTEST legal threshold, not a sentinel: fail on any unmatched
+    // atom. A `> 0` guard in the option translation would silently turn this into
+    // no gate at all, which is what this pins.
+    expect(run('check', doc, '--fail-on-unmatched', '0').code).toBe(3)
+    // OMITTING the flag is how the gate is disabled. A negative sentinel is
+    // UNREACHABLE from a command line — measured: `--fail-on-unmatched -1` makes the
+    // CLI read `-1` as the next flag and dump help — so absence had to be the
+    // disabled state, which is why the schema field is `NullOr`.
+    expect(run('check', doc).code).toBe(0)
+  })
+
+  it('a proven defect OUTRANKS the strict gate (1, not 3)', () => {
+    const { code } = run('check', conflicted(), '--strict')
+    // "Your spec is broken" is stronger news than "I could not fully check it".
+    expect(code).toBe(1)
+  })
+
+  it('exits 0 on an info-only run, so advisory findings are not build failures', () => {
+    const { code } = run('check', disjoint())
+    expect(code).toBe(0)
+  })
+
+  it('exits 2 with ERR_USAGE on an over-cap --temporal-bound', () => {
+    const { stdout, code } = run('check', disjoint(), '--temporal-bound', '500')
+    expect(code).toBe(2)
+    const envelope = JSON.parse(stdout) as {
+      type: string
+      code: string
+      repair?: { commands: string[] }
+    }
+    expect(envelope.type).toBe('error')
+    expect(envelope.code).toBe('ERR_USAGE')
+    // The corrected invocation is runnable, with no placeholder to substitute.
+    expect(envelope.repair?.commands[0]).toMatch(/^symspec check .* --temporal-bound/)
+  })
+
+  it('output flags NEVER change the exit code', () => {
+    // Structural in `emit` (the code is computed from the envelope, which formatting
+    // cannot reach), and asserted here because it is the property an agent relies on
+    // when it adds `--dense` to a CI invocation.
+    const doc = conflicted()
+    for (const flags of [[], ['--dense'], ['--pretty'], ['--field', 'data.verified']]) {
+      expect(run('check', doc, ...flags).code, flags.join(' ')).toBe(1)
+    }
+  })
+
+  it('--dense output survives a PIPE at full size (no 64KB truncation)', () => {
+    // The donor's measured defect: `process.stdout.write` + `process.exit` truncates
+    // at one pipe buffer (65536 bytes), producing invalid JSON on exactly the
+    // documents big enough to matter. `check` is the command that produces those
+    // payloads, so it is the one worth pinning.
+    const doc = disjoint()
+    const { stdout } = run('check', doc, '--dense')
+    expect(() => JSON.parse(stdout) as unknown).not.toThrow()
+  })
+
+  it('reaches its layers — no missing-service crash for the solver Layer', () => {
+    // The solver Layer is new at the composition root. An unprovided service
+    // surfaces as a non-envelope crash on stderr, so a clean typed envelope proves
+    // the wiring — the same assertion the document commands get.
+    const { stdout, stderr } = run('check', disjoint())
+    expect(() => JSON.parse(stdout) as unknown).not.toThrow()
+    expect(stderr).toBe('')
+  })
+
+  it('every demotion in a REAL run carries a placeholder-free repair', () => {
+    const { stdout } = run('check', disjoint())
+    const envelope = JSON.parse(stdout) as {
+      data: { coverage: { demotions: { reason: string; repair?: { commands: string[] } }[] } }
+    }
+    const demotions = envelope.data.coverage.demotions
+    expect(demotions.length).toBeGreaterThan(0)
+    for (const d of demotions) {
+      expect(d.repair, `${d.reason} has no repair`).toBeDefined()
+      for (const command of d.repair?.commands ?? []) {
+        expect(command, `placeholder survived into: ${command}`).not.toMatch(/<[a-z-]+>/)
+      }
+    }
+  })
+})

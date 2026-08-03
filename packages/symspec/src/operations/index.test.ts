@@ -31,12 +31,15 @@ describe('the table', () => {
    * edit visible in review rather than letting the agent-facing surface grow
    * silently.
    */
-  it('holds the seven G1 operations, in presentation order', () => {
+  it('holds the eight shipped operations, in presentation order', () => {
     expect(OPERATIONS.map((op) => op.name)).toEqual([
       'init',
       'import',
       'list',
       'show',
+      // G2a: `check`, the operation the tool exists for, placed after the document
+      // lifecycle and before the self-description ops.
+      'check',
       'manifest',
       'explain',
       'version',

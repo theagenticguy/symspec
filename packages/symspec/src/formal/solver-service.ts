@@ -67,7 +67,7 @@
  * value rather than a comment.
  */
 
-import { Context, Effect, Layer } from 'effect'
+import { Context, Effect, Layer, Scope } from 'effect'
 import { primeZ3, resetZ3, type Z3Context, type Z3Module } from './donor/formal/backend.ts'
 
 // ---------------------------------------------------------------------------
@@ -158,30 +158,66 @@ export const interruptibleSolve = <A>(
 /**
  * What a consumer of the formal tier may do with Z3.
  *
- * Narrow on purpose: everything that reaches the solver goes through
- * {@link SolverShape.solve}, so there is no second path an "optimization" could
- * take. `context` hands out a Z3 `Context` for TERM BUILDING (which is pure and
- * does not touch the Asyncify slot); the moment a query is issued, it is
- * {@link interruptibleSolve}'s job.
+ * ## `boot` is an EFFECT, and that is the whole laziness mechanism
+ *
+ * Every capability is behind {@link SolverShape.boot} rather than sitting on the
+ * shape as a plain value, because of a v4 behavior that is the opposite of what
+ * "lazy layer" suggests:
+ *
+ *   **A provided Layer is BUILT EAGERLY, whether or not any consumer reaches its
+ *   service.** Probed directly on beta.102: `Effect.succeed(1).pipe(
+ *   Effect.provide(layer))` runs the layer's construction effect, and
+ *   `Layer.mergeAll(cheap, expensive)` builds BOTH even when only `cheap` is
+ *   yielded.
+ *
+ * So a shape carrying `module: Z3Module` would boot the WASM module on `symspec
+ * version` — a ~200-1000ms tax on every command in the tool, for a capability only
+ * `check` uses. Putting the boot behind an `Effect.cached` inside the shape moves
+ * the cost to FIRST USE while keeping the Layer's ownership of the lifetime: the
+ * `acquireRelease` runs in the LAYER's scope (explicitly provided, see
+ * {@link solverServiceLayer}), so release still fires on scope close, and `cached`
+ * guarantees one boot no matter how many callers ask.
+ *
+ * ## Everything that reaches the solver goes through `solve`
+ *
+ * Narrow on purpose: `context` hands out a Z3 `Context` for TERM BUILDING (pure, it
+ * does not touch the Asyncify slot); the moment a query is issued it is
+ * {@link interruptibleSolve}'s job. There is no second path an "optimization" could
+ * take.
  */
 export interface SolverShape {
   /**
-   * The Layer-owned WASM module. Exposed for `getVersionString` and for the
-   * low-level `Z3` namespace the Spacer tier (G4) needs. Holding it does NOT let a
-   * caller bypass the discipline usefully — a raw query still has to be wrapped to
-   * be interruptible, and {@link solve} is that wrapper.
+   * Boot (or reuse) the WASM module and its Z3 version string.
+   *
+   * Memoized via `Effect.cached`: the FIRST call pays the init, every later call is
+   * free, and the module is released when the Layer's scope closes. Yielding this
+   * is what a tier does to say "I actually need Z3 now".
    */
-  readonly module: Z3Module
-  /** The Z3 version string, resolved once at acquire. */
-  readonly version: string
-  /** A fresh named Z3 `Context` off the shared instance. Contexts are cheap
-   * relative to the one-time WASM init, so one per context-group check is fine. */
+  readonly boot: Effect.Effect<BootedSolver>
+  /**
+   * A fresh named Z3 `Context` off the shared instance, booting on first use.
+   * Contexts are cheap relative to the one-time WASM init, so one per
+   * context-group check is fine.
+   */
   readonly context: (name?: string) => Effect.Effect<Z3Context>
   /**
-   * THE sanctioned solver call. An alias for {@link interruptibleSolve} on the
-   * service, so a tier that has the service cannot reach a solver without it.
+   * THE sanctioned solver call. `interruptibleSolve` itself, exposed on the service
+   * so a tier holding the service cannot reach a solver without it.
    */
   readonly solve: <A>(query: CancellableQuery<A>, onInterrupted: A) => Effect.Effect<A>
+}
+
+/** The booted module plus the one thing worth reading off it eagerly. */
+export interface BootedSolver {
+  /**
+   * The Layer-owned WASM module. Exposed for the low-level `Z3` namespace the
+   * Spacer tier (G4) needs. Holding it does not usefully bypass the discipline — a
+   * raw query still has to be wrapped to be interruptible, and
+   * {@link SolverShape.solve} is that wrapper.
+   */
+  readonly module: Z3Module
+  /** The Z3 version string, read once at boot. */
+  readonly version: string
 }
 
 /**
@@ -208,7 +244,7 @@ export class SolverService extends Context.Service<SolverService, SolverShape>()
  * The `primeZ3(module)` call is the entire seam. See the header note in
  * `donor/formal/backend.ts`.
  */
-const acquire: Effect.Effect<{ module: Z3Module; version: string }> = Effect.promise(async () => {
+const acquire: Effect.Effect<BootedSolver> = Effect.promise(async () => {
   const { init } = await import('z3-solver')
   const module = (await init()) as Z3Module
   primeZ3(module)
@@ -236,21 +272,38 @@ const release = Effect.sync(() => {
 })
 
 /**
- * THE LAYER. `Layer.effect(Key)(Effect.acquireRelease(...))` — v4's scoped layer,
- * since `Layer.scoped` does not exist.
+ * THE LAYER. `Layer.effect(Key)(...)` — v4's scoped layer constructor, since
+ * `Layer.scoped` does not exist.
  *
- * Layers are MEMOIZED per build, so one build is one WASM init no matter how many
- * consumers yield the service (verified empirically in spike S3: two consumers →
- * `initCount === 1`). `Layer.fresh` defeats the memo and genuinely re-inits.
+ * Three things happen here, and each is load-bearing:
+ *
+ * 1. **The Layer's own `Scope` is captured** (`yield* Scope.Scope`). `Layer.effect`
+ *    discharges a `Scope` requirement from its construction effect — that is what
+ *    the signature's `Exclude<R, Scope.Scope>` means — so the scope is reachable
+ *    here and it is the one whose close should release the module.
+ * 2. **The `acquireRelease` is given that scope explicitly.** Wrapping it in
+ *    `Effect.cached` alone does NOT work: `cached` defers the effect, and by the
+ *    time a caller yields it the construction effect has returned and the ambient
+ *    `Scope` is gone — the probe failed with `Service not found: effect/Scope`.
+ *    Providing the captured scope means the deferred acquire still registers its
+ *    finalizer on the LAYER's scope, so ownership survives the deferral.
+ * 3. **`Effect.cached` makes the boot lazy AND once.** Verified: unused → zero
+ *    boots; used twice → one boot, one release on scope close.
+ *
+ * Layers are also memoized per BUILD, so two consumers of this service share one
+ * Layer instance and therefore one `cached` cell. `Layer.fresh` defeats that and
+ * genuinely re-inits.
  */
 export const solverServiceLayer: Layer.Layer<SolverService> = Layer.effect(SolverService)(
-  Effect.map(
-    Effect.acquireRelease(acquire, () => release),
-    ({ module, version }): SolverShape => ({
-      module,
-      version,
-      context: (name = 'symspec') => Effect.sync(() => module.Context(name)),
+  Effect.gen(function* () {
+    const scope = yield* Scope.Scope
+    const boot = yield* Effect.cached(
+      Effect.acquireRelease(acquire, () => release).pipe(Effect.provideService(Scope.Scope, scope)),
+    )
+    return SolverService.of({
+      boot,
+      context: (name = 'symspec') => Effect.map(boot, ({ module }) => module.Context(name)),
       solve: interruptibleSolve,
-    }),
-  ),
+    })
+  }),
 )
