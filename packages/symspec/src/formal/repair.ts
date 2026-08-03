@@ -28,24 +28,46 @@
  * the honesty the demotion-only doctrine rests on. The repair is additive: prose
  * for a human, ops and commands for an agent.
  *
- * ## Why `ops` is empty for every G2a reason, and that is not a stub
+ * ## `ops` are REAL as of G2b (spec AC-A-1)
  *
- * `Repair.ops` are ready-to-apply document-op records (the JSONL stream `import`
- * consumes). Every G2a demotion discharges through a COMMAND, not an op record,
- * and for a reason worth stating: the discharges are `glossary add` / `antonym add`
- * / `waive add` / a human rewrite, and the first three are commands whose op
- * records do not exist until the G2b ops land. Emitting a speculative op record
- * for a command whose shape is not yet fixed would be a guess an agent would then
- * apply. An empty `ops` with a correct `commands` is the honest shape; G2b fills
- * `ops` when the op vocabulary is real.
+ * G2a shipped this module with an always-empty `ops` and a header note explaining
+ * why: the discharges are `glossary add` / `antonym add` / `waive add`, and those
+ * were COMMANDS whose op records did not exist yet. Emitting a speculative record
+ * for a shape that was not fixed would have been a guess an agent then applied.
  *
- * The one reason with NO command at all is `uncovered-requirement`: the discharge
- * is a human rewrite ("share guard/response vocabulary"), and there is no command
- * that performs it. Synthesizing `symspec update …` there would be inventing
- * content. So it gets a repair with two empty arrays, which the envelope helper
- * OMITS — absence of a repair is the honest signal that no mechanical fix exists.
+ * `core/ops.ts` fixed the shape, so `ops` now carries the actual `DocumentOp`
+ * records — decodable by `apply` BY CONSTRUCTION, since the finding emits from the
+ * same union `apply` decodes. That closes the loop the donor could not:
+ *
+ *     symspec check --field data.coverage.demotions   # read the plan
+ *     symspec apply --ops plan.jsonl                  # execute it
+ *     symspec check                                   # the demotions are gone
+ *
+ * `commands` is PRESERVED alongside, and not as legacy. Two of the discharges are
+ * genuinely not ops — `--solver-budget-ms` is a different INVOCATION, and a
+ * `show`/`list` read is what an agent needs before it can author a rewrite — so a
+ * repair that carried only ops would have to either omit those or fabricate an op
+ * that performs them.
+ *
+ * ## Where `ops` is still empty, and why each is honest rather than unfinished
+ *
+ * - `uncovered-requirement` — the discharge is a REWRITE. No op performs one, and
+ *   synthesizing `{"op":"update","attr":"systemResponse","value":"…"}` would mean
+ *   inventing the replacement text, which is the one thing a repair must never do.
+ *   It carries the two READS that produce the input for a rewrite instead.
+ * - `solver-budget-exhausted` — the discharge is a different invocation, not a
+ *   document change.
+ * - `no-decide-tier-comparison` — WHICH terms to link is a judgment about the
+ *   document's meaning that no run can make. A fabricated `glossary` op here would
+ *   be the propose/decide violation the whole architecture forbids: it would commit
+ *   a decide-tier artifact from a guess.
+ *
+ * In each case the honest signal is a repair with commands and no ops, or (for a
+ * genuinely mechanical-fix-free reason) no repair at all — the envelope helper OMITS
+ * an all-empty repair, so "there is a repair, it is nothing" never reaches an agent.
  */
 
+import type { DocumentOp } from '../core/ops.ts'
 import type { CheckFinding, CoverageDemotion } from '../donor/pipeline/check.ts'
 import type { Exclusion } from '../donor/pipeline/gate.ts'
 import type { Repair } from '../kernel/envelope.ts'
@@ -114,20 +136,31 @@ export const repairForDemotion = (demotion: CoverageDemotion, context: RepairCon
         return { ops: [], commands: [`symspec show ${id} ${context.docPath}`] }
       }
       // The join: the gate carried the blocking findings as evidence, so each
-      // becomes a CONCRETE waive command. One per code, because waiving is
-      // per-code and an agent should be able to discharge them one at a time and
-      // re-check between.
+      // becomes a CONCRETE waive — one per code, because waiving is per-code and an
+      // agent should be able to discharge them one at a time and re-check between.
       const codes = [...new Set(exclusion.findings.map((f) => f.code))].sort()
       return {
-        ops: [],
+        // REAL OPS (G2b). Each is a `{"op":"waive"}` record `apply` decodes, scoped
+        // to the excluded requirement so it suppresses that finding THERE rather
+        // than document-wide. The reason carries a PLACEHOLDER an agent must replace
+        // — deliberately, because a waiver's whole value is its audit trail and
+        // synthesizing a justification would be the tool lying on the author's
+        // behalf. An agent that applies these unedited commits a visible
+        // `<why this finding does not apply>`, which is the honest failure mode.
+        ops: codes.map(
+          (code) =>
+            ({
+              op: 'waive',
+              code,
+              ref: id,
+              reason: 'reviewed: <why this finding does not apply>',
+            }) satisfies DocumentOp,
+        ),
         commands: [
-          // Look first: the honest primary repair is to fix the sentence, and an
-          // agent cannot rewrite what it has not read.
+          // Look FIRST: the honest primary repair is to fix the sentence, and an
+          // agent cannot rewrite what it has not read. A waiver is the fallback, not
+          // the recommendation — which is why the read leads and the ops are second.
           `symspec show ${id} ${context.docPath}`,
-          ...codes.map(
-            (code) =>
-              `symspec waive add ${code} --ref ${id} --reason "reviewed: <why this finding does not apply>" ${context.docPath}`,
-          ),
           `symspec check ${context.docPath}`,
         ],
       }
@@ -152,11 +185,14 @@ export const repairForDemotion = (demotion: CoverageDemotion, context: RepairCon
       // genuinely hand-verify the aggregate. So: waive, with the reason slot left
       // for the agent to fill from its own verification.
       return {
-        ops: [],
-        commands: [
-          `symspec waive add FND_RELATIONAL_UNCHECKED --reason "hand-verified: <the aggregate/relational constraint you checked>" ${context.docPath}`,
-          `symspec check ${context.docPath}`,
+        ops: [
+          {
+            op: 'waive',
+            code: 'FND_RELATIONAL_UNCHECKED',
+            reason: 'hand-verified: <the aggregate/relational constraint you checked>',
+          } satisfies DocumentOp,
         ],
+        commands: [`symspec check ${context.docPath}`],
       }
 
     // ---------------------------------------------------------------------
@@ -171,11 +207,18 @@ export const repairForDemotion = (demotion: CoverageDemotion, context: RepairCon
       }
 
     case 'semantic-tier-skipped':
-      // G2a ships no semantic tier, so the repair is the command that WILL supply
-      // it. Named as the future invocation rather than omitted, because an agent
-      // reading a demotion needs to know the tier is absent by configuration — not
-      // that its document is at fault. G2b makes this command real.
-      return { ops: [], commands: [`symspec check ${context.docPath} --semantic`] }
+      // NO OPS, and that is right: the tier was skipped by CONFIGURATION, so the
+      // document is not at fault and no document change discharges it. The repair is
+      // the invocation that runs the tier. As of G2b `--semantic` defaults ON, so
+      // reaching this demotion means someone passed `--semantic=false` or the model
+      // was unavailable — hence naming the env var too.
+      return {
+        ops: [],
+        commands: [
+          `symspec check ${context.docPath} --semantic`,
+          `SYMSPEC_EMBED_ALLOW_REMOTE=1 symspec check ${context.docPath}`,
+        ],
+      }
 
     case 'no-decide-tier-comparison':
       // No two requirements shared an atom. The mechanical lever is a glossary or
@@ -216,19 +259,31 @@ export const repairForDemotion = (demotion: CoverageDemotion, context: RepairCon
 }
 
 /**
- * Extract the runnable command a propose-only finding already names, plus the
- * re-check that closes the loop.
+ * Build the repair for a PROPOSE-ONLY candidate, from the finding that raised it.
  *
  * The semantic/quantity-alias findings BUILD their suggested invocation into their
  * message with the real verb heads or quantity labels substituted (see
- * `donor/formal/semantic.ts` and `donor/formal/quantity-alias.ts`). So the command
- * is READ from the finding, never reconstructed — which means it cannot drift from
- * what the finding advises, and a future change to the advice propagates for free.
+ * `donor/formal/semantic.ts` and `donor/formal/quantity-alias.ts`). So the advice is
+ * READ from the finding, never reconstructed — which means it cannot drift from what
+ * the finding says, and a future change to the wording propagates for free.
  *
- * Backticked-command extraction rather than a bespoke field on the finding: adding
- * a field would edit a transplanted tier file and break the verbatim guard, for a
- * value the message already contains. When the ops land in G2b and findings carry
- * structured suggestions natively, this parse goes away.
+ * ## The ONE reason this reason's `ops` are only the WAIVER
+ *
+ * An opposition candidate's message deliberately offers TWO mutually-exclusive
+ * remedies — `antonym add` if the verbs are opposites, `glossary add` if they are
+ * synonyms — with an explicit warning that committing the wrong one MANUFACTURES a
+ * false contradiction. Embeddings cannot tell which, because antonyms embed CLOSE.
+ *
+ * So emitting both as ops would hand an agent a plan that is wrong half the time and
+ * catastrophic in one direction, and emitting one would be the tool picking — which is
+ * exactly the propose/decide violation the architecture forbids. The commands carry
+ * both, in the order the finding recommends trying them, for a reviewer to choose
+ * from; the OP is the third, always-safe discharge: a reviewed WAIVER, which records
+ * "I triaged this and it is not a conflict" without asserting anything about the
+ * vocabulary.
+ *
+ * That is the honest shape: mechanically applicable where the choice is safe, prose
+ * where a human or agent has to decide.
  */
 const fromFindingMessage = (
   demotion: CoverageDemotion,
@@ -240,19 +295,30 @@ const fromFindingMessage = (
     (f) => f.code === code && f.requirementIds.some((id) => ids.has(id)),
   )
   if (finding === undefined) return NO_REPAIR
-  const commands = extractSymspecCommands(finding.message)
-  if (commands.length === 0) {
-    // The finding named no command. Fall back to the reviewed waiver, which is a
-    // legitimate discharge for a propose-only candidate the author has triaged.
-    return {
-      ops: [],
-      commands: [
-        `symspec waive add ${code} --reason "triaged: <why this candidate is not a conflict>" ${context.docPath}`,
-        `symspec check ${context.docPath}`,
-      ],
-    }
+
+  // The always-safe discharge, as a real op. Scoped to the requirements the candidate
+  // names when there is exactly one, document-wide otherwise — a waiver scoped to the
+  // wrong requirement would suppress nothing.
+  const scoped = demotion.requirementIds.length === 1 ? demotion.requirementIds[0] : undefined
+  const waive: DocumentOp = {
+    op: 'waive',
+    code,
+    reason: 'triaged: <why this candidate is not a conflict>',
+    ...(scoped !== undefined ? { ref: scoped } : {}),
   }
-  return { ops: [], commands: [...commands, `symspec check ${context.docPath}`] }
+
+  const advice = extractSymspecCommands(finding.message)
+  return {
+    ops: [waive],
+    commands: [
+      // The finding's own two alternatives FIRST, because deciding the vocabulary is
+      // the better outcome — a committed glossary or antonym link lets the solver
+      // PROVE or dismiss the conflict, where a waiver only records that someone
+      // looked. The waiver op is the fallback for when neither applies.
+      ...advice,
+      `symspec check ${context.docPath}`,
+    ],
+  }
 }
 
 /**
