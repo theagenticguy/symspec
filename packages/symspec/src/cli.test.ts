@@ -44,9 +44,11 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Manifest } from './kernel/operation.ts'
 
 const BUNDLE = fileURLToPath(new URL('../dist/cli.mjs', import.meta.url))
@@ -494,6 +496,239 @@ describe('output flags on the wire', () => {
       for (const flag of ['pretty', 'dense', 'evidence', 'field']) {
         expect(props, `${op.name} publishes ${flag}`).not.toContain(flag)
       }
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The document lifecycle, against the REAL bundle and the REAL filesystem
+// ---------------------------------------------------------------------------
+
+/**
+ * These are the end-to-end complement to `operations/document.test.ts` and
+ * `operations/import.test.ts`, which run the same handlers against an in-memory
+ * store. Both layers are needed for different reasons:
+ *
+ * - the in-memory tests can assert what a handler WROTE, cheaply, and cover the
+ *   branches (duplicate keys, widened waiver scopes) that would be tedious to set
+ *   up on disk;
+ * - THESE prove the wiring — that the layers are actually provided at the
+ *   composition root, that the positional/flag mapping matches the schema, that
+ *   stdin really reaches `import`, and that a real atomic write lands a real file
+ *   an `--field` projection can then read back.
+ *
+ * A missing layer at the composition root is invisible to the in-memory tests and
+ * fatal in production, which is exactly why these spawn the bundle.
+ */
+describe('the document lifecycle end to end', () => {
+  const workDirs: string[] = []
+
+  const work = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'symspec-cli-'))
+    workDirs.push(dir)
+    return dir
+  }
+
+  afterAll(async () => {
+    const { rm } = await import('node:fs/promises')
+    await Promise.all(workDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
+  })
+
+  const FIXTURES = fileURLToPath(new URL('./operations/__fixtures__', import.meta.url))
+
+  it('init creates a real file that list then reads', () => {
+    const dir = work()
+    const doc = join(dir, 'requirements.json')
+    expect(run('init', doc).code).toBe(0)
+    expect(existsSync(doc)).toBe(true)
+    const { envelope, code } = runJson('list', doc)
+    expect(code).toBe(0)
+    expect((envelope.data as { count: number; docVersion: number }).count).toBe(0)
+    expect((envelope.data as { docVersion: number }).docVersion).toBe(3)
+  })
+
+  it('init REFUSES to overwrite, exits 2, and leaves the file byte-identical', () => {
+    const dir = work()
+    const doc = join(dir, 'requirements.json')
+    run('init', doc)
+    const before = readFileSync(doc, 'utf8')
+    const { envelope, code } = runJson('init', doc)
+    expect(code).toBe(2)
+    expect(envelope.code).toBe('ERR_DOC_EXISTS')
+    expect(readFileSync(doc, 'utf8')).toBe(before)
+  })
+
+  it('init --force overwrites', () => {
+    const dir = work()
+    const doc = join(dir, 'requirements.json')
+    run('init', doc)
+    expect(run('init', doc, '--force').code).toBe(0)
+  })
+
+  it('honors SYMSPEC_DOC when no path is given', () => {
+    const dir = work()
+    const doc = join(dir, 'from-env.json')
+    const r = spawnSync(process.execPath, [BUNDLE, 'init'], {
+      encoding: 'utf8',
+      env: { ...process.env, SYMSPEC_DOC: doc },
+    })
+    expect(r.status).toBe(0)
+    expect(existsSync(doc)).toBe(true)
+  })
+
+  it('list on a missing document is ERR_DOC_NOT_FOUND at exit 2', () => {
+    const dir = work()
+    const { envelope, code } = runJson('list', join(dir, 'absent.json'))
+    expect(code).toBe(2)
+    expect(envelope.code).toBe('ERR_DOC_NOT_FOUND')
+  })
+
+  it('imports the agent-run-triggers stream from --file, with exact counts', () => {
+    const dir = work()
+    const doc = join(dir, 'art.json')
+    const { envelope, code } = runJson(
+      'import',
+      '--file',
+      join(FIXTURES, 'hex-bonk-agent-run-triggers.ops.jsonl'),
+      '--doc',
+      doc,
+    )
+    expect(code).toBe(0)
+    const data = envelope.data as {
+      imported: Record<string, number>
+      gaps: string[]
+      problems: unknown[]
+      unresolved: unknown[]
+    }
+    expect(data.imported).toEqual({
+      requirements: 25,
+      edges: 22,
+      glossary: 0,
+      antonyms: 0,
+      waivers: 8,
+    })
+    expect(data.problems).toEqual([])
+    expect(data.unresolved).toEqual([])
+    expect(data.gaps.length).toBeGreaterThan(0)
+    // The imported document is loadable by the same binary — the round trip that
+    // matters operationally.
+    expect((runJson('list', doc).envelope.data as { count: number }).count).toBe(25)
+  })
+
+  it('imports the schedule-management stream from STDIN', () => {
+    // stdin is what makes the whole migration one pipe, and it is the one path an
+    // in-memory test cannot cover.
+    const dir = work()
+    const doc = join(dir, 'sm.json')
+    const stream = readFileSync(join(FIXTURES, 'hex-bonk-schedule-management.ops.jsonl'), 'utf8')
+    const r = spawnSync(process.execPath, [BUNDLE, 'import', '--doc', doc], {
+      encoding: 'utf8',
+      input: stream,
+    })
+    expect(r.status).toBe(0)
+    const data = (JSON.parse(r.stdout) as { data: { imported: Record<string, number> } }).data
+    expect(data.imported.requirements).toBe(42)
+    expect(data.imported.edges).toBe(40)
+    expect((runJson('list', doc).envelope.data as { count: number }).count).toBe(42)
+  })
+
+  it('import --dry-run reports everything and writes NOTHING', () => {
+    const dir = work()
+    const doc = join(dir, 'never-written.json')
+    const { envelope, code } = runJson(
+      'import',
+      '--file',
+      join(FIXTURES, 'hex-bonk-agent-run-triggers.ops.jsonl'),
+      '--doc',
+      doc,
+      '--dry-run',
+    )
+    expect(code).toBe(0)
+    const data = envelope.data as { written: boolean; imported: Record<string, number> }
+    expect(data.written).toBe(false)
+    expect(data.imported.requirements).toBe(25)
+    expect(existsSync(doc)).toBe(false)
+  })
+
+  it('import refuses to clobber an existing document', () => {
+    const dir = work()
+    const doc = join(dir, 'requirements.json')
+    run('init', doc)
+    const before = readFileSync(doc, 'utf8')
+    const { envelope, code } = runJson(
+      'import',
+      '--file',
+      join(FIXTURES, 'hex-bonk-agent-run-triggers.ops.jsonl'),
+      '--doc',
+      doc,
+    )
+    expect(code).toBe(2)
+    expect(envelope.code).toBe('ERR_DOC_EXISTS')
+    expect(readFileSync(doc, 'utf8')).toBe(before)
+  })
+
+  it('import with an EMPTY stdin is a usage error, not a silent empty document', () => {
+    const dir = work()
+    const doc = join(dir, 'empty.json')
+    const r = spawnSync(process.execPath, [BUNDLE, 'import', '--doc', doc], {
+      encoding: 'utf8',
+      input: '',
+    })
+    expect(r.status).toBe(2)
+    expect((JSON.parse(r.stdout) as { code: string }).code).toBe('ERR_USAGE')
+    expect(existsSync(doc)).toBe(false)
+  })
+
+  it('show resolves a stable KEY and a UUID to the same requirement', () => {
+    const dir = work()
+    const doc = join(dir, 'art.json')
+    run('import', '--file', join(FIXTURES, 'hex-bonk-agent-run-triggers.ops.jsonl'), '--doc', doc)
+
+    const byKey = runJson('show', 'TX-B6', doc)
+    expect(byKey.code).toBe(0)
+    const requirement = (byKey.envelope.data as { requirement: { id: string } }).requirement
+    const byId = runJson('show', requirement.id, doc)
+    expect(byId.code).toBe(0)
+    expect((byId.envelope.data as { requirement: unknown }).requirement).toEqual(requirement)
+    // resolvedFrom differs — that IS the mapping an agent needs to persist a UUID.
+    expect((byKey.envelope.data as { resolvedFrom: string }).resolvedFrom).toBe('TX-B6')
+  })
+
+  it('show on a near miss carries did-you-mean and a runnable repair', () => {
+    const dir = work()
+    const doc = join(dir, 'art.json')
+    run('import', '--file', join(FIXTURES, 'hex-bonk-agent-run-triggers.ops.jsonl'), '--doc', doc)
+    const { envelope, code } = runJson('show', 'TX-B7', doc)
+    expect(code).toBe(2)
+    expect(envelope.code).toBe('ERR_NOT_FOUND')
+    const repair = envelope.repair as { commands: string[] }
+    expect(repair.commands[0]).toMatch(/^symspec show TX-B/)
+  })
+
+  it('show without a ref is a USAGE error (exit 1, no envelope)', () => {
+    // The ref field is required in the schema, so the CLI fails before a handler
+    // runs — derived from the schema, not hand-wired.
+    const { stdout, code } = run('show')
+    expect(code).toBe(1)
+    expect(() => JSON.parse(stdout) as unknown).toThrow()
+  })
+
+  it('every document command reaches its layers — no missing-service crash', () => {
+    // A layer missing at the composition root is invisible to the in-memory tests
+    // and fatal in production. This is the assertion that catches it: an unprovided
+    // service surfaces as a non-envelope crash on stderr, so a clean typed envelope
+    // on stdout proves the wiring.
+    const dir = work()
+    const doc = join(dir, 'requirements.json')
+    for (const args of [
+      ['init', doc],
+      ['list', doc],
+      ['show', 'nope', doc],
+      ['import', '--doc', join(dir, 'x.json'), '--file', join(dir, 'absent.jsonl')],
+    ]) {
+      const { stdout, stderr } = run(...args)
+      expect(() => JSON.parse(stdout) as unknown, args.join(' ')).not.toThrow()
+      expect(stderr, args.join(' ')).toBe('')
     }
   })
 })

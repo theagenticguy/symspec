@@ -21,14 +21,22 @@
  */
 
 import { Console, Effect, Option, Schema } from 'effect'
-import { Command, Flag } from 'effect/unstable/cli'
+import { Argument, Command, Flag } from 'effect/unstable/cli'
 import { isErrorEnvelope } from './kernel/envelope.ts'
 import { toErrorEnvelope } from './kernel/errors.ts'
 import { exitCodeForEnvelope } from './kernel/exit.ts'
 import { fieldMetadata, flagName, type Operation, runOperation } from './kernel/operation.ts'
 import { type OutputFlags, renderOutput } from './kernel/output.ts'
 import { VERSION } from './kernel/version.ts'
-import { explainOp, manifestOp, versionOp } from './operations/index.ts'
+import {
+  explainOp,
+  importOp,
+  initOp,
+  listOp,
+  manifestOp,
+  showOp,
+  versionOp,
+} from './operations/index.ts'
 
 // ---------------------------------------------------------------------------
 // Emitting an envelope
@@ -60,8 +68,8 @@ import { explainOp, manifestOp, versionOp } from './operations/index.ts'
  * it. "Output flags never change the exit code" is therefore structural here, not
  * a convention someone has to remember.
  */
-const emit = <Fields extends Schema.Struct.Fields, T extends string, D>(
-  op: Operation<Fields, T, D>,
+const emit = <Fields extends Schema.Struct.Fields, T extends string, D, R>(
+  op: Operation<Fields, T, D, R>,
   raw: unknown,
 ) =>
   Effect.gen(function* () {
@@ -190,6 +198,38 @@ const stringFlag = (
   field: string,
 ) => decorate(op, field, Flag.string(flagName(field)))
 
+/** A boolean flag for `field`, spelled in kebab-case and decorated from the schema. */
+const booleanFlag = (
+  op: { readonly name: string; readonly input: Schema.Struct<Schema.Struct.Fields> },
+  field: string,
+) => decorate(op, field, Flag.boolean(flagName(field)))
+
+/**
+ * An OPTIONAL POSITIONAL argument for a doc-path field, decorated from the schema.
+ *
+ * A positional (not a flag) for the document path, matching the donor's shape:
+ * `symspec list ./requirements.json` is what an agent naturally types, and the
+ * donor's own error text confirms an agent tries exactly that. The description is
+ * still read from the schema, so the single-source property holds across the
+ * flag/argument distinction.
+ *
+ * `Argument.optional` yields an `Option`, unwrapped to `null` at the handler
+ * boundary — the same convention the schema's `NullOr` default encodes, so the two
+ * halves agree without a translation table.
+ */
+const pathArgument = (
+  op: { readonly name: string; readonly input: Schema.Struct<Schema.Struct.Fields> },
+  field: string,
+) => {
+  const meta = fieldMetadata(op.input).find((f) => f.name === field)
+  if (meta === undefined) {
+    throw new Error(
+      `Operation "${op.name}" has no input field "${field}" to derive an argument from`,
+    )
+  }
+  return Argument.optional(Argument.string(field).pipe(Argument.withDescription(meta.description)))
+}
+
 // ---------------------------------------------------------------------------
 // The command tree
 // ---------------------------------------------------------------------------
@@ -211,9 +251,66 @@ const versionCommand = Command.make('version', {}, () => emit(versionOp, {})).pi
   Command.withDescription(versionOp.summary),
 )
 
+const initCommand = Command.make(
+  'init',
+  { file: pathArgument(initOp, 'file'), force: booleanFlag(initOp, 'force') },
+  (config) => emit(initOp, { file: Option.getOrNull(config.file), force: config.force }),
+).pipe(Command.withDescription(initOp.summary))
+
+const listCommand = Command.make('list', { file: pathArgument(listOp, 'file') }, (config) =>
+  emit(listOp, { file: Option.getOrNull(config.file) }),
+).pipe(Command.withDescription(listOp.summary))
+
+/**
+ * `show <ref>` takes its ref as a REQUIRED positional, and the doc path as a
+ * second optional one — so `symspec show TX-B6` and `symspec show TX-B6 ./doc.json`
+ * both read naturally. A missing ref is a usage error (exit 1) because the schema
+ * field is required, which is derived, not hand-wired.
+ */
+const showCommand = Command.make(
+  'show',
+  {
+    ref: Argument.string('ref').pipe(
+      Argument.withDescription(
+        fieldMetadata(showOp.input).find((f) => f.name === 'ref')?.description ?? '',
+      ),
+    ),
+    file: pathArgument(showOp, 'file'),
+  },
+  (config) => emit(showOp, { ref: config.ref, file: Option.getOrNull(config.file) }),
+).pipe(Command.withDescription(showOp.summary))
+
+/**
+ * `import` takes everything as FLAGS, not positionals — deliberately unlike the
+ * other document commands.
+ *
+ * It has TWO paths (the op stream in, the document out), and a bare `symspec
+ * import a.jsonl b.json` would be ambiguous about which is which at exactly the
+ * moment an agent is doing a one-shot migration it cannot easily undo. Named flags
+ * make the direction unmistakable.
+ */
+const importCommand = Command.make(
+  'import',
+  {
+    file: stringFlag(importOp, 'file'),
+    doc: stringFlag(importOp, 'doc'),
+    force: booleanFlag(importOp, 'force'),
+    dryRun: booleanFlag(importOp, 'dryRun'),
+  },
+  (config) => emit(importOp, config),
+).pipe(Command.withDescription(importOp.summary))
+
 /** The root command with every subcommand attached — the runnable tree. */
 const rootWithSubcommands = root.pipe(
-  Command.withSubcommands([manifestCommand, explainCommand, versionCommand]),
+  Command.withSubcommands([
+    initCommand,
+    importCommand,
+    listCommand,
+    showCommand,
+    manifestCommand,
+    explainCommand,
+    versionCommand,
+  ]),
 )
 
 /** The runnable CLI, with `--version` wired to the single version constant. */

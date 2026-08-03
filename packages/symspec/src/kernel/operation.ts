@@ -204,11 +204,25 @@ export interface OperationMetadata {
 /**
  * One operation: the whole definition of a use case, as data.
  *
- * Generic in its input fields, its success `type`, and its payload so a handler's
- * return type is precise at the definition site. The heterogeneous TABLE is
- * stored as {@link OperationMetadata}.
+ * Generic in its input fields, its success `type`, its payload, and its handler's
+ * SERVICE REQUIREMENTS, so a handler's full signature is precise at the
+ * definition site. The heterogeneous TABLE is stored as
+ * {@link OperationMetadata}.
+ *
+ * ## Why `R` exists
+ *
+ * `manifest`, `explain`, and `version` need nothing from the world, so G1's first
+ * three operations had `R = never` implicitly. Every operation that touches a
+ * DOCUMENT needs the store and the path resolver, and those arrive as Effect
+ * services. Declaring the requirement in the type — rather than reaching for a
+ * module-level singleton — is what keeps a handler testable against an in-memory
+ * store and keeps the composition root the only place that decides where a
+ * document actually lives.
+ *
+ * `R` defaults to `never` so the three existing definitions are untouched: an
+ * operation that needs nothing still reads as `Operation<Fields, T, D>`.
  */
-export interface Operation<Fields extends Schema.Struct.Fields, T extends string, D> {
+export interface Operation<Fields extends Schema.Struct.Fields, T extends string, D, R = never> {
   /** The CLI subcommand name and the manifest key. */
   readonly name: string
   /** The single source for the manifest summary AND the `--help` description. */
@@ -217,10 +231,10 @@ export interface Operation<Fields extends Schema.Struct.Fields, T extends string
   readonly type: NotError<T>
   /** Runtime validator, manifest JSON-Schema source, and CLI flag origin, at once. */
   readonly input: Schema.Struct<Fields>
-  /** The behavior. Fails only with a catalog error. */
+  /** The behavior. Fails only with a catalog error; may require services. */
   readonly handler: (
     input: Schema.Struct<Fields>['Type'],
-  ) => Effect.Effect<OkEnvelope<T, D>, OperationalError>
+  ) => Effect.Effect<OkEnvelope<T, D>, OperationalError, R>
 }
 
 /**
@@ -279,9 +293,9 @@ const assertFieldMetadata = (name: string, input: Schema.Struct<Schema.Struct.Fi
  * The identity-with-a-check shape is what makes the table's invariants
  * non-negotiable: an operation that cannot project cannot be constructed.
  */
-export const defineOperation = <Fields extends Schema.Struct.Fields, T extends string, D>(
-  op: Operation<Fields, T, D>,
-): Operation<Fields, T, D> => {
+export const defineOperation = <Fields extends Schema.Struct.Fields, T extends string, D, R>(
+  op: Operation<Fields, T, D, R>,
+): Operation<Fields, T, D, R> => {
   assertFieldMetadata(op.name, op.input)
   return op
 }
@@ -300,20 +314,24 @@ export const defineOperation = <Fields extends Schema.Struct.Fields, T extends s
  * Kept fully generic (not typed against {@link AnyOperation}) for the reason
  * documented there.
  */
-export const runOperation = <Fields extends Schema.Struct.Fields, T extends string, D>(
-  op: Operation<Fields, T, D>,
+export const runOperation = <Fields extends Schema.Struct.Fields, T extends string, D, R>(
+  op: Operation<Fields, T, D, R>,
   raw: unknown,
 ): Effect.Effect<
   OkEnvelope<T, D>,
   OperationalError | Schema.SchemaError,
-  // The REQUIREMENT channel is `Schema.Struct.DecodingServices<Fields>`, not
-  // `never`. Decoding a schema may require services (an effectful default, a
-  // transformation that needs a dependency), and that shows up in R. Declaring
-  // it `never` is a type error rather than a widening, which is the honest
-  // outcome: the channel is propagated so a future op whose input genuinely
-  // needs a service composes, and today's service-free schemas resolve it to
-  // `never` at each concrete call site anyway.
-  Schema.Struct.DecodingServices<Fields>
+  // TWO requirement sources, unioned:
+  //
+  // - `R` — what the HANDLER needs (the doc store, the path resolver, …). The
+  //   composition root provides these; a handler that needs nothing resolves it
+  //   to `never`.
+  // - `Schema.Struct.DecodingServices<Fields>` — what DECODING needs. Not
+  //   `never`: a schema may require a service for an effectful default or a
+  //   transformation, and that shows up in R. Declaring it `never` is a type
+  //   error rather than a widening, which is the honest outcome — the channel is
+  //   propagated so a future op whose input genuinely needs a service composes,
+  //   and today's service-free schemas resolve it to `never` at the call site.
+  R | Schema.Struct.DecodingServices<Fields>
 > =>
   Effect.gen(function* () {
     const input = yield* Schema.decodeUnknownEffect(op.input, { onExcessProperty: 'error' })(raw)

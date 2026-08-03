@@ -2,8 +2,10 @@
  * THE OPERATIONS TABLE. Every agent- and human-facing surface is a projection of
  * the {@link OPERATIONS} array at the bottom of this file.
  *
- * G1 ships three operations, chosen because together they exercise the whole
- * kernel end-to-end rather than because they are easy:
+ * G1 ships seven operations in two groups.
+ *
+ * The three SELF-DESCRIPTION operations, chosen because together they exercise the
+ * whole kernel end-to-end rather than because they are easy:
  *
  * - `manifest` — the self-description projection. Proves the table can describe
  *   itself, including its own row.
@@ -12,8 +14,19 @@
  * - `version` — the minimal op: no input fields at all, which is its own edge
  *   case for the flag-derivation and manifest projections.
  *
+ * And the four DOCUMENT operations (`../core/`-backed, defined in `./document.ts`
+ * and `./import.ts`):
+ *
+ * - `init` — create an empty v3 document, refusing to clobber an existing one.
+ * - `import` — consume a donor reproduce-op stream into a v3 document. The whole
+ *   v2 migration story.
+ * - `list` / `show <ref>` — the reads, resolving a ref through the one chokepoint.
+ *
  * Appending an operation here is the ONLY edit needed to make it appear in the
- * CLI tree, the manifest, and `--help`.
+ * manifest and in `--help`. (The CLI tree also needs one `Command.make` in
+ * `../cli.ts`, because nothing in a JSON Schema says whether a field should be a
+ * flag or a positional argument — that seam is guarded by
+ * `{onExcessProperty:'error'}` and by a drift test asserting the two lists agree.)
  */
 
 import { Effect, Schema } from 'effect'
@@ -32,6 +45,11 @@ import {
   type Manifest,
 } from '../kernel/operation.ts'
 import { VERSION } from '../kernel/version.ts'
+import { initOp, listOp, showOp } from './document.ts'
+import { importOp } from './import.ts'
+
+export { initOp, listOp, showOp } from './document.ts'
+export { importOp, streamSourceLayer } from './import.ts'
 
 /**
  * The exit-code table the manifest publishes, single-sourced from the exit
@@ -152,8 +170,22 @@ export const versionOp = defineOperation({
 /**
  * THE TABLE. Every surface is a projection of this array; appending here is the
  * only edit an operation needs to become visible everywhere.
+ *
+ * Order is the order `--help` and the manifest list them, so it is chosen for a
+ * reader: the document lifecycle first (`init` → `import` → `list` → `show`),
+ * then the self-description operations an agent uses to orient (`manifest`,
+ * `explain`, `version`). Nothing depends on this order mechanically — it is
+ * presentation, and the drift tests are order-agnostic.
  */
-export const OPERATIONS = [manifestOp, explainOp, versionOp] as const
+export const OPERATIONS = [
+  initOp,
+  importOp,
+  listOp,
+  showOp,
+  manifestOp,
+  explainOp,
+  versionOp,
+] as const
 
 /**
  * The table as the existential array the iteration sites consume.

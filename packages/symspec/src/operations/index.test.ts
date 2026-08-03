@@ -21,8 +21,26 @@ import {
 } from './index.ts'
 
 describe('the table', () => {
-  it('holds the three G1 operations', () => {
-    expect(OPERATIONS.map((op) => op.name)).toEqual(['manifest', 'explain', 'version'])
+  /**
+   * Pins the shipped operation set and its ORDER, since the order is what `--help`
+   * and the manifest present to a reader — the document lifecycle first, then the
+   * self-description operations an agent uses to orient.
+   *
+   * This is a deliberate snapshot, not a coincidence: adding an operation is
+   * supposed to require exactly one edit to `OPERATIONS`, and this test makes that
+   * edit visible in review rather than letting the agent-facing surface grow
+   * silently.
+   */
+  it('holds the seven G1 operations, in presentation order', () => {
+    expect(OPERATIONS.map((op) => op.name)).toEqual([
+      'init',
+      'import',
+      'list',
+      'show',
+      'manifest',
+      'explain',
+      'version',
+    ])
   })
 
   it('gives every operation a name, a summary and a non-error type', () => {

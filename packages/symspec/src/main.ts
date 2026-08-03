@@ -15,16 +15,42 @@
  *    stack trace AFTER the JSON envelope.
  * 3. `NodeServices.layer` — supplies the whole CLI `Environment`
  *    (`FileSystem | Path | Terminal | ChildProcessSpawner | Stdio`) on its own.
+ *
+ * ## THE COMPOSITION ROOT
+ *
+ * This file is the only place that decides where a document lives and where an op
+ * stream comes from. Every document operation declares those as REQUIREMENTS in
+ * its type (`DocStore`, `DocPath`, `StreamSource`), so:
+ *
+ * - a handler cannot reach for a filesystem singleton, because it has none;
+ * - a test provides an in-memory store instead and exercises the real handler;
+ * - and adding an operation that needs a new service is a TYPE ERROR here until
+ *   the layer is supplied — the failure lands at the composition root, at compile
+ *   time, rather than as a missing-service crash in production.
+ *
+ * `Layer.provideMerge(appLayer, NodeServices.layer)` rather than two separate
+ * `provide`s: the app layers CONSUME `FileSystem` / `Path` / `Stdio` from
+ * `NodeServices` and also need those services to remain in the final context (the
+ * CLI runtime itself requires the `Environment`). `provideMerge` composes top-down
+ * and keeps both, which a bare `provide` would not.
  */
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Effect, Logger } from 'effect'
+import { Effect, Layer, Logger } from 'effect'
 import { cli } from './cli.ts'
+import { storeLayer } from './core/store.ts'
+import { streamSourceLayer } from './operations/index.ts'
+
+/** Everything the document operations require, over the platform services. */
+const appLayer = Layer.provideMerge(
+  Layer.mergeAll(storeLayer, streamSourceLayer),
+  NodeServices.layer,
+)
 
 cli.pipe(
   // Stdout is the envelope contract; diagnostics belong on stderr. Provided as a
   // service VALUE because LogToStderr is a Context.Reference, not a Layer.
   Effect.provideService(Logger.LogToStderr, true),
-  Effect.provide(NodeServices.layer),
+  Effect.provide(appLayer),
   NodeRuntime.runMain(),
 )
