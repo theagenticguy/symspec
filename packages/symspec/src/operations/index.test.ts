@@ -50,6 +50,14 @@ describe('the table', () => {
       'waive',
       'glossary',
       'antonym',
+      // G4 REACHABILITY AUTHORING, after the side tables and before `apply` because
+      // that is the order an agent uses them: declare the state variables, set the
+      // model-wide initial predicate, classify the responses that touch them.
+      // Three operations rather than one because they are scoped differently — two
+      // document-scoped, one requirement-scoped (the donor's "two tables, not one").
+      'state',
+      'state-initial',
+      'classify',
       'apply',
       'list',
       'show',

@@ -33,6 +33,7 @@ import {
   antonymOp,
   applyOpDefinition,
   checkOp,
+  classifyOp,
   deleteOp,
   explainOp,
   glossaryOp,
@@ -44,6 +45,8 @@ import {
   manifestOp,
   parseOp,
   showOp,
+  stateInitialOp,
+  stateOp,
   updateOp,
   versionOp,
   waiveOp,
@@ -665,6 +668,95 @@ const antonymCommand = Command.make(
 ).pipe(Command.withDescription(antonymOp.summary))
 
 /**
+ * `state <name>` — the variable name as a positional, everything else a flag.
+ *
+ * A positional for the name because it is what the command is ABOUT and it is present
+ * in both modes (declare and `--remove`), which is exactly the test `update` fails
+ * (its ref is absent in bulk mode, so it stays a flag).
+ */
+const stateCommand = Command.make(
+  'state',
+  {
+    name: positional(stateOp, 'name'),
+    type: Flag.optional(stringFlag(stateOp, 'type')),
+    domain: Flag.optional(stringFlag(stateOp, 'domain')),
+    min: Flag.optional(stringFlag(stateOp, 'min')),
+    max: Flag.optional(stringFlag(stateOp, 'max')),
+    frame: Flag.optional(stringFlag(stateOp, 'frame')),
+    initial: Flag.optional(stringFlag(stateOp, 'initial')),
+    remove: booleanFlag(stateOp, 'remove'),
+    file: Flag.optional(stringFlag(stateOp, 'file')),
+    dryRun: booleanFlag(stateOp, 'dryRun'),
+  },
+  (config) =>
+    emit(stateOp, {
+      name: config.name,
+      type: Option.getOrNull(config.type),
+      domain: Option.getOrNull(config.domain),
+      // `--min`/`--max` are STRING flags whose absence is `null`, not integer flags.
+      // An optional integer flag would need an out-of-band sentinel for "absent", and
+      // every plausible sentinel is a legal bound (0 especially) — the same trap
+      // `check --fail-on-unmatched` documents. The handler parses and reports a
+      // non-integer as ERR_USAGE naming the flag.
+      min: Option.getOrNull(config.min),
+      max: Option.getOrNull(config.max),
+      frame: Option.getOrNull(config.frame),
+      initial: Option.getOrNull(config.initial),
+      remove: config.remove,
+      file: Option.getOrNull(config.file),
+      dryRun: config.dryRun,
+    }),
+).pipe(Command.withDescription(stateOp.summary))
+
+/** `state-initial [predicate]` — the predicate as an optional positional, since
+ * `--clear` is the other mode and takes no value. */
+const stateInitialCommand = Command.make(
+  'state-initial',
+  {
+    predicate: optionalPositional(stateInitialOp, 'predicate'),
+    clear: booleanFlag(stateInitialOp, 'clear'),
+    file: Flag.optional(stringFlag(stateInitialOp, 'file')),
+    dryRun: booleanFlag(stateInitialOp, 'dryRun'),
+  },
+  (config) =>
+    emit(stateInitialOp, {
+      predicate: Option.getOrNull(config.predicate),
+      clear: config.clear,
+      file: Option.getOrNull(config.file),
+      dryRun: config.dryRun,
+    }),
+).pipe(Command.withDescription(stateInitialOp.summary))
+
+/**
+ * `classify <ref>` — the ref as a positional, the kind and expression as flags.
+ *
+ * The expression is a FLAG rather than a second positional deliberately: it is a
+ * quoted expression that reads as prose (`"not (lock_held and pending)"`), and a bare
+ * `symspec classify TX-C1 constraint "not (…)"` puts three unlabelled arguments in a
+ * row where two of them are easy to transpose.
+ */
+const classifyCommand = Command.make(
+  'classify',
+  {
+    ref: positional(classifyOp, 'ref'),
+    kind: Flag.optional(stringFlag(classifyOp, 'kind')),
+    expression: Flag.optional(stringFlag(classifyOp, 'expression')),
+    retract: booleanFlag(classifyOp, 'retract'),
+    file: Flag.optional(stringFlag(classifyOp, 'file')),
+    dryRun: booleanFlag(classifyOp, 'dryRun'),
+  },
+  (config) =>
+    emit(classifyOp, {
+      ref: config.ref,
+      kind: Option.getOrNull(config.kind),
+      expression: Option.getOrNull(config.expression),
+      retract: config.retract,
+      file: Option.getOrNull(config.file),
+      dryRun: config.dryRun,
+    }),
+).pipe(Command.withDescription(classifyOp.summary))
+
+/**
  * `apply` takes everything as FLAGS, and the naming is the donor's lesson applied.
  *
  * It has TWO paths (the op stream in, the document out), so `--ops` and `--file` are
@@ -726,6 +818,9 @@ const rootWithSubcommands = root.pipe(
     waiveCommand,
     glossaryCommand,
     antonymCommand,
+    stateCommand,
+    stateInitialCommand,
+    classifyCommand,
     applyCommand,
     listCommand,
     showCommand,

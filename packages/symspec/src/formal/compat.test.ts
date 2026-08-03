@@ -293,9 +293,24 @@ describe('compat — the two dropped v3 fields have no consumer in the G2a path'
       ...base,
       stateModel: {
         variables: [
-          { name: 'session_authenticated', type: 'bool', initial: 'session_authenticated = false' },
-          { name: 'retry_count', type: 'int', domain: { min: 0, max: 5 } },
-          { name: 'run_state', type: 'enum', domain: ['PENDING', 'RUNNING', 'DONE'] },
+          // `frame` is REQUIRED on the decoded type as of G4 (it carries a decoding
+          // default, so a FILE may omit it — a hand-built value may not). Spelled
+          // `volatile` here rather than `stable` because that is the schema's own
+          // default and this fixture is meant to be an ordinary state model, not one
+          // asserting a hypothesis.
+          {
+            name: 'session_authenticated',
+            type: 'bool',
+            frame: 'volatile',
+            initial: 'session_authenticated = false',
+          },
+          { name: 'retry_count', type: 'int', frame: 'volatile', domain: { min: 0, max: 5 } },
+          {
+            name: 'run_state',
+            type: 'enum',
+            frame: 'volatile',
+            domain: ['PENDING', 'RUNNING', 'DONE'],
+          },
         ],
         initial: 'run_state = PENDING and retry_count = 0',
       },

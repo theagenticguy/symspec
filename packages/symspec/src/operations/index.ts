@@ -26,6 +26,16 @@
  * mutation ops. `parse` is listed with the document lifecycle rather than with the
  * analysis ops because it is where a document COMES FROM.
  *
+ * G4 adds the REACHABILITY authoring surface — `state` (declare a state variable),
+ * `state-initial` (the model-wide initial predicate), and `classify` (label a
+ * requirement's response as an effect or a constraint, with its expression). Three
+ * operations rather than one because they are scoped differently: two are
+ * document-scoped and one is requirement-scoped, which is the donor's own "two tables,
+ * not one" finding. They are the only way to author the input the Spacer reachability
+ * tier reads, and every one of them validates references against the DECLARED
+ * variables — so an undeclared name is an `ERR_USAGE` here rather than an unkillable
+ * solver hang inside `check`.
+ *
  * Appending an operation here is the ONLY edit needed to make it appear in the
  * manifest and in `--help`. (The CLI tree also needs one `Command.make` in
  * `../cli.ts`, because nothing in a JSON Schema says whether a field should be a
@@ -60,9 +70,12 @@ import {
   addOp,
   antonymOp,
   applyOpDefinition,
+  classifyOp,
   deleteOp,
   glossaryOp,
   linkOp,
+  stateInitialOp,
+  stateOp,
   updateOp,
   waiveOp,
 } from './mutation.ts'
@@ -76,9 +89,12 @@ export {
   addOp,
   antonymOp,
   applyOpDefinition,
+  classifyOp,
   deleteOp,
   glossaryOp,
   linkOp,
+  stateInitialOp,
+  stateOp,
   updateOp,
   waiveOp,
 } from './mutation.ts'
@@ -262,6 +278,12 @@ export const OPERATIONS = [
   waiveOp,
   glossaryOp,
   antonymOp,
+  // G4 REACHABILITY AUTHORING, listed after the side tables and before `apply`
+  // because that is the order an agent uses them: declare the variables, classify the
+  // responses that touch them, then batch the rest.
+  stateOp,
+  stateInitialOp,
+  classifyOp,
   applyOpDefinition,
   listOp,
   showOp,

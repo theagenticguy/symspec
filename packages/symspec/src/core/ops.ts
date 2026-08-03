@@ -20,12 +20,20 @@
  * aspirational: `check` emits ops from this union, `apply` consumes ops from this
  * union, and there is no translation step in between that could disagree.
  *
- * ## The eleven verbs, and why exactly these
+ * ## The verbs, and why exactly these
  *
  * They are the donor's `APPLY_OPS` (add / update / derive / satisfy / verify /
  * refine / remove-edge / delete) UNIONED with the three side-table commands the
  * donor's `apply` had no op for and had to emit as shell lines
- * (`glossary add`, `antonym add`, `waive add`).
+ * (`glossary add`, `antonym add`, `waive add`), plus their four inverses, plus G4's
+ * four STATE-MODEL verbs (`state` / `unstate` / `state-initial` / `classify`).
+ *
+ * The G4 four are here rather than in a vocabulary of their own for the reason the
+ * side tables were folded in: a state model is authored as a BATCH (declare N
+ * variables, classify M responses, write M expressions), and a table reachable only
+ * through single commands is a table an agent cannot author atomically. One union
+ * also keeps `repair.ops` decodable by construction — a reachability demotion's
+ * repair emits `classify`/`state` records from the same schemas `apply` decodes.
  *
  * Folding the side tables in is the single most load-bearing change here, and the
  * reason is `repair`. The most common demotion discharges are `glossary add`,
@@ -60,9 +68,11 @@
 import { Schema } from 'effect'
 import {
   EARS_PATTERNS,
+  FRAME_KINDS,
   PRIORITIES,
   RELATIONS,
   RESPONSE_KINDS,
+  STATE_VAR_TYPES,
   STATUSES,
   UPDATABLE_ATTRS,
   VERIFICATION_METHODS,
@@ -254,6 +264,106 @@ export const UnantonymOp = Schema.Struct({
 })
 export type UnantonymOp = typeof UnantonymOp.Type
 
+/**
+ * `{"op":"state", …}` — declare (or redeclare) one state variable.
+ *
+ * ## Why the state model gets OPS and not just a command
+ *
+ * Because a state model is authored as a BATCH. Declaring five variables, classifying
+ * six responses, and writing six expressions is seventeen edits that only mean
+ * something together — and the whole point of the op vocabulary is that seventeen
+ * edits are one `apply`. A state model reachable only through single commands would
+ * be the one table an agent could not author atomically, which is exactly the shape
+ * the donor's side tables had before G2b folded them in.
+ *
+ * ## `domain` is a LIST, and `frame` defaults at the FOLD
+ *
+ * `domain` mirrors the schema's per-type rules (required for `enum`, optional bounds
+ * for `int`, forbidden for `bool`) rather than restating them: the fold builds the
+ * variable and the DOCUMENT SCHEMA is what refuses a bool with a domain, so there is
+ * one rule and it lives where the manifest publishes it.
+ *
+ * `frame` is optional here and the fold defaults it to `volatile`. That is the
+ * soundness-critical default (see `FRAME_KINDS`), and it is expressed as an absent
+ * key rather than a required field so a stream written without any frame awareness at
+ * all gets the SAFE behavior. A required `frame` would make the unsound value as easy
+ * to type as the sound one.
+ *
+ * REDECLARATION replaces, and is not an error: authoring a state model is iterative
+ * (declare `retry_count` as an int, then bound it, then mark it stable), and forcing
+ * an `unstate` between edits would make a repair plan order-dependent for no benefit.
+ * It is reported as a non-noop write, so an agent can see it happened.
+ */
+export const StateOp = Schema.Struct({
+  op: Schema.Literal('state'),
+  name: Schema.String,
+  type: Schema.Literals(STATE_VAR_TYPES),
+  domain: Schema.optionalKey(Schema.Array(Schema.String)),
+  min: Schema.optionalKey(Schema.Int),
+  max: Schema.optionalKey(Schema.Int),
+  frame: Schema.optionalKey(Schema.Literals(FRAME_KINDS)),
+  initial: Schema.optionalKey(Schema.String),
+})
+export type StateOp = typeof StateOp.Type
+
+/**
+ * `{"op":"unstate", …}` — undeclare one state variable.
+ *
+ * REFUSED while any requirement's `stateEffect` or `stateConstraint` still references
+ * the variable, which is the inverse of the authoring-time reference check and closes
+ * the same hazard from the other side. Without it, `unstate` would be a second route
+ * to the state an undeclared reference creates — a document whose expressions name a
+ * variable the model does not declare — and that document's next `check` is the
+ * V14/V21 hang. The refusal names the referencing requirements so the fix is
+ * mechanical.
+ */
+export const UnstateOp = Schema.Struct({
+  op: Schema.Literal('unstate'),
+  name: Schema.String,
+})
+export type UnstateOp = typeof UnstateOp.Type
+
+/**
+ * `{"op":"state-initial", …}` — set or clear the model-wide initial-state predicate.
+ *
+ * `predicate: null` clears it, the same `NullOr` convention `update` uses and for the
+ * same reason: JSON distinguishes "the string" from "no value" natively, so one field
+ * expresses both intents and no `--clear`-style flag is needed in the stream.
+ */
+export const StateInitialOp = Schema.Struct({
+  op: Schema.Literal('state-initial'),
+  predicate: Schema.NullOr(Schema.String),
+})
+export type StateInitialOp = typeof StateInitialOp.Type
+
+/**
+ * `{"op":"classify", …}` — classify one requirement's response, with its expression.
+ *
+ * ## The label and the expression arrive TOGETHER, deliberately
+ *
+ * `responseKind` is already an `update`-able attribute, so `{"op":"update","attr":
+ * "responseKind","value":"effect"}` was expressible before this op existed. What it
+ * could NOT express is the pairing: a requirement labelled `effect` with no
+ * `stateEffect` contributes nothing to the transition relation, so it is a
+ * classification that reads as done and is not. This op takes both, and the fold
+ * refuses a label with no expression — so the mechanically-easy path is also the
+ * complete one.
+ *
+ * `kind: null` RETRACTS the classification, clearing both the label and whichever
+ * expression it carried. Retraction is a real authoring move (a response that turned
+ * out not to touch state), and it must clear the expression too: a document with
+ * `stateConstraint` set and `responseKind` absent would carry a predicate nothing
+ * reads, which is the "decision recorded and not applied" shape the antonym
+ * normalization note warns about.
+ */
+export const ClassifyOp = Schema.Struct({
+  op: Schema.Literal('classify'),
+  ref: Schema.String,
+  kind: Schema.NullOr(Schema.Literals(RESPONSE_KINDS)),
+  expression: Schema.optionalKey(Schema.String),
+})
+export type ClassifyOp = typeof ClassifyOp.Type
+
 // ---------------------------------------------------------------------------
 // The union
 // ---------------------------------------------------------------------------
@@ -276,6 +386,13 @@ export const DocumentOp = Schema.Union([
   UnwaiveOp,
   UnglossaryOp,
   UnantonymOp,
+  // G4: the state model. Four verbs in the SAME union, so a reachability repair plan
+  // rides the same `apply` as every other repair and there is still exactly one
+  // vocabulary — which is what keeps `repair.ops` decodable by construction.
+  StateOp,
+  UnstateOp,
+  StateInitialOp,
+  ClassifyOp,
 ])
 export type DocumentOp = typeof DocumentOp.Type
 
@@ -303,6 +420,14 @@ export const OP_VERBS = [
   'unwaive',
   'unglossary',
   'unantonym',
+  // G4 — APPENDED, never interleaved. The vocabulary is append-only for the same
+  // reason the code catalogs are: a stream written against an older build must still
+  // decode, and a reorder would silently renumber every position an external snapshot
+  // recorded.
+  'state',
+  'unstate',
+  'state-initial',
+  'classify',
 ] as const
 export type OpVerb = (typeof OP_VERBS)[number]
 

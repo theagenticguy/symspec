@@ -36,9 +36,11 @@
 import { Effect, Schema } from 'effect'
 import {
   EARS_PATTERNS,
+  FRAME_KINDS,
   PRIORITIES,
   RELATIONS,
   RESPONSE_KINDS,
+  STATE_VAR_TYPES,
   STATUSES,
   UPDATABLE_ATTRS,
   VERIFICATION_METHODS,
@@ -892,6 +894,399 @@ export const antonymOp = defineOperation({
       const op: DocumentOp = { op: input.remove ? 'unantonym' : 'antonym', a: input.a, b: input.b }
       return emitMutation(
         'antonym',
+        yield* runFold({ file: input.file, dryRun: input.dryRun, ops: [op], single: true }),
+      )
+    }),
+})
+
+// ---------------------------------------------------------------------------
+// The state model (G4) — the authoring surface for reachability
+// ---------------------------------------------------------------------------
+
+/**
+ * `state` — declare one state variable, or undeclare it with `--remove`.
+ *
+ * ## Why the state model is TWO operations and not one
+ *
+ * `state` declares a VARIABLE; `classify` labels a REQUIREMENT's response and gives
+ * its expression. That split mirrors the donor's own "two tables, not one" finding
+ * (spec 003's AC-2-1 note): the variable set is document-scoped and the
+ * effect/constraint label is requirement-scoped, and collapsing them into one command
+ * would mean a flag set where half the flags are meaningless in either mode.
+ *
+ * `--remove` rides on this one op rather than being a peer `unstate` command, matching
+ * `waive`/`glossary`/`antonym`/`link` — the CLI has one command per TABLE and a
+ * `--remove` flag, while the op STREAM has the two verbs (`state` / `unstate`). A
+ * projection difference, not two vocabularies.
+ *
+ * The `--remove` path is the one place this operation can refuse for a reason the
+ * caller did not cause directly: undeclaring a variable that expressions still
+ * reference is ERR_USAGE naming those requirements. That refusal is load-bearing — see
+ * the `UnstateOp` header — because the alternative is a document whose next `check`
+ * hangs the solver rather than reporting anything.
+ */
+export const stateOp = defineOperation({
+  name: 'state',
+  summary: 'Declare or undeclare one state variable — the document-scoped half of the state model',
+  type: 'state',
+  input: Schema.Struct({
+    name: requiredString(
+      lines(
+        'The variable name, as referenced by every effect and constraint expression.',
+        'Identifier-shaped: a letter or underscore, then letters, digits, underscores or dots.',
+        'Must NOT be one of the reserved words and, or, not, true, false — those are expression',
+        'syntax, so a variable named one of them could be declared and never referenced.',
+        'Examples: lock_held; run_state; retry_count.',
+      ),
+    ),
+    type: optionalString(
+      lines(
+        `The declared type. Legal values: ${STATE_VAR_TYPES.join(', ')}.`,
+        '  - bool: two-valued. Its domain is {true,false} and is NOT declared.',
+        '  - int:  integer, optionally bounded with `--min`/`--max`. Declaring BOTH bounds makes the',
+        '    variable finite-domain, which is what lets a reachability query be decided rather than',
+        '    merely attempted.',
+        '  - enum: a finite symbolic variable. `--domain` lists its members and is REQUIRED.',
+        'Required unless `--remove` is supplied.',
+      ),
+    ),
+    domain: optionalString(
+      lines(
+        'For `--type enum` ONLY: the comma-separated members this variable may take.',
+        'At least one member — an empty domain would give the encoder an empty state space, over which',
+        'every invariant holds VACUOUSLY, so it is refused rather than accepted as a vacuous',
+        'declaration. Members are identifier-shaped, because a member is written BARE in an',
+        'expression (`run_state = PENDING`).',
+        'Example: --domain "PENDING,RUNNING,DONE,FAILED"',
+      ),
+    ),
+    min: optionalString(
+      lines(
+        'For `--type int` ONLY: the inclusive lower bound. Omit for unbounded below.',
+        'An empty range (`--min` above `--max`) is refused: it describes no states at all, so every',
+        'invariant over it would hold VACUOUSLY and a reachability proof would mean nothing.',
+      ),
+    ),
+    max: optionalString(
+      'For `--type int` ONLY: the inclusive upper bound. Omit for unbounded above.',
+    ),
+    frame: optionalString(
+      lines(
+        `Whether the variable persists across a step that does not write it. Legal values: ${FRAME_KINDS.join(', ')}.`,
+        'DEFAULTS TO volatile, and that default is a soundness property rather than a preference.',
+        '  - volatile: the variable may change freely in any step. Nothing is assumed.',
+        '  - stable:   it changes ONLY when some requirement`s effect changes it — a HYPOTHESIS the',
+        '    document does not otherwise state.',
+        'Declaring `stable` makes `check` prove the question TWICE (once with no frame, once with the',
+        'declared frames) and report the strongest honest verdict: a property that needs the frame is',
+        'reported as PROVED_UNDER_HYPOTHESES naming the variables relied on, and DEMOTES `verified`.',
+        'Why volatile by default: measured on this solver, a model whose variable is written by no',
+        'requirement returns UNREACHABLE *with an inductive invariant* under a frame and REACHABLE',
+        'without one — so a frame-by-default would make the tool prove a false answer and certify it.',
+      ),
+    ),
+    initial: optionalString(
+      lines(
+        'Optional initial-state predicate over this variable, e.g. "lock_held = false".',
+        'Omit when the initial value is unconstrained — an omission is a genuine `any value` rather',
+        'than an implied false/zero, so it WEAKENS what can be proven rather than strengthening it.',
+      ),
+    ),
+    remove: Schema.withDecodingDefaultKey<Schema.Boolean>(Effect.succeed(false))(
+      Schema.Boolean.annotate({
+        default: false,
+        description: lines(
+          'Undeclare the variable instead of declaring it. Removing an already-absent variable is a',
+          'no-op success, so this is safe to replay.',
+          'REFUSED while any requirement`s effect or constraint still references the variable — the',
+          'referencing requirements are named. Allowing it would leave an UNDECLARED reference in the',
+          'document, and the failure that produces at check time is an unkillable solver hang rather',
+          'than an error message.',
+        ),
+      }),
+    ),
+    file: docPathField('edit'),
+    dryRun: dryRunField,
+  }),
+  handler: (input) =>
+    Effect.gen(function* () {
+      if (input.remove) {
+        const op: DocumentOp = { op: 'unstate', name: input.name }
+        return emitMutation(
+          'state',
+          yield* runFold({ file: input.file, dryRun: input.dryRun, ops: [op], single: true }),
+        )
+      }
+
+      if (input.type === null) {
+        return yield* Effect.fail(
+          new ErrUsage({
+            error: 'state requires --type when declaring a variable.',
+            suggestions: [
+              `Legal values: ${STATE_VAR_TYPES.join(', ')}.`,
+              `Example: \`symspec state --name ${input.name} --type bool\`.`,
+              'Pass --remove to undeclare an existing variable instead.',
+            ],
+          }),
+        )
+      }
+
+      // The numeric bounds arrive as STRINGS because argv has no integers, and they are
+      // parsed HERE rather than declared as integer flags for one reason: `--min` and
+      // `--max` are optional, and an optional integer flag would need a sentinel for
+      // "absent" — which is exactly the trap `check --fail-on-unmatched` documents (a
+      // negative sentinel is unreachable from a shell, and 0 is a meaningful value).
+      // A string flag whose absence is `null` says it without a sentinel.
+      const bound = (raw: string | null, flag: string) =>
+        raw === null
+          ? undefined
+          : /^-?\d+$/.test(raw.trim())
+            ? Number(raw.trim())
+            : `--${flag} expects an integer, got ${JSON.stringify(raw)}.`
+
+      const min = bound(input.min, 'min')
+      const max = bound(input.max, 'max')
+      for (const value of [min, max]) {
+        if (typeof value === 'string') {
+          return yield* Effect.fail(
+            new ErrUsage({
+              error: value,
+              suggestions: [
+                'Bounds are whole numbers, e.g. --min 0 --max 5.',
+                'Omit the flag entirely for an unbounded direction.',
+              ],
+            }),
+          )
+        }
+      }
+
+      const raw: Record<string, unknown> = {
+        op: 'state',
+        name: input.name,
+        type: input.type,
+        ...(input.domain !== null ? { domain: input.domain.split(',').map((m) => m.trim()) } : {}),
+        ...(typeof min === 'number' ? { min } : {}),
+        ...(typeof max === 'number' ? { max } : {}),
+        ...(input.frame !== null ? { frame: input.frame } : {}),
+        ...(input.initial !== null ? { initial: input.initial } : {}),
+      }
+
+      // Decoded through the OP schema, so a bad `--type` or `--frame` is rejected by the
+      // same schema `apply` uses — one validator, not two that could disagree.
+      const op = yield* Effect.mapError(
+        decodeOp(raw),
+        (cause) =>
+          new ErrUsage({
+            error: `The state declaration is not valid: ${String(cause).replace(/\s*\n\s*/g, ' ')}`,
+            suggestions: [
+              `--type must be one of: ${STATE_VAR_TYPES.join(', ')}.`,
+              `--frame must be one of: ${FRAME_KINDS.join(', ')}.`,
+              'Run `symspec manifest` for every field`s exact shape.',
+            ],
+          }),
+      )
+
+      return emitMutation(
+        'state',
+        yield* runFold({ file: input.file, dryRun: input.dryRun, ops: [op], single: true }),
+      )
+    }),
+})
+
+/**
+ * `state-initial` — set or clear the model-wide initial-state predicate.
+ *
+ * Its own operation rather than a flag on `state`, because it is scoped to the MODEL
+ * and not to a variable: it exists precisely for the cross-variable constraints a
+ * per-variable `--initial` cannot express (`not (lock_held and pending)`). Hanging it
+ * off `state --name` would require naming a variable it is not about.
+ */
+export const stateInitialOp = defineOperation({
+  name: 'state-initial',
+  summary: 'Set or clear the model-wide initial-state predicate over the declared variables',
+  type: 'stateInitial',
+  input: Schema.Struct({
+    predicate: optionalString(
+      lines(
+        'The initial-state predicate over the DECLARED state variables — what holds before any',
+        'requirement has fired. Conjoined with every per-variable `initial`, so the two are additive',
+        'and adding either can only NARROW the initial states.',
+        'Use this for the cross-variable constraints a per-variable initial cannot express.',
+        'Every referenced name must be declared: an undeclared reference is ERR_USAGE here rather',
+        'than a solver hang later.',
+        'Omit it and pass `--clear` to remove the predicate instead.',
+        'Examples: "run_state = PENDING and retry_count = 0"; "not (lock_held and pending)".',
+      ),
+    ),
+    clear: Schema.withDecodingDefaultKey<Schema.Boolean>(Effect.succeed(false))(
+      Schema.Boolean.annotate({
+        default: false,
+        description: lines(
+          'Remove the model-wide initial predicate. Mutually exclusive with `--predicate`.',
+          'Clearing WIDENS the initial states (every state becomes a possible start), which can only',
+          'make fewer things provable — the safe direction.',
+        ),
+      }),
+    ),
+    file: docPathField('edit'),
+    dryRun: dryRunField,
+  }),
+  handler: (input) =>
+    Effect.gen(function* () {
+      if (input.clear && input.predicate !== null) {
+        return yield* Effect.fail(
+          new ErrUsage({
+            error:
+              '--clear and --predicate are mutually exclusive: clear REMOVES the predicate, a value SETS it.',
+            suggestions: ['Drop --clear to set the predicate.', 'Drop --predicate to clear it.'],
+          }),
+        )
+      }
+      if (!input.clear && input.predicate === null) {
+        return yield* Effect.fail(
+          new ErrUsage({
+            error: 'state-initial requires --predicate, or --clear to remove it.',
+            suggestions: [
+              'Pass --predicate "<expression over declared variables>".',
+              'Pass --clear to remove the model-wide initial predicate.',
+            ],
+          }),
+        )
+      }
+      const op: DocumentOp = {
+        op: 'state-initial',
+        predicate: input.clear ? null : (input.predicate as string),
+      }
+      return emitMutation(
+        'stateInitial',
+        yield* runFold({ file: input.file, dryRun: input.dryRun, ops: [op], single: true }),
+      )
+    }),
+})
+
+/**
+ * `classify` — label one requirement's response as an effect or a constraint, WITH the
+ * expression that says what it does.
+ *
+ * ## Why the label and the expression are one command
+ *
+ * Because a label alone is a classification that reads as finished and is not: a
+ * requirement marked `effect` with no `stateEffect` contributes nothing to the
+ * transition relation, so the reachability tier sees a document that looks classified
+ * and has no state model to encode. `--kind` and `--expression` therefore arrive
+ * together and the fold refuses one without the other, which makes the easy path the
+ * complete one.
+ *
+ * The alternative — `update responseKind` then `update stateEffect` — still WORKS
+ * (both are updatable attributes, because a state model is authored iteratively and
+ * editing one expression without restating the label has to be possible), and the
+ * `update` path carries the same validation. This op exists so the COMMON case is one
+ * call that cannot land half-done.
+ */
+export const classifyOp = defineOperation({
+  name: 'classify',
+  summary:
+    "Classify one requirement's response as an effect or a constraint, with its state expression",
+  type: 'classify',
+  input: Schema.Struct({
+    ref: requiredString(refDescription('classify')),
+    kind: optionalString(
+      lines(
+        `How the response relates to the state model. Legal values: ${RESPONSE_KINDS.join(', ')}.`,
+        '  - effect:     the response CHANGES state. `--expression` is one or more comma-separated',
+        '    updates, `<variable> := <expression>`. Several updates happen in ONE step.',
+        '  - constraint: the response RESTRICTS state. `--expression` is a PREDICATE the reachability',
+        '    tier tries to violate — if no reachable state violates it, that is a proof.',
+        'Required unless `--retract` is supplied.',
+      ),
+    ),
+    expression: optionalString(
+      lines(
+        'What the response does, in the state-model expression language.',
+        'For `--kind effect`: `<variable> := <value>`, comma-separated for simultaneous updates.',
+        'Note `:=` ASSIGNS; a single `=` is the equality COMPARISON and belongs in a constraint.',
+        'For `--kind constraint`: a predicate that must hold in every reachable state.',
+        'GRAMMAR: comparisons = != < <= > >=; arithmetic + - on ints; and/or/not; parentheses;',
+        'true/false and integer literals; and bare names resolved against the declared state model.',
+        'No multiplication (it makes the transition relation nonlinear, where an unbounded solver',
+        'hang was measured), no quantifiers, no chained comparisons (write `a < b and b < c`).',
+        '< <= > >= are INTEGER-ONLY: an enum has a declared DOMAIN, not an ORDER.',
+        'EVERY referenced name must be declared with `symspec state` first. An undeclared reference',
+        'is refused HERE, at authoring time, because reaching the Horn encoder it would hang the',
+        'solver unkillably rather than produce an error.',
+        'Examples: "lock_held := true"; "run_state := RUNNING, retry_count := 0";',
+        '"not (lock_held and pending)"; "retry_count <= 3".',
+      ),
+    ),
+    retract: Schema.withDecodingDefaultKey<Schema.Boolean>(Effect.succeed(false))(
+      Schema.Boolean.annotate({
+        default: false,
+        description: lines(
+          'Remove the classification: clears the responseKind AND its expression.',
+          'Both, deliberately — an expression left behind with no label is a predicate nothing reads,',
+          'i.e. a decision recorded and not applied.',
+          'Retracting DEMOTES the reachability tier for this requirement (its response becomes',
+          'unclassified again), which is the honest direction: the tier now knows less, and says so.',
+        ),
+      }),
+    ),
+    file: docPathField('edit'),
+    dryRun: dryRunField,
+  }),
+  handler: (input) =>
+    Effect.gen(function* () {
+      if (input.retract) {
+        if (input.kind !== null || input.expression !== null) {
+          return yield* Effect.fail(
+            new ErrUsage({
+              error:
+                '--retract removes the classification, so it cannot be combined with --kind or --expression.',
+              suggestions: [
+                'Drop --retract to set a classification.',
+                'Drop --kind/--expression to retract the existing one.',
+              ],
+            }),
+          )
+        }
+        const op: DocumentOp = { op: 'classify', ref: input.ref, kind: null }
+        return emitMutation(
+          'classify',
+          yield* runFold({ file: input.file, dryRun: input.dryRun, ops: [op], single: true }),
+        )
+      }
+
+      if (input.kind === null) {
+        return yield* Effect.fail(
+          new ErrUsage({
+            error: 'classify requires --kind, or --retract to remove an existing classification.',
+            suggestions: [
+              `Legal values: ${RESPONSE_KINDS.join(', ')}.`,
+              `Example: \`symspec classify ${input.ref} --kind constraint --expression "not (lock_held and pending)"\`.`,
+            ],
+          }),
+        )
+      }
+
+      const raw: Record<string, unknown> = {
+        op: 'classify',
+        ref: input.ref,
+        kind: input.kind,
+        ...(input.expression !== null ? { expression: input.expression } : {}),
+      }
+      const op = yield* Effect.mapError(
+        decodeOp(raw),
+        (cause) =>
+          new ErrUsage({
+            error: `The classification is not valid: ${String(cause).replace(/\s*\n\s*/g, ' ')}`,
+            suggestions: [
+              `--kind must be one of: ${RESPONSE_KINDS.join(', ')}.`,
+              'Run `symspec manifest` for every field`s exact shape.',
+            ],
+          }),
+      )
+
+      return emitMutation(
+        'classify',
         yield* runFold({ file: input.file, dryRun: input.dryRun, ops: [op], single: true }),
       )
     }),

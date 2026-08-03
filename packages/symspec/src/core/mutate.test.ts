@@ -79,6 +79,13 @@ describe('the op vocabulary is closed, reachable, and strict', () => {
     unwaive: { op: 'unwaive', code: 'GTWR_R1_PATTERN' },
     unglossary: { op: 'unglossary', canonical: 'c', alias: 'a' },
     unantonym: { op: 'unantonym', a: 'open', b: 'shut' },
+    // G4 — the state model. `state` is spelled with the MINIMAL legal payload (a bool
+    // needs no domain), which is also the shape that proves `frame` is genuinely
+    // optional on the op and defaulted by the fold.
+    state: { op: 'state', name: 'lock_held', type: 'bool' },
+    unstate: { op: 'unstate', name: 'lock_held' },
+    'state-initial': { op: 'state-initial', predicate: 'lock_held = false' },
+    classify: { op: 'classify', ref: 'G1', kind: 'constraint', expression: 'lock_held = false' },
   }
 
   it.each(
@@ -662,5 +669,543 @@ describe('foldOps', () => {
     expect('code' in success).toBe(false)
     const requirement = Object.values(success.document.requirements)[0]
     expect(requirement !== undefined && 'code' in requirement).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The state model (G4)
+// ---------------------------------------------------------------------------
+
+/**
+ * The four state-model ops, and the two doors onto the V14/V21 hazard they close.
+ *
+ * The hazard is worth restating because it shapes every case here: an undeclared
+ * symbol reaching Z3's Fixedpoint was measured to hang the WASM past 45s with no
+ * JS-side recovery, on both 4.16.0 and 5.0.0. So a document must never be able to
+ * CONTAIN an expression naming an undeclared variable — and there are exactly three
+ * ways one could get in:
+ *
+ *   1. writing the expression against a model that lacks the variable  → `classify`
+ *   2. writing it through the raw attribute, bypassing `classify`      → `update`
+ *   3. writing it correctly, then REMOVING the variable underneath it  → `unstate`
+ *
+ * All three are refused, and each has its own case below. The third is the one a
+ * reasonable implementation forgets.
+ */
+describe('the state-model ops (G4)', () => {
+  /** A document with one keyed requirement AND a declared bool + int + enum. */
+  const withModel = (): { doc: RequirementsDocument; id: string } => {
+    const { doc, id } = withOne()
+    let current = doc
+    for (const raw of [
+      { op: 'state', name: 'lock_held', type: 'bool', initial: 'lock_held = false' },
+      { op: 'state', name: 'pending', type: 'bool' },
+      { op: 'state', name: 'retry_count', type: 'int', min: 0, max: 5 },
+      { op: 'state', name: 'run_state', type: 'enum', domain: ['PENDING', 'RUNNING', 'DONE'] },
+    ]) {
+      current = ok(current, raw).document
+    }
+    return { doc: current, id }
+  }
+
+  /** Apply an op expecting FAILURE, returning it. */
+  const bad = (doc: RequirementsDocument, raw: unknown) => {
+    const result = applyOp(doc, op(raw), TS)
+    if (!isOpFailure(result)) throw new Error(`expected failure, got success`)
+    return result
+  }
+
+  // -------------------------------------------------------------------------
+  // Declaration
+  // -------------------------------------------------------------------------
+
+  it('declares a variable, defaulting `frame` to the SOUND value', () => {
+    const result = ok(emptyDocument(), { op: 'state', name: 'lock_held', type: 'bool' })
+    const variable = result.document.stateModel.variables[0]
+    expect(variable?.name).toBe('lock_held')
+    // THE soundness default. `stable` would make the tool prove a false answer and
+    // hand back an inductive invariant certifying it (donor V16, measured). A missing
+    // declaration may only ever WEAKEN a claim.
+    expect(variable?.frame).toBe('volatile')
+  })
+
+  it('carries an explicit `frame: stable` through when the author opts in', () => {
+    const result = ok(emptyDocument(), {
+      op: 'state',
+      name: 'lock_held',
+      type: 'bool',
+      frame: 'stable',
+    })
+    expect(result.document.stateModel.variables[0]?.frame).toBe('stable')
+  })
+
+  it('REDECLARATION replaces rather than duplicating, and is not an error', () => {
+    // Authoring is iterative — declare an int, then bound it, then mark it stable —
+    // so forcing an `unstate` between edits would make a repair plan order-dependent
+    // for no benefit.
+    const once = ok(emptyDocument(), { op: 'state', name: 'retry_count', type: 'int' })
+    const twice = ok(once.document, {
+      op: 'state',
+      name: 'retry_count',
+      type: 'int',
+      min: 0,
+      max: 3,
+    })
+    expect(twice.document.stateModel.variables).toHaveLength(1)
+    const variable = twice.document.stateModel.variables[0]
+    expect(variable?.type === 'int' && variable.domain).toEqual({ min: 0, max: 3 })
+    expect(twice.noop).toBe(false)
+  })
+
+  it('an IDENTICAL redeclaration is an idempotent no-op, so a replay is free', () => {
+    const once = ok(emptyDocument(), { op: 'state', name: 'lock_held', type: 'bool' })
+    const twice = ok(once.document, { op: 'state', name: 'lock_held', type: 'bool' })
+    expect(twice.noop).toBe(true)
+  })
+
+  it.each([
+    // [label, op, the substring the message must name]
+    ['a bool with a domain', { op: 'state', name: 'x', type: 'bool', domain: ['A'] }, 'no domain'],
+    ['an enum with no domain', { op: 'state', name: 'x', type: 'enum' }, 'requires a non-empty'],
+    [
+      'an enum with a repeated member',
+      { op: 'state', name: 'x', type: 'enum', domain: ['A', 'A'] },
+      'twice',
+    ],
+    ['an int with a domain list', { op: 'state', name: 'x', type: 'int', domain: ['A'] }, '--min'],
+    [
+      'an enum with bounds',
+      { op: 'state', name: 'x', type: 'enum', domain: ['A'], min: 0 },
+      'no numeric bounds',
+    ],
+  ])('refuses %s', (_label, raw, expected) => {
+    expect(bad(emptyDocument(), raw).error).toContain(expected)
+  })
+
+  /**
+   * The one rule the SCHEMA cannot express, and it matters more than it looks: an
+   * empty range describes no states at all, so every invariant over it holds
+   * VACUOUSLY — a clean reachability proof that means nothing.
+   */
+  it('refuses an EMPTY integer range, because every invariant over it holds vacuously', () => {
+    const failure = bad(emptyDocument(), {
+      op: 'state',
+      name: 'retry_count',
+      type: 'int',
+      min: 5,
+      max: 0,
+    })
+    expect(failure.error).toContain('empty')
+    expect(failure.suggestions.join(' ')).toContain('VACUOUSLY')
+    // And the fix is the swapped invocation, spelled out.
+    expect(failure.suggestions.join(' ')).toContain('--min 0 --max 5')
+  })
+
+  // -------------------------------------------------------------------------
+  // Classification — door 1
+  // -------------------------------------------------------------------------
+
+  it('classifies a constraint, storing the expression and NOT the effect field', () => {
+    const { doc, id } = withModel()
+    const result = ok(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'constraint',
+      expression: 'not (lock_held and pending)',
+    })
+    const requirement = result.document.requirements[id]
+    expect(requirement?.responseKind).toBe('constraint')
+    expect(requirement?.stateConstraint).toBe('not (lock_held and pending)')
+    // ABSENT, not undefined — the exactOptionalPropertyTypes discipline reaching the
+    // file, which is what keeps a save byte-stable.
+    expect(requirement !== undefined && 'stateEffect' in requirement).toBe(false)
+  })
+
+  it('RECLASSIFYING clears the other expression rather than leaving it behind', () => {
+    const { doc, id } = withModel()
+    const asEffect = ok(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'effect',
+      expression: 'lock_held := true',
+    })
+    const asConstraint = ok(asEffect.document, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'constraint',
+      expression: 'lock_held = false',
+    })
+    const requirement = asConstraint.document.requirements[id]
+    expect(requirement?.stateConstraint).toBe('lock_held = false')
+    // A leftover `stateEffect` would be an expression nothing reads while looking
+    // authoritative — a decision recorded and not applied.
+    expect(requirement !== undefined && 'stateEffect' in requirement).toBe(false)
+  })
+
+  it('refuses a label with NO expression, because that reads as classified and is not', () => {
+    const { doc } = withModel()
+    const failure = bad(doc, { op: 'classify', ref: 'G1', kind: 'effect' })
+    expect(failure.error).toContain('requires the expression')
+    // The message names the runnable fix AND the retraction alternative.
+    expect(failure.suggestions.join(' ')).toContain('--expression')
+    expect(failure.suggestions.join(' ')).toContain('--retract')
+  })
+
+  /** DOOR 1: the expression is written against a model that lacks the variable. */
+  it('refuses an UNDECLARED reference in a classification (V14/V21 door 1)', () => {
+    const { doc } = withModel()
+    const failure = bad(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'constraint',
+      expression: 'ghost_var = true',
+    })
+    expect(failure.code).toBe('ERR_USAGE')
+    expect(failure.error).toContain('ghost_var')
+    // The declared names are listed, so the fix is mechanical.
+    expect(failure.suggestions.join(' ')).toContain('lock_held')
+  })
+
+  it('RETRACTION clears the label and BOTH expressions', () => {
+    const { doc, id } = withModel()
+    const classified = ok(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'constraint',
+      expression: 'lock_held = false',
+    })
+    const retracted = ok(classified.document, { op: 'classify', ref: 'G1', kind: null })
+    const requirement = retracted.document.requirements[id]
+    expect(requirement !== undefined && 'responseKind' in requirement).toBe(false)
+    expect(requirement !== undefined && 'stateConstraint' in requirement).toBe(false)
+    expect(requirement !== undefined && 'stateEffect' in requirement).toBe(false)
+  })
+
+  it('retracting an UNCLASSIFIED requirement is an idempotent no-op', () => {
+    const { doc } = withModel()
+    expect(ok(doc, { op: 'classify', ref: 'G1', kind: null }).noop).toBe(true)
+  })
+
+  it('an identical reclassification is a no-op', () => {
+    const { doc } = withModel()
+    const once = ok(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'constraint',
+      expression: 'lock_held = false',
+    })
+    expect(
+      ok(once.document, {
+        op: 'classify',
+        ref: 'G1',
+        kind: 'constraint',
+        expression: 'lock_held = false',
+      }).noop,
+    ).toBe(true)
+  })
+
+  it('refuses a classification of a ref that resolves to nothing', () => {
+    const { doc } = withModel()
+    const failure = bad(doc, {
+      op: 'classify',
+      ref: 'NOPE',
+      kind: 'constraint',
+      expression: 'lock_held = false',
+    })
+    expect(failure.code).toBe('ERR_NOT_FOUND')
+  })
+
+  // -------------------------------------------------------------------------
+  // update — door 2
+  // -------------------------------------------------------------------------
+
+  /**
+   * DOOR 2, and the one most easily left open.
+   *
+   * `stateEffect`/`stateConstraint` are in `UPDATABLE_ATTRS` because a state model is
+   * authored iteratively and editing one expression without restating the label has to
+   * work. That means `update` can write an expression WITHOUT going through
+   * `classify` — so if `update` did not validate, `symspec update stateConstraint
+   * "ghost = 1"` would put an undeclared reference straight into the document, and the
+   * failure that produces at check time is a hang rather than a message.
+   */
+  it('refuses an UNDECLARED reference written through `update` (V14/V21 door 2)', () => {
+    const { doc } = withModel()
+    const classified = ok(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'constraint',
+      expression: 'lock_held = false',
+    })
+    const failure = bad(classified.document, {
+      op: 'update',
+      ref: 'G1',
+      attr: 'stateConstraint',
+      value: 'ghost_var = true',
+    })
+    expect(failure.code).toBe('ERR_USAGE')
+    expect(failure.error).toContain('ghost_var')
+  })
+
+  it('refuses through `update` an expression of the WRONG kind for the requirement', () => {
+    // Storing a `stateEffect` on a requirement classified `constraint` would be an
+    // expression the encoder never reads.
+    const { doc } = withModel()
+    const classified = ok(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'constraint',
+      expression: 'lock_held = false',
+    })
+    const failure = bad(classified.document, {
+      op: 'update',
+      ref: 'G1',
+      attr: 'stateEffect',
+      value: 'lock_held := true',
+    })
+    expect(failure.error).toContain('classified constraint')
+    expect(failure.suggestions.join(' ')).toContain('symspec classify')
+  })
+
+  it('ACCEPTS a valid expression edit through `update`, so iterative authoring works', () => {
+    const { doc, id } = withModel()
+    const classified = ok(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'constraint',
+      expression: 'lock_held = false',
+    })
+    const edited = ok(classified.document, {
+      op: 'update',
+      ref: 'G1',
+      attr: 'stateConstraint',
+      value: 'retry_count <= 3',
+    })
+    expect(edited.document.requirements[id]?.stateConstraint).toBe('retry_count <= 3')
+  })
+
+  it('CLEARS an expression through `update --clear`, since retracting must be possible', () => {
+    const { doc, id } = withModel()
+    const classified = ok(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'constraint',
+      expression: 'lock_held = false',
+    })
+    const cleared = ok(classified.document, {
+      op: 'update',
+      ref: 'G1',
+      attr: 'stateConstraint',
+      value: null,
+    })
+    const requirement = cleared.document.requirements[id]
+    expect(requirement !== undefined && 'stateConstraint' in requirement).toBe(false)
+  })
+
+  it('lists both expression attrs as clearable and updatable', () => {
+    // Pins the two tables the fold consults, so removing an attr from either without
+    // deciding what happens to existing documents fails here.
+    expect(UPDATABLE_ATTRS).toContain('stateEffect')
+    expect(UPDATABLE_ATTRS).toContain('stateConstraint')
+    expect(NULLABLE_ATTRS.has('stateEffect')).toBe(true)
+    expect(NULLABLE_ATTRS.has('stateConstraint')).toBe(true)
+  })
+
+  // -------------------------------------------------------------------------
+  // unstate — door 3
+  // -------------------------------------------------------------------------
+
+  /**
+   * DOOR 3 — the one a reasonable implementation forgets.
+   *
+   * Write a perfectly valid expression, then remove the variable underneath it. The
+   * document now contains an undeclared reference reached without ever writing an
+   * invalid expression.
+   */
+  it('refuses to undeclare a variable an expression still REFERENCES (V14/V21 door 3)', () => {
+    const { doc } = withModel()
+    const classified = ok(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'constraint',
+      expression: 'not (lock_held and pending)',
+    })
+    const failure = bad(classified.document, { op: 'unstate', name: 'lock_held' })
+    expect(failure.error).toContain('Cannot undeclare')
+    // The REFERENCING requirement is named — that is the fix site.
+    expect(failure.error).toContain('G1')
+    expect(failure.suggestions.join(' ')).toMatch(/V14\/V21|hang/)
+  })
+
+  it('refuses to undeclare a variable an EFFECT references, reads as well as writes', () => {
+    const { doc } = withModel()
+    const classified = ok(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'effect',
+      // `pending` is only READ here, never written. A guard that checked write targets
+      // alone would let it be removed.
+      expression: 'lock_held := pending',
+    })
+    expect(bad(classified.document, { op: 'unstate', name: 'pending' }).error).toContain(
+      'Cannot undeclare',
+    )
+  })
+
+  it('ALLOWS undeclaring a variable nothing references', () => {
+    const { doc } = withModel()
+    const classified = ok(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'constraint',
+      expression: 'lock_held = false',
+    })
+    const removed = ok(classified.document, { op: 'unstate', name: 'run_state' })
+    expect(removed.document.stateModel.variables.map((v) => v.name)).not.toContain('run_state')
+  })
+
+  it('undeclaring an ABSENT variable is a no-op success, so a replay does not fail', () => {
+    expect(ok(emptyDocument(), { op: 'unstate', name: 'never_declared' }).noop).toBe(true)
+  })
+
+  /**
+   * The SAME hazard through a redeclaration rather than a removal: narrowing an enum
+   * domain out from under a constraint that compares against the dropped member.
+   */
+  it('refuses a REDECLARATION that narrows a domain an expression still compares against', () => {
+    const { doc } = withModel()
+    const classified = ok(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'constraint',
+      expression: 'run_state != DONE',
+    })
+    const failure = bad(classified.document, {
+      op: 'state',
+      name: 'run_state',
+      type: 'enum',
+      // `DONE` is gone.
+      domain: ['PENDING', 'RUNNING'],
+    })
+    expect(failure.error).toContain('Redeclaring')
+    expect(failure.error).toContain('G1')
+  })
+
+  it('refuses a redeclaration that changes a TYPE an expression depends on', () => {
+    const { doc } = withModel()
+    const classified = ok(doc, {
+      op: 'classify',
+      ref: 'G1',
+      kind: 'constraint',
+      expression: 'retry_count <= 3',
+    })
+    // int → bool makes `<=` illegal.
+    const failure = bad(classified.document, { op: 'state', name: 'retry_count', type: 'bool' })
+    expect(failure.error).toContain('Redeclaring')
+  })
+
+  // -------------------------------------------------------------------------
+  // state-initial
+  // -------------------------------------------------------------------------
+
+  it('sets and clears the model-wide initial predicate', () => {
+    const { doc } = withModel()
+    const set = ok(doc, {
+      op: 'state-initial',
+      predicate: 'run_state = PENDING and retry_count = 0',
+    })
+    expect(set.document.stateModel.initial).toBe('run_state = PENDING and retry_count = 0')
+    const cleared = ok(set.document, { op: 'state-initial', predicate: null })
+    expect('initial' in cleared.document.stateModel).toBe(false)
+  })
+
+  it('refuses an initial predicate naming an undeclared variable', () => {
+    const { doc } = withModel()
+    expect(bad(doc, { op: 'state-initial', predicate: 'ghost = true' }).error).toContain('ghost')
+  })
+
+  it('refuses a non-PREDICATE initial, since it would assert nothing', () => {
+    const { doc } = withModel()
+    expect(bad(doc, { op: 'state-initial', predicate: 'retry_count' }).error).toContain('PREDICATE')
+  })
+
+  it('refuses an `unstate` that would strand the MODEL-WIDE initial predicate', () => {
+    const { doc } = withModel()
+    const withInitial = ok(doc, { op: 'state-initial', predicate: 'run_state = PENDING' })
+    // Nothing in a REQUIREMENT references `run_state`, so the per-requirement guard
+    // does not fire — the model-wide predicate is a separate reference site, and
+    // missing it would strand exactly the same undeclared reference.
+    const failure = bad(withInitial.document, { op: 'unstate', name: 'run_state' })
+    expect(failure.error).toContain('initial predicate')
+  })
+
+  it('clearing an absent initial predicate is a no-op', () => {
+    const { doc } = withModel()
+    expect(ok(doc, { op: 'state-initial', predicate: null }).noop).toBe(true)
+  })
+
+  // -------------------------------------------------------------------------
+  // The batch story
+  // -------------------------------------------------------------------------
+
+  /**
+   * The whole reason the state model got OPS and not just commands: it is authored as
+   * a BATCH, and a batch has to resolve against the RUNNING document — a variable
+   * declared at index 0 must be referenceable by a `classify` at index 4.
+   */
+  it('authors a whole state model in ONE atomic fold, resolving against the RUNNING document', () => {
+    const { doc, id } = withOne()
+    const result = foldOps(
+      doc,
+      [
+        op({ op: 'state', name: 'lock_held', type: 'bool', initial: 'lock_held = false' }),
+        op({ op: 'state', name: 'pending', type: 'bool' }),
+        op({ op: 'state-initial', predicate: 'not lock_held' }),
+        // References variables declared THREE ops earlier in the same batch.
+        op({
+          op: 'classify',
+          ref: 'G1',
+          kind: 'constraint',
+          expression: 'not (lock_held and pending)',
+        }),
+      ],
+      TS,
+    )
+    expect(result.summary.failed).toBe(0)
+    expect(result.write).toBe(true)
+    expect(result.document.stateModel.variables).toHaveLength(2)
+    expect(result.document.requirements[id]?.stateConstraint).toBe('not (lock_held and pending)')
+  })
+
+  it('ABORTS the whole batch when a classify references a variable the batch never declared', () => {
+    const { doc } = withOne()
+    const result = foldOps(
+      doc,
+      [
+        op({ op: 'state', name: 'lock_held', type: 'bool' }),
+        op({ op: 'classify', ref: 'G1', kind: 'constraint', expression: 'ghost = true' }),
+      ],
+      TS,
+    )
+    // ATOMIC: the document is the ORIGINAL, so a half-authored state model never lands.
+    expect(result.write).toBe(false)
+    expect(result.abortedAt).toBe(1)
+    expect(result.document.stateModel.variables).toHaveLength(0)
+  })
+
+  it('round-trips every state-model op through `opLine`, so a repair plan is applicable', () => {
+    // The property that makes `repair.ops` decodable BY CONSTRUCTION: an op serialized
+    // by a producer must decode back through the same union `apply` reads.
+    for (const raw of [
+      { op: 'state', name: 'lock_held', type: 'bool', frame: 'stable' },
+      { op: 'unstate', name: 'lock_held' },
+      { op: 'state-initial', predicate: 'lock_held = false' },
+      { op: 'classify', ref: 'G1', kind: 'constraint', expression: 'lock_held = false' },
+      { op: 'classify', ref: 'G1', kind: null },
+    ]) {
+      const line = opLine(op(raw))
+      const decoded = Effect.runSync(Effect.result(decodeOp(JSON.parse(line))))
+      expect(decoded._tag, line).toBe('Success')
+    }
   })
 })

@@ -82,6 +82,9 @@ Failure:
 | `symspec waive` | Commit or remove a reviewed finding waiver, optionally scoped to one requirement |
 | `symspec glossary` | Commit or remove a synonym alias — the DECIDE half of the semantic tier |
 | `symspec antonym` | Commit or remove a polar-opposite verb pair — the opposition twin of the glossary |
+| `symspec state` | Declare or undeclare one state variable — the document-scoped half of the state model |
+| `symspec state-initial` | Set or clear the model-wide initial-state predicate over the declared variables |
+| `symspec classify` | Classify one requirement's response as an effect or a constraint, with its state expression |
 | `symspec apply` | Apply a JSONL stream of document ops in one process and one atomic write |
 | `symspec list` | List every requirement in the document with its key, UUID, and canonical sentence |
 | `symspec show` | Show one requirement in full, addressed by its stable key or its UUID |

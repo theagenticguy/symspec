@@ -171,6 +171,13 @@ export const UPDATABLE_ATTRS = [
   // needs. Updatable because it is a JUDGMENT an author refines as the state model
   // takes shape, not a fact fixed at creation.
   'responseKind',
+  // G4: the two state-model EXPRESSIONS. Updatable for the same reason and more so —
+  // a state model is authored iteratively (declare a variable, classify a response,
+  // then write the predicate), and each of those is a separate edit. Validated
+  // against the declared model on every write, so a typo'd variable name is
+  // ERR_USAGE here rather than an unkillable solver hang later.
+  'stateEffect',
+  'stateConstraint',
 ] as const
 export type UpdatableAttr = (typeof UPDATABLE_ATTRS)[number]
 
@@ -190,6 +197,13 @@ export const NULLABLE_ATTRS: ReadonlySet<UpdatableAttr> = new Set([
   'verificationMethod',
   'verificationNote',
   'responseKind',
+  // Clearable so a misclassified requirement can be walked back to "unclassified"
+  // rather than having to carry a wrong expression. Retracting a classification
+  // DEMOTES the reachability tier (it becomes an unclassified response again), which
+  // is the honest direction: a cleared expression means the tier knows less, and the
+  // demotion says so.
+  'stateEffect',
+  'stateConstraint',
 ])
 
 /**
@@ -214,6 +228,33 @@ export type ResponseKind = (typeof RESPONSE_KINDS)[number]
 /** The declared TYPE of a state variable — NEW in v3. */
 export const STATE_VAR_TYPES = ['bool', 'int', 'enum'] as const
 export type StateVarType = (typeof STATE_VAR_TYPES)[number]
+
+/**
+ * Whether a state variable PERSISTS across a step it is not written in — the frame
+ * declaration, per the BINDING AC-2-5 decision
+ * (`.erpaval/sessions/session-511b2b/AC-2-5-frame-decision.md`).
+ *
+ * - `'volatile'` (THE DEFAULT) — the variable may change freely in any step. Nothing
+ *   is assumed. This is the only default that cannot silently create the V16
+ *   unsoundness, because a missing declaration can then only ever WEAKEN a claim.
+ * - `'stable'` — the variable changes ONLY when a requirement's effect changes it.
+ *   That is an assertion the document does not otherwise make, so declaring it is
+ *   opting in to a HYPOTHESIS, and a proof that depends on it is reported as
+ *   `PROVED_UNDER_HYPOTHESES` with the relied-upon variables named.
+ *
+ * Donor finding V16, measured on the shipped solver: a 3-variable model whose `alarm`
+ * is written by NO requirement returns UNREACHABLE-with-an-inductive-invariant under
+ * a frame and REACHABLE without one. `alarm` is genuinely reachable — so under the
+ * frame Spacer proves a false answer AND hands back a certificate for it. Defaulting
+ * to `stable` would ship exactly that.
+ *
+ * Precedent for the default: TLA+ defaults volatile (a variable's next value is
+ * unconstrained unless the next-state relation says otherwise). Event-B defaults to
+ * unchanged, which silently STRENGTHENS a claim — wrong for a tool whose contract is
+ * "when symspec proves a conflict, the conflict is real".
+ */
+export const FRAME_KINDS = ['volatile', 'stable'] as const
+export type FrameKind = (typeof FRAME_KINDS)[number]
 
 // ---------------------------------------------------------------------------
 // Atomic field schemas
@@ -353,7 +394,63 @@ const responseKindDescription = lines(
   'Optional at authoring: a document with no classification is fully valid, and the reachability',
   'tier reports an unclassified response as a demotion carrying the command that supplies it,',
   'rather than guessing. Supply it when the requirement participates in a reachability question.',
+  'Setting this alone is NOT enough to reach the solver: an `effect` also needs `stateEffect` (what',
+  'it changes) and a `constraint` also needs `stateConstraint` (what must hold). The label says',
+  'WHICH KIND of contribution the requirement makes; the expression says WHAT it is.',
   "Examples: 'effect' for 'transition the run to RUNNING'; 'constraint' for 'never hold more than one lock'.",
+)
+
+/**
+ * The grammar, stated once and quoted by both expression fields.
+ *
+ * Single-sourced because it is published in the manifest twice (once per field) and
+ * two copies of a grammar is two grammars. An agent authoring a state model reads
+ * this text and nothing else — there is no separate syntax reference — so it has to
+ * be complete.
+ */
+const STATE_EXPR_GRAMMAR = lines(
+  'GRAMMAR: comparisons `=` `!=` `<` `<=` `>` `>=`; arithmetic `+` `-` on ints; connectives',
+  '`and` `or` `not` (the symbolic `&&` `||` `!` are accepted too); parentheses; the literals',
+  '`true`/`false` and integer literals; and BARE names, which are resolved against the declared',
+  'state model — a name that matches a declared variable IS that variable, otherwise it must be a',
+  'member of the enum domain it is compared against.',
+  'NOT in the language, each for a reason: no `*` or `/` (multiplication makes the transition',
+  'relation nonlinear, which is where an unbounded solver hang was measured); no quantifiers (the',
+  'solver infers over the declared state, and a written quantifier would silently change the',
+  'question); no chained comparisons (`a < b < c` has two plausible readings, so it is refused',
+  'rather than guessed — write `a < b and b < c`); no unary minus (write `0 - 1`).',
+  '`<` `<=` `>` `>=` are INTEGER-ONLY: an enum has a declared DOMAIN, not a declared ORDER, so',
+  'ordering its members would make a reordering of the domain array change what requirements mean.',
+)
+
+const stateEffectDescription = lines(
+  'What this requirement CHANGES, as one or more comma-separated state updates (v3, reachability).',
+  'Each update is `<declared variable> := <expression>`. Note `:=` ASSIGNS; a single `=` is the',
+  'equality COMPARISON and belongs in `stateConstraint`.',
+  'Several updates separated by commas happen in ONE step, which is why they belong on one',
+  'requirement rather than being split across two: splitting them would admit an intermediate state',
+  'the system never occupies. Assigning the same variable twice is REFUSED (a write-write conflict',
+  'has no order-independent meaning).',
+  'Only meaningful with `responseKind: effect`, and only referenced variables that are DECLARED are',
+  'accepted — an undeclared reference is ERR_USAGE at authoring time. That is deliberate and it is',
+  'the front door of a real hazard: an undeclared symbol reaching the Horn encoder was measured to',
+  'hang the WASM solver unkillably (donor findings V14/V21), so the write path refuses it where the',
+  'author can still fix it.',
+  STATE_EXPR_GRAMMAR,
+  "Examples: 'lock_held := true'; 'run_state := RUNNING, retry_count := retry_count + 1'.",
+)
+
+const stateConstraintDescription = lines(
+  'What this requirement asserts must ALWAYS hold, as a predicate over declared state variables',
+  '(v3, reachability). `check`s reachability tier asks whether any reachable state VIOLATES it.',
+  'Must be a predicate (boolean): `retry_count` alone is an integer and asserts nothing, so it is',
+  'refused rather than coerced to some guessed `!= 0`.',
+  'Only meaningful with `responseKind: constraint`. Undeclared references are ERR_USAGE at authoring',
+  'time, for the hazard reason given in the `stateEffect` description.',
+  'A `negated` requirement`s constraint is read as written — the flag governs the EARS sentence and',
+  'the propositional atom`s polarity, not this expression. Write the predicate that must hold.',
+  STATE_EXPR_GRAMMAR,
+  "Examples: 'not (lock_held and pending)'; 'retry_count <= 3'; 'run_state != FAILED'.",
 )
 
 const priorityDescription = lines(
@@ -427,8 +524,73 @@ const edgeDescription = (relation: Relation, semantics: string): string =>
 const stateVarNameDescription = lines(
   'The variable name, as referenced by requirement predicates and by the reachability encoder.',
   'Use a stable identifier-shaped noun: letters, digits, underscore, dot. Case-sensitive.',
+  'Must start with a letter or underscore, and must not be one of the reserved words',
+  '`and`, `or`, `not`, `true`, `false` — those are expression syntax, so a variable named',
+  'one of them would be unreferenceable.',
   "Examples: 'run_state'; 'lock_held'; 'retry_count'.",
 )
+
+/**
+ * The `frame` field's description. Long on purpose: this is the one field where a
+ * wrong value makes the tool PROVE something false and certify it, so the field's own
+ * documentation carries the measurement rather than deferring to a design doc an
+ * author will not read.
+ */
+const frameDescription = lines(
+  'Whether this variable PERSISTS across a step that does not write it. Defaults to `volatile`.',
+  '  - volatile: the variable may change freely in any step. Nothing is assumed. THE DEFAULT.',
+  '  - stable:   the variable changes ONLY when some requirement`s effect changes it.',
+  'Declaring `stable` is opting in to a HYPOTHESIS the document does not otherwise state, so',
+  '`check` runs the reachability query TWICE — once with no frame at all, once with the declared',
+  'frames — and reports the strongest HONEST verdict:',
+  '  - unreachable with NO frame        -> PROVED (frame-closed). Not demoted.',
+  '  - reachable both ways              -> a real counterexample trace at error severity.',
+  '  - reachable strict, unreachable framed -> PROVED_UNDER_HYPOTHESES, naming the variables the',
+  '    proof leaned on, and DEMOTED — the proof is conditional on a choice, not on the document.',
+  'Why the default is `volatile`: measured on this solver, a 3-variable model whose `alarm` is',
+  'written by no requirement returns UNREACHABLE *with an inductive invariant* under a frame and',
+  'REACHABLE without one. `alarm` is genuinely reachable, so the framed run proves a false answer',
+  'and certifies it. A missing declaration must therefore only ever WEAKEN a claim.',
+)
+
+/**
+ * The state-variable NAME format: identifier-shaped, dots allowed, and not a
+ * reserved word.
+ *
+ * Enforced in the SCHEMA rather than only in the expression checker, because the two
+ * failures are different in kind and only one of them is recoverable. A variable
+ * named `and` would parse as an operator everywhere it is referenced, so it could be
+ * DECLARED and never USED — a document that looks complete and whose reachability
+ * questions silently cannot be asked. Refusing the declaration is the only point at
+ * which the author still knows what they meant.
+ *
+ * FLAGLESS regex, for the reason `KEY_PATTERN` documents: it is lowered into the
+ * published JSON Schema as a `pattern`, and a JSON-Schema pattern carries no flags.
+ */
+export const STATE_VAR_NAME_PATTERN = /^(?!(?:and|or|not|true|false)$)[A-Za-z_][A-Za-z0-9_.]*$/
+
+/** A declared state variable's name. */
+const StateVarName = Schema.String.pipe(Schema.check(Schema.isPattern(STATE_VAR_NAME_PATTERN)))
+
+/**
+ * The per-variable `frame` field, with its schema-visible default.
+ *
+ * A function so all three variable shapes share ONE declaration: the default is the
+ * soundness-critical part (see {@link FRAME_KINDS}), and three copies of
+ * `'volatile'` is three places it could be changed to `'stable'` one at a time.
+ */
+const frameField = () => withDefault(Schema.Literals(FRAME_KINDS), 'volatile', frameDescription)
+
+/** The `initial` field's description, for a variable of the given shape. */
+const initialDescription = (...examples: readonly string[]) =>
+  lines(
+    'Optional initial-state predicate over this variable, as an expression in the state-model',
+    'language (see the `constraint`/`effect` field descriptions for the grammar).',
+    'Omit when the initial value is unconstrained — an omitted initial is a genuine `any value`',
+    'rather than an implied false/zero, and the encoder treats it that way, which is what makes',
+    'an omission WEAKEN rather than strengthen what can be proven.',
+    `Examples: ${examples.map((e) => `'${e}'`).join('; ')}.`,
+  )
 
 /**
  * A declared BOOLEAN state variable. Carries no domain — the domain is `{true,
@@ -436,20 +598,14 @@ const stateVarNameDescription = lines(
  * claim a boolean with three values.
  */
 const BoolVar = Schema.Struct({
-  name: NonEmpty.annotate({ description: stateVarNameDescription }),
+  name: StateVarName.annotate({ description: stateVarNameDescription }),
   type: Schema.Literal('bool').annotate({
     description:
       'Discriminant: a two-valued variable. Its domain is {true,false} and is not declared.',
   }),
+  frame: frameField(),
   initial: Schema.optionalKey(
-    NonEmpty.annotate({
-      description: lines(
-        'Optional initial-state predicate over this variable, as a text expression the reachability',
-        'encoder parses (G4). Omit when the initial value is unconstrained — an omitted initial is a',
-        "genuine 'any value' rather than an implied false, and the encoder treats it that way.",
-        "Examples: 'lock_held = false'.",
-      ),
-    }),
+    NonEmpty.annotate({ description: initialDescription('lock_held = false') }),
   ),
 }).annotate({
   description: 'A declared boolean state variable.',
@@ -461,10 +617,11 @@ const BoolVar = Schema.Struct({
  * declaring even though they are optional.
  */
 const IntVar = Schema.Struct({
-  name: NonEmpty.annotate({ description: stateVarNameDescription }),
+  name: StateVarName.annotate({ description: stateVarNameDescription }),
   type: Schema.Literal('int').annotate({
     description: 'Discriminant: an integer variable, optionally bounded by `domain`.',
   }),
+  frame: frameField(),
   domain: Schema.optionalKey(
     Schema.Struct({
       min: Schema.optionalKey(
@@ -481,12 +638,7 @@ const IntVar = Schema.Struct({
     }),
   ),
   initial: Schema.optionalKey(
-    NonEmpty.annotate({
-      description: lines(
-        'Optional initial-state predicate over this variable. Omit when unconstrained.',
-        "Examples: 'retry_count = 0'.",
-      ),
-    }),
+    NonEmpty.annotate({ description: initialDescription('retry_count = 0', 'retry_count < 3') }),
   ),
 }).annotate({ description: 'A declared integer state variable with an optional bounded domain.' })
 
@@ -496,27 +648,26 @@ const IntVar = Schema.Struct({
  * silently produce an empty state space.
  */
 const EnumVar = Schema.Struct({
-  name: NonEmpty.annotate({ description: stateVarNameDescription }),
+  name: StateVarName.annotate({ description: stateVarNameDescription }),
   type: Schema.Literal('enum').annotate({
     description:
       'Discriminant: a finite symbolic variable. `domain` lists its members and is REQUIRED.',
   }),
-  domain: Schema.Array(NonEmpty)
+  frame: frameField(),
+  domain: Schema.Array(StateVarName)
     .pipe(Schema.check(Schema.isMinLength(1)))
     .annotate({
       description: lines(
         'The finite set of values this variable may take. At least one member — an enum with an empty',
         'domain would give the encoder an empty state space, so it is rejected rather than accepted as',
         "a vacuous declaration. Examples: ['PENDING','RUNNING','DONE','FAILED'].",
+        'Members are identifier-shaped for the same reason variable names are: a member is written',
+        'BARE in an expression (`run_state = PENDING`), so a member with a space or an operator in it',
+        'could not be referenced.',
       ),
     }),
   initial: Schema.optionalKey(
-    NonEmpty.annotate({
-      description: lines(
-        'Optional initial-state predicate over this variable. Omit when unconstrained.',
-        "Examples: 'run_state = PENDING'.",
-      ),
-    }),
+    NonEmpty.annotate({ description: initialDescription('run_state = PENDING') }),
   ),
 }).annotate({
   description: 'A declared enum state variable over a finite, explicitly listed domain.',
@@ -557,9 +708,12 @@ export const StateModel = Schema.Struct({
   initial: Schema.optionalKey(
     NonEmpty.annotate({
       description: lines(
-        'Optional initial-state predicate over the whole model, as a text expression (G4 parses it).',
-        'Use for cross-variable initial constraints a per-variable `initial` cannot express.',
-        "Examples: 'run_state = PENDING and retry_count = 0'.",
+        'Optional initial-state predicate over the WHOLE model, in the state-model expression',
+        'language. Use for cross-variable initial constraints a per-variable `initial` cannot express.',
+        'Conjoined with every per-variable `initial`, so the two are additive rather than one',
+        'overriding the other — which means adding either can only ever NARROW the initial states,',
+        'never widen them.',
+        "Examples: 'run_state = PENDING and retry_count = 0'; 'not (lock_held and pending)'.",
       ),
     }),
   ),
@@ -602,6 +756,10 @@ export const Requirement = Schema.Struct({
   negated: withDefault(Schema.Boolean, false, negatedDescription),
   responseKind: Schema.optionalKey(
     Schema.Literals(RESPONSE_KINDS).annotate({ description: responseKindDescription }),
+  ),
+  stateEffect: Schema.optionalKey(NonEmpty.annotate({ description: stateEffectDescription })),
+  stateConstraint: Schema.optionalKey(
+    NonEmpty.annotate({ description: stateConstraintDescription }),
   ),
   sentence: Schema.String.annotate({ description: sentenceDescription }),
   priority: withDefault(Schema.Literals(PRIORITIES), 'medium', priorityDescription),
@@ -656,8 +814,9 @@ export const Requirement = Schema.Struct({
 }).annotate({
   description: lines(
     'A single EARS requirement node, SysML-v2-shaped. Combines the five EARS structural slots with',
-    'typed business metadata, the optional v3 `responseKind` classification, and four arrays of typed',
-    'outbound edges. `sentence` is a denormalized rendering of the slots, maintained automatically.',
+    'typed business metadata, the optional v3 `responseKind` classification plus its `stateEffect` /',
+    '`stateConstraint` expression, and four arrays of typed outbound edges. `sentence` is a',
+    'denormalized rendering of the slots, maintained automatically.',
   ),
 })
 export type Requirement = typeof Requirement.Type
