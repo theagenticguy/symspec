@@ -113,6 +113,54 @@ export const MAX_TEMPORAL_BOUND = 200
  */
 export const CHECK_IS_TERMINAL = true
 
+/**
+ * The reachability tier's per-query bound is a CANCELLABILITY mechanism, not merely a
+ * budget — which is why `--reachability-timeout-ms 0` inherits `--timeout-ms` rather than
+ * meaning "unbounded".
+ *
+ * MEASURED on z3-solver 5.0.0 (the G4 probe that settled whether worker isolation is
+ * needed):
+ *
+ * | what was interrupted | latency |
+ * |---|---|
+ * | raw `Z3.interrupt(ctx)`, 300ms into a 10s-budgeted query | 3ms |
+ * | `Fiber.interrupt` through the tier, same model, `timeoutMs: 10_000` | 10232ms |
+ *
+ * The second number is the query's OWN timeout, and it is not a coincidence:
+ * `Z3_interrupt` sets a cancel flag Spacer checks at its own yield points and does not
+ * check at all of them, and the canceler must AWAIT the in-flight promise (that await is
+ * what releases Asyncify's single capability slot — dropping it wedges the module). So
+ * when the flag is not observed, cancellation costs what the query would have cost anyway.
+ *
+ * The honest guarantee: **cancellation is bounded by the per-query timeout, and the module
+ * survives it.** An unbounded query is an uncancellable one, which is a second independent
+ * reason never to offer `--reachability-timeout-ms 0` as "unbounded, thorough" — on top of
+ * the V14/V21 unkillable-hang hazard.
+ *
+ * Recorded as a value so a future `0 means unbounded` proposal has to confront the
+ * measurement rather than rediscover it.
+ */
+export const REACHABILITY_TIMEOUT_IS_CANCELLABILITY = true
+
+/**
+ * Resolve the reachability tier's per-query bound.
+ *
+ * 0 is the INHERIT sentinel, not an "unbounded" one, and inheriting `--timeout-ms` is what
+ * makes the flag a pure addition: every existing fixture, the differential oracle's 53
+ * cases, and the worked fixture all pass `--reachability-timeout-ms` absent, so they get
+ * byte-identical output to the shared-knob behavior they were pinned against.
+ *
+ * Zero-is-inherit rather than a nullable field for the reason `check --fail-on-unmatched`
+ * documents at length: a negative sentinel is UNREACHABLE from a shell (the CLI reads a
+ * leading `-` as the next flag), and unlike that gate, 0 carries no useful meaning here —
+ * a 0ms per-query timeout would time out every query before Z3 parsed the model, so
+ * spending it as the sentinel costs nothing. The validator rejects negatives outright.
+ */
+export const resolveReachabilityTimeoutMs = (
+  reachabilityTimeoutMs: number,
+  timeoutMs: number,
+): number => (reachabilityTimeoutMs > 0 ? reachabilityTimeoutMs : timeoutMs)
+
 // ---------------------------------------------------------------------------
 // The v5 report additions
 // ---------------------------------------------------------------------------
@@ -299,6 +347,28 @@ const CheckInput = Schema.Struct({
       'Note: it does NOT bound the temporal tier`s ENCODE phase; see --temporal-bound.',
     ),
   ),
+  // ITS OWN FLAG, split from `--timeout-ms` at G5, and the reason is a MEASUREMENT
+  // rather than tidiness. See {@link resolveReachabilityTimeoutMs} for the sentinel and
+  // {@link REACHABILITY_TIMEOUT_IS_CANCELLABILITY} for why the bound is not merely a budget.
+  reachabilityTimeoutMs: intFlag(
+    0,
+    lines(
+      'Per-query timeout in milliseconds for the UNBOUNDED reachability tier (Z3 Spacer), applied to',
+      'each Horn query the tier issues. 0 (the default) INHERITS --timeout-ms, so omitting this flag',
+      'reproduces the shared behavior exactly.',
+      '0 does NOT mean unbounded, and that is deliberate: `Z3_interrupt` is COOPERATIVE — Spacer',
+      'checks the cancel flag at its own yield points and not at all of them — so when the flag is',
+      'not observed, a cancel costs what the query would have cost anyway. MEASURED: a raw',
+      'Z3.interrupt landed in 3ms, while interrupting the same query through the tier took 10232ms',
+      'against a 10000ms bound. So THIS BOUND IS THE CANCELLABILITY MECHANISM: an unbounded',
+      'reachability query is an UNCANCELLABLE one, and the worst-case time to abandon the tier is',
+      'exactly the value set here.',
+      'Split from --timeout-ms because the two bound different work: --timeout-ms bounds seven',
+      'per-pair propositional/arithmetic solvers where a raise is cheap, while a reachability query',
+      'is one whole-model fixedpoint search — so an author raising the reachability budget 20x to',
+      'decide an UNKNOWN should not simultaneously hand every other tier 20x the rope.',
+    ),
+  ),
   solverBudgetMs: intFlag(
     0,
     lines(
@@ -463,6 +533,12 @@ const validate = (input: typeof CheckInput.Type, path: string): Effect.Effect<vo
     return usage(
       `--timeout-ms expects a positive integer, got ${input.timeoutMs}.`,
       `symspec check ${path} --timeout-ms 2000`,
+    )
+  }
+  if (input.reachabilityTimeoutMs < 0) {
+    return usage(
+      `--reachability-timeout-ms expects a non-negative integer (0 inherits --timeout-ms), got ${input.reachabilityTimeoutMs}.`,
+      `symspec check ${path} --reachability-timeout-ms 8000`,
     )
   }
   if (input.solverBudgetMs < 0) {
@@ -739,9 +815,15 @@ export const checkOp = defineOperation({
       // the budget bounds the transplanted tiers, and folding a new tier into the number
       // it measures would change the `budgetHint` on documents that gained a state model
       // — a G3 output moving for a G4 reason.
+      // The BOUND is the tier's own, resolved from `--reachability-timeout-ms` with
+      // `--timeout-ms` as the inherited default — so the flag is a pure addition (absent
+      // reproduces G4's shared-knob behavior byte for byte) while a reachability UNKNOWN can
+      // be resolved without handing every propositional solver the same multiple.
       const reachabilityRun =
         loaded.document.stateModel.variables.length > 0
-          ? yield* runReachability(loaded.document, { timeoutMs: input.timeoutMs })
+          ? yield* runReachability(loaded.document, {
+              timeoutMs: resolveReachabilityTimeoutMs(input.reachabilityTimeoutMs, input.timeoutMs),
+            })
           : undefined
 
       const reachabilityProjection =

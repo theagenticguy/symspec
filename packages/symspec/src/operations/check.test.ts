@@ -44,7 +44,13 @@ import {
   exitCodeForEnvelope,
 } from '../kernel/exit.ts'
 import { runOperation } from '../kernel/operation.ts'
-import { type CheckPayload, checkOp, MAX_TEMPORAL_BOUND } from './check.ts'
+import {
+  type CheckPayload,
+  checkOp,
+  MAX_TEMPORAL_BOUND,
+  REACHABILITY_TIMEOUT_IS_CANCELLABILITY,
+  resolveReachabilityTimeoutMs,
+} from './check.ts'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -944,5 +950,138 @@ describe('the reachability tier runs ONLY when a state model is committed (G4)',
     ).toEqual(
       first.findings.filter((f) => f.code.startsWith('FND_REACHABILITY')).map((f) => f.code),
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// `--reachability-timeout-ms` (G5) — the tier's OWN bound, split from the shared one
+// ---------------------------------------------------------------------------
+
+/**
+ * The dedicated reachability bound.
+ *
+ * Three claims, and the ORDER they are asserted in is the order they would break in:
+ *
+ * 1. **Absent reproduces the shared behavior byte for byte.** This is what keeps the flag
+ *    a pure addition: the differential oracle's 53 cases and the worked fixture were all
+ *    pinned against `--timeout-ms` governing both, and none of them passes the new flag.
+ *    A resolver that defaulted to a constant instead of inheriting would move fixture
+ *    output on documents nobody edited.
+ * 2. **Present overrides ONLY this tier.** The reason the split exists: raising a
+ *    reachability bound 20x to decide an UNKNOWN must not hand seven per-pair
+ *    propositional solvers 20x the rope.
+ * 3. **0 is INHERIT, never unbounded** — the cancellability property. A negative is a
+ *    usage error, so there is no spelling of "no bound" at all.
+ */
+describe('--reachability-timeout-ms bounds the reachability tier alone (G5)', () => {
+  const rid = (n: number) => `cccccccc-0000-4000-8000-00000000000${n}`
+
+  /** The same single-variable lock model the G4 tests use, which PROVES frame-closed. */
+  const provable = (): RequirementsDocument => ({
+    ...docOf(
+      req({
+        id: rid(1),
+        key: 'TX-A1',
+        sentence: 'The lock manager shall grant the lock.',
+        systemResponse: 'grant the lock',
+        responseKind: 'effect',
+        stateEffect: 'when granted = 0: granted := granted + 1',
+      }),
+      req({
+        id: rid(2),
+        key: 'TX-C1',
+        sentence: 'The lock manager shall hold at most one lock.',
+        systemResponse: 'hold at most one lock',
+        responseKind: 'constraint',
+        stateConstraint: 'granted <= 1',
+      }),
+    ),
+    stateModel: {
+      variables: [
+        {
+          name: 'granted',
+          type: 'int',
+          frame: 'volatile',
+          initial: 'granted = 0',
+          domain: { min: 0, max: 4 },
+        },
+      ],
+    },
+  })
+
+  // --- The resolver, in isolation -------------------------------------------
+
+  it('0 INHERITS --timeout-ms — the sentinel is inherit, not unbounded', () => {
+    expect(resolveReachabilityTimeoutMs(0, 2000)).toBe(2000)
+    expect(resolveReachabilityTimeoutMs(0, 45)).toBe(45)
+  })
+
+  it('a positive value OVERRIDES --timeout-ms in both directions', () => {
+    // Both directions, because a resolver written as `Math.max` would pass an
+    // only-raises test and silently refuse to LOWER the reachability bound — which is the
+    // useful direction when a hung model needs to fail fast.
+    expect(resolveReachabilityTimeoutMs(8000, 2000)).toBe(8000)
+    expect(resolveReachabilityTimeoutMs(250, 2000)).toBe(250)
+  })
+
+  it('records that the bound is a CANCELLABILITY mechanism, not merely a budget', () => {
+    // Measured: a raw `Z3.interrupt` landed in 3ms while interrupting through the tier
+    // took 10232ms against a 10000ms bound, because `Z3_interrupt` is cooperative. So an
+    // unbounded query is an uncancellable one, and `0` must never come to mean unbounded.
+    expect(REACHABILITY_TIMEOUT_IS_CANCELLABILITY).toBe(true)
+  })
+
+  // --- Through the real operation -------------------------------------------
+
+  it('ABSENT reproduces --timeout-ms exactly — the pure-addition property', async () => {
+    // SEQUENTIAL: `Promise.all` over two solver runs wedges Asyncify's capability slot.
+    const shared = await expectOk(provable(), { timeoutMs: 3500 })
+    const explicit = await expectOk(provable(), { timeoutMs: 3500, reachabilityTimeoutMs: 0 })
+    // The tier PUBLISHES the bound it used, so this is checkable rather than inferred.
+    expect(shared.reachability?.timeoutMs).toBe(3500)
+    expect(explicit.reachability?.timeoutMs).toBe(3500)
+  })
+
+  it('a supplied value reaches the tier and is published', async () => {
+    const payload = await expectOk(provable(), { timeoutMs: 2000, reachabilityTimeoutMs: 7000 })
+    expect(payload.reachability?.timeoutMs).toBe(7000)
+    // And the verdict is unchanged — the flag moves the BOUND, not the answer.
+    expect(payload.reachability?.proved).toBe(1)
+  })
+
+  it('overrides DOWNWARD too, without changing a verdict this model reaches easily', async () => {
+    // The 48ms measured cost of this model leaves plenty of room under 500ms, so a lower
+    // bound is observable in `timeoutMs` without making the test a race.
+    const payload = await expectOk(provable(), { timeoutMs: 9000, reachabilityTimeoutMs: 500 })
+    expect(payload.reachability?.timeoutMs).toBe(500)
+    expect(payload.reachability?.proved).toBe(1)
+  })
+
+  it('does NOT change what the SHARED --timeout-ms means for the other tiers', async () => {
+    // The whole point of the split. The propositional tiers' bound must be untouched by
+    // the reachability flag, and the observable proxy is that the reachability summary
+    // reports the reachability bound while everything else behaves as it did — asserted
+    // here as "the two numbers are different and both are honored".
+    const payload = await expectOk(provable(), { timeoutMs: 1200, reachabilityTimeoutMs: 6000 })
+    expect(payload.reachability?.timeoutMs).toBe(6000)
+    expect(payload.reachability?.timeoutMs).not.toBe(1200)
+    // A run that still completed, so the lower shared bound did not break the other tiers.
+    expect(payload.verified === true || payload.coverage.demotions.length > 0).toBe(true)
+  })
+
+  it('rejects a NEGATIVE value with a runnable correction', async () => {
+    const result = await runCheckOp(provable(), { reachabilityTimeoutMs: -1 })
+    expect(result._tag).toBe('Failure')
+    if (result._tag !== 'Failure') return
+    const failure = result.failure as {
+      _tag: string
+      error: string
+      repair?: { commands: readonly string[] }
+    }
+    expect(failure._tag).toBe('ERR_USAGE')
+    expect(failure.error).toMatch(/--reachability-timeout-ms/)
+    // The message must say what 0 MEANS, or a reader will try it as "unbounded".
+    expect(failure.error).toMatch(/inherits --timeout-ms/)
+    expect(failure.repair?.commands[0]).toMatch(/--reachability-timeout-ms/)
   })
 })

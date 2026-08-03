@@ -354,17 +354,26 @@ export const projectReachability = (
           requirementIds: ids,
           action: budget
             ? `The reachability query for ${result.label} hit the ${report.timeoutMs}ms per-query ` +
-              `budget. Raise it: \`symspec check ${docPath} --timeout-ms ${report.timeoutMs * 4}\`.`
+              `budget. Raise it: \`symspec check ${docPath} --reachability-timeout-ms ${report.timeoutMs * 4}\`. ` +
+              'That flag bounds THIS tier only, so the seven per-pair solvers keep their own ' +
+              '`--timeout-ms`.'
             : `The reachability query for ${result.label} was undecidable within its budget, and ` +
               'more time will not help. Bound the integer domains in the state model ' +
               '(`symspec state <name> --type int --min <n> --max <n>`) so the state space is finite.',
           repair: budget
             ? {
                 ops: [],
+                // NAMES THE TIER'S OWN FLAG, not the shared `--timeout-ms` (G5). A
+                // reachability query is one whole-model fixedpoint search; raising the shared
+                // knob 4x to decide it would also hand every propositional solver 4x the rope,
+                // which is a different and unasked-for change to the run.
+                //
                 // The doubling-and-then-some the budget-hint module uses: a bound that
                 // failed at N rarely succeeds at N+ε, and each retry pays the full
                 // truncated cost.
-                commands: [`symspec check ${docPath} --timeout-ms ${report.timeoutMs * 4}`],
+                commands: [
+                  `symspec check ${docPath} --reachability-timeout-ms ${report.timeoutMs * 4}`,
+                ],
               }
             : {
                 ops: [],

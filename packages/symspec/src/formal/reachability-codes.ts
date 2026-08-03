@@ -122,7 +122,8 @@ export const ReachabilityFndCodeMeta: Record<
       'applies, because they need different remedies and the solver cannot be asked: a timed-out ' +
       'Spacer query reports its reason as the literal string "ok", so the distinction is derived ' +
       'out-of-band from measured elapsed time against the budget that was set. Suggestion: for ' +
-      'budget exhaustion raise --timeout-ms; for genuine undecidability bound the integer domains ' +
+      'budget exhaustion raise --reachability-timeout-ms (this tier`s own per-query bound, which ' +
+      'defaults to --timeout-ms when absent); for genuine undecidability bound the integer domains ' +
       'in the state model instead, since more time will not help.',
   },
   FND_REACHABILITY_NOT_CHECKED: {

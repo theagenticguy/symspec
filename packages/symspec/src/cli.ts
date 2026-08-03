@@ -440,6 +440,13 @@ const checkCommand = Command.make(
   {
     file: pathArgument(checkOp, 'file'),
     timeoutMs: integerFlag(checkOp, 'timeoutMs'),
+    // NOT `Flag.optional`, unlike `--fail-on-unmatched` and `--semantic-threshold`: 0 is
+    // a real, meaningful value here (INHERIT `--timeout-ms`) rather than a sentinel that
+    // has to be distinguished from absence, so a plain integer flag with a schema-derived
+    // default of 0 says it. The validator refuses a negative, which is the only spelling
+    // that would otherwise read as "unbounded" — see
+    // `REACHABILITY_TIMEOUT_IS_CANCELLABILITY` for why unbounded is not on offer.
+    reachabilityTimeoutMs: integerFlag(checkOp, 'reachabilityTimeoutMs'),
     solverBudgetMs: integerFlag(checkOp, 'solverBudgetMs'),
     temporalBound: integerFlag(checkOp, 'temporalBound'),
     strict: booleanFlag(checkOp, 'strict'),
@@ -463,6 +470,7 @@ const checkCommand = Command.make(
     emit(checkOp, {
       file: Option.getOrNull(config.file),
       timeoutMs: config.timeoutMs,
+      reachabilityTimeoutMs: config.reachabilityTimeoutMs,
       solverBudgetMs: config.solverBudgetMs,
       temporalBound: config.temporalBound,
       strict: config.strict,

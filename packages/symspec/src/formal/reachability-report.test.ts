@@ -358,7 +358,18 @@ describe('an unknown names its cause and recommends the RIGHT knob', () => {
     expect(projection.demotions[0]?.reason).toBe('reachability-budget-exhausted')
     // 4x rather than 2x: a bound that failed at N rarely succeeds at N+epsilon, and each
     // retry pays the full truncated cost.
-    expect(projection.demotions[0]?.repair?.commands?.[0]).toContain('--timeout-ms 8000')
+    //
+    // And it names the TIER'S OWN flag (G5), not the shared `--timeout-ms`: raising the
+    // shared knob 4x to decide one fixedpoint query would also hand seven per-pair
+    // propositional solvers 4x the rope, which is a different change to the run than the
+    // one the demotion is asking for.
+    expect(projection.demotions[0]?.repair?.commands?.[0]).toContain(
+      '--reachability-timeout-ms 8000',
+    )
+    expect(projection.demotions[0]?.repair?.commands?.[0]).not.toMatch(
+      /(?<!reachability-)--timeout-ms/,
+    )
+    expect(projection.demotions[0]?.action).toContain('--reachability-timeout-ms 8000')
   })
 
   it('undecidability says raising the budget will NOT help', () => {
