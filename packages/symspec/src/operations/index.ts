@@ -54,11 +54,31 @@ import { VERSION } from '../kernel/version.ts'
 import { checkOp } from './check.ts'
 import { initOp, listOp, showOp } from './document.ts'
 import { importOp } from './import.ts'
+import {
+  addOp,
+  antonymOp,
+  applyOpDefinition,
+  deleteOp,
+  glossaryOp,
+  linkOp,
+  updateOp,
+  waiveOp,
+} from './mutation.ts'
 import { parseOp } from './parse.ts'
 
 export { checkOp } from './check.ts'
 export { initOp, listOp, showOp } from './document.ts'
 export { importOp } from './import.ts'
+export {
+  addOp,
+  antonymOp,
+  applyOpDefinition,
+  deleteOp,
+  glossaryOp,
+  linkOp,
+  updateOp,
+  waiveOp,
+} from './mutation.ts'
 export { parseOp } from './parse.ts'
 export { StreamSource, streamSourceLayer } from './stream.ts'
 
@@ -204,6 +224,17 @@ export const OPERATIONS = [
   initOp,
   importOp,
   parseOp,
+  // G2b AUTHORING: the mutation ops, in the order an agent uses them — create, then
+  // edit, then relate, then delete, then the three committed side tables, then the
+  // batch that does any of it in bulk.
+  addOp,
+  updateOp,
+  linkOp,
+  deleteOp,
+  waiveOp,
+  glossaryOp,
+  antonymOp,
+  applyOpDefinition,
   listOp,
   showOp,
   checkOp,

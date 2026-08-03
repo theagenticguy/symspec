@@ -29,15 +29,23 @@ import { fieldMetadata, flagName, type Operation, runOperation } from './kernel/
 import { type OutputFlags, renderOutput } from './kernel/output.ts'
 import { VERSION } from './kernel/version.ts'
 import {
+  addOp,
+  antonymOp,
+  applyOpDefinition,
   checkOp,
+  deleteOp,
   explainOp,
+  glossaryOp,
   importOp,
   initOp,
+  linkOp,
   listOp,
   manifestOp,
   parseOp,
   showOp,
+  updateOp,
   versionOp,
+  waiveOp,
 } from './operations/index.ts'
 
 // ---------------------------------------------------------------------------
@@ -462,12 +470,238 @@ const checkCommand = Command.make(
     }),
 ).pipe(Command.withDescription(checkOp.summary))
 
+// ---------------------------------------------------------------------------
+// The MUTATION commands
+// ---------------------------------------------------------------------------
+
+/**
+ * A REQUIRED positional argument, described from the schema.
+ *
+ * Positionals for the values an agent naturally types in order (`update G1 status
+ * approved`), flags for everything else. The description is still read from the
+ * schema, so the single-source property holds across the flag/argument distinction.
+ */
+const positional = (
+  op: { readonly name: string; readonly input: Schema.Struct<Schema.Struct.Fields> },
+  field: string,
+) => {
+  const meta = fieldMetadata(op.input).find((f) => f.name === field)
+  if (meta === undefined) {
+    throw new Error(`Operation "${op.name}" has no input field "${field}"`)
+  }
+  return Argument.string(field).pipe(Argument.withDescription(meta.description))
+}
+
+/** An OPTIONAL positional, for a value whose absence is meaningful. */
+const optionalPositional = (
+  op: { readonly name: string; readonly input: Schema.Struct<Schema.Struct.Fields> },
+  field: string,
+) => Argument.optional(positional(op, field))
+
+const addCommand = Command.make(
+  'add',
+  {
+    patternType: Flag.optional(stringFlag(addOp, 'patternType')),
+    systemName: Flag.optional(stringFlag(addOp, 'systemName')),
+    systemResponse: Flag.optional(stringFlag(addOp, 'systemResponse')),
+    preCondition: Flag.optional(stringFlag(addOp, 'preCondition')),
+    trigger: Flag.optional(stringFlag(addOp, 'trigger')),
+    negated: booleanFlag(addOp, 'negated'),
+    key: Flag.optional(stringFlag(addOp, 'key')),
+    responseKind: Flag.optional(stringFlag(addOp, 'responseKind')),
+    priority: Flag.optional(stringFlag(addOp, 'priority')),
+    status: Flag.optional(stringFlag(addOp, 'status')),
+    verificationMethod: Flag.optional(stringFlag(addOp, 'verificationMethod')),
+    verificationNote: Flag.optional(stringFlag(addOp, 'verificationNote')),
+    fromParse: Flag.optional(stringFlag(addOp, 'fromParse')),
+    file: Flag.optional(stringFlag(addOp, 'file')),
+    dryRun: booleanFlag(addOp, 'dryRun'),
+  },
+  (config) =>
+    emit(addOp, {
+      patternType: Option.getOrNull(config.patternType),
+      systemName: Option.getOrNull(config.systemName),
+      systemResponse: Option.getOrNull(config.systemResponse),
+      preCondition: Option.getOrNull(config.preCondition),
+      trigger: Option.getOrNull(config.trigger),
+      negated: config.negated,
+      key: Option.getOrNull(config.key),
+      responseKind: Option.getOrNull(config.responseKind),
+      priority: Option.getOrNull(config.priority),
+      status: Option.getOrNull(config.status),
+      verificationMethod: Option.getOrNull(config.verificationMethod),
+      verificationNote: Option.getOrNull(config.verificationNote),
+      fromParse: Option.getOrNull(config.fromParse),
+      file: Option.getOrNull(config.file),
+      dryRun: config.dryRun,
+    }),
+).pipe(Command.withDescription(addOp.summary))
+
+/**
+ * `update <attr> [value]` — the ATTR is a positional, the ref is a flag.
+ *
+ * Deliberately not the donor's `update <ref> <attr> <value>`: `--ref` and `--where` are
+ * mutually exclusive, and a bulk update has no ref at all, so a leading ref positional
+ * would be present in one mode and absent in the other. Naming it makes the two modes
+ * read the same.
+ */
+const updateCommand = Command.make(
+  'update',
+  {
+    attr: positional(updateOp, 'attr'),
+    value: optionalPositional(updateOp, 'value'),
+    ref: Flag.optional(stringFlag(updateOp, 'ref')),
+    clear: booleanFlag(updateOp, 'clear'),
+    where: Flag.optional(stringFlag(updateOp, 'where')),
+    file: Flag.optional(stringFlag(updateOp, 'file')),
+    dryRun: booleanFlag(updateOp, 'dryRun'),
+  },
+  (config) =>
+    emit(updateOp, {
+      attr: config.attr,
+      value: Option.getOrNull(config.value),
+      ref: Option.getOrNull(config.ref),
+      clear: config.clear,
+      where: Option.getOrNull(config.where),
+      file: Option.getOrNull(config.file),
+      dryRun: config.dryRun,
+    }),
+).pipe(Command.withDescription(updateOp.summary))
+
+const deleteCommand = Command.make(
+  'delete',
+  {
+    ref: positional(deleteOp, 'ref'),
+    file: Flag.optional(stringFlag(deleteOp, 'file')),
+    dryRun: booleanFlag(deleteOp, 'dryRun'),
+  },
+  (config) =>
+    emit(deleteOp, {
+      ref: config.ref,
+      file: Option.getOrNull(config.file),
+      dryRun: config.dryRun,
+    }),
+).pipe(Command.withDescription(deleteOp.summary))
+
+const linkCommand = Command.make(
+  'link',
+  {
+    from: positional(linkOp, 'from'),
+    to: positional(linkOp, 'to'),
+    relation: stringFlag(linkOp, 'relation'),
+    remove: booleanFlag(linkOp, 'remove'),
+    file: Flag.optional(stringFlag(linkOp, 'file')),
+    dryRun: booleanFlag(linkOp, 'dryRun'),
+  },
+  (config) =>
+    emit(linkOp, {
+      from: config.from,
+      to: config.to,
+      relation: config.relation,
+      remove: config.remove,
+      file: Option.getOrNull(config.file),
+      dryRun: config.dryRun,
+    }),
+).pipe(Command.withDescription(linkOp.summary))
+
+const waiveCommand = Command.make(
+  'waive',
+  {
+    code: positional(waiveOp, 'code'),
+    reason: Flag.optional(stringFlag(waiveOp, 'reason')),
+    ref: Flag.optional(stringFlag(waiveOp, 'ref')),
+    remove: booleanFlag(waiveOp, 'remove'),
+    file: Flag.optional(stringFlag(waiveOp, 'file')),
+    dryRun: booleanFlag(waiveOp, 'dryRun'),
+  },
+  (config) =>
+    emit(waiveOp, {
+      code: config.code,
+      reason: Option.getOrNull(config.reason),
+      ref: Option.getOrNull(config.ref),
+      remove: config.remove,
+      file: Option.getOrNull(config.file),
+      dryRun: config.dryRun,
+    }),
+).pipe(Command.withDescription(waiveOp.summary))
+
+const glossaryCommand = Command.make(
+  'glossary',
+  {
+    canonical: positional(glossaryOp, 'canonical'),
+    alias: positional(glossaryOp, 'alias'),
+    remove: booleanFlag(glossaryOp, 'remove'),
+    file: Flag.optional(stringFlag(glossaryOp, 'file')),
+    dryRun: booleanFlag(glossaryOp, 'dryRun'),
+  },
+  (config) =>
+    emit(glossaryOp, {
+      canonical: config.canonical,
+      alias: config.alias,
+      remove: config.remove,
+      file: Option.getOrNull(config.file),
+      dryRun: config.dryRun,
+    }),
+).pipe(Command.withDescription(glossaryOp.summary))
+
+const antonymCommand = Command.make(
+  'antonym',
+  {
+    a: positional(antonymOp, 'a'),
+    b: positional(antonymOp, 'b'),
+    remove: booleanFlag(antonymOp, 'remove'),
+    file: Flag.optional(stringFlag(antonymOp, 'file')),
+    dryRun: booleanFlag(antonymOp, 'dryRun'),
+  },
+  (config) =>
+    emit(antonymOp, {
+      a: config.a,
+      b: config.b,
+      remove: config.remove,
+      file: Option.getOrNull(config.file),
+      dryRun: config.dryRun,
+    }),
+).pipe(Command.withDescription(antonymOp.summary))
+
+/**
+ * `apply` takes everything as FLAGS, and the naming is the donor's lesson applied.
+ *
+ * It has TWO paths (the op stream in, the document out), so `--ops` and `--file` are
+ * both named. The donor registered `--doc` for the document while reusing a shared
+ * description whose prose said `--file`, and its manifest consequently told an agent to
+ * run `apply --file` — which returned ERR_USAGE on the flagship command.
+ */
+const applyCommand = Command.make(
+  'apply',
+  {
+    ops: Flag.optional(stringFlag(applyOpDefinition, 'ops')),
+    file: Flag.optional(stringFlag(applyOpDefinition, 'file')),
+    continueOnError: booleanFlag(applyOpDefinition, 'continueOnError'),
+    dryRun: booleanFlag(applyOpDefinition, 'dryRun'),
+  },
+  (config) =>
+    emit(applyOpDefinition, {
+      ops: Option.getOrNull(config.ops),
+      file: Option.getOrNull(config.file),
+      continueOnError: config.continueOnError,
+      dryRun: config.dryRun,
+    }),
+).pipe(Command.withDescription(applyOpDefinition.summary))
+
 /** The root command with every subcommand attached — the runnable tree. */
 const rootWithSubcommands = root.pipe(
   Command.withSubcommands([
     initCommand,
     importCommand,
     parseCommand,
+    addCommand,
+    updateCommand,
+    linkCommand,
+    deleteCommand,
+    waiveCommand,
+    glossaryCommand,
+    antonymCommand,
+    applyCommand,
     listCommand,
     showCommand,
     checkCommand,

@@ -149,6 +149,19 @@ export const EDGE_OP_RELATION = {
 export const EDGE_OPS = Object.keys(EDGE_OP_RELATION) as readonly (keyof typeof EDGE_OP_RELATION)[]
 
 /**
+ * The INVERSE: relation → the op verb that creates it.
+ *
+ * Derived from {@link EDGE_OP_RELATION} rather than written out, so the two directions
+ * cannot disagree — and `ops.test.ts` asserts they compose to the identity in both
+ * directions. It exists because the CLI takes a `--relation derives` (one command, one
+ * closed flag) while the op STREAM carries `{"op":"derive"}` (the donor's spelling,
+ * append-only), so exactly one place has to map between them.
+ */
+export const RELATION_EDGE_OP = Object.fromEntries(
+  Object.entries(EDGE_OP_RELATION).map(([verb, relation]) => [relation, verb]),
+) as Record<(typeof RELATIONS)[number], keyof typeof EDGE_OP_RELATION>
+
+/**
  * `{"op":"derive"|"satisfy"|"verify"|"refine", …}` — add one typed edge.
  *
  * IDEMPOTENT in the fold: re-adding an existing edge is a no-op success, so

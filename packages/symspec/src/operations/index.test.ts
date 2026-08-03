@@ -39,6 +39,18 @@ describe('the table', () => {
       // ops, because it is where a document COMES FROM — prose in, apply-ready ops
       // out. It reads no document and writes none.
       'parse',
+      // G2b AUTHORING, in the order an agent uses them: create, edit, relate, delete,
+      // then the three committed side tables, then the batch that does any of it in
+      // bulk. All twelve fold the SAME op vocabulary through the same `foldOps`, so
+      // this list is a presentation choice and not a capability boundary.
+      'add',
+      'update',
+      'link',
+      'delete',
+      'waive',
+      'glossary',
+      'antonym',
+      'apply',
       'list',
       'show',
       // G2a: `check`, the operation the tool exists for, placed after the document
