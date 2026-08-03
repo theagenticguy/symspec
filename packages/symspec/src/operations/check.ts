@@ -18,8 +18,10 @@
  *    — one function, one crossing).
  * 2. Run `runCheck` THROUGH the `SolverService` Layer, so every solver call rides
  *    the Layer-owned WASM instance and the process can exit cleanly.
- * 3. Add the two v5 fields: `repair` on every demotion (AC-A-1) and
- *    `data.progress` (AC-A-2).
+ * 3. Add the v5 fields: `repair` on every demotion (AC-A-1), `data.progress`
+ *    (AC-A-2), and `data.budgetHint` (AC-A-8, G3) — all ADDITIVE, which is what lets
+ *    the differential oracle exclude exactly them and stay a strict comparison of
+ *    everything else.
  * 4. Validate the option surface up front, with the donor's exact usage errors.
  *
  * ## Why the whole run is ONE Effect.promise and not per-tier Effects
@@ -74,6 +76,7 @@ import type {
 } from '../donor/pipeline/check.ts'
 import { filterReport, runCheck } from '../donor/pipeline/check.ts'
 import type { Exclusion } from '../donor/pipeline/gate.ts'
+import { type BudgetHint, budgetHintFor } from '../formal/budget-hint.ts'
 import { toDonorDoc } from '../formal/compat.ts'
 import { EmbedderService } from '../formal/embedder.ts'
 import { repairForDemotion } from '../formal/repair.ts'
@@ -175,6 +178,19 @@ export interface CheckPayload extends Omit<CheckReport, 'coverage'> {
   readonly path: string
   /** The load's info-grade disclosures (V27 channel), surfaced on every read. */
   readonly diagnostics: readonly DocumentDiagnostic[]
+  /**
+   * The measured budget recommendation (AC-A-8) — present ONLY when the run has
+   * something measured to say about its own `--solver-budget-ms`.
+   *
+   * OMITTED on an unbounded run (the default) and on a bounded run with comfortable
+   * headroom, and the absence is the message: there is no budget to correct, or the
+   * budget is fine. Emitting a hint on every run would make it noise, and emitting
+   * one on an unbounded run would push a bound onto a caller who did not ask for it.
+   *
+   * See `../formal/budget-hint.ts` for why the number is anchored on THIS run's
+   * clock rather than on a committed cost table.
+   */
+  readonly budgetHint?: BudgetHint
 }
 
 // ---------------------------------------------------------------------------
@@ -516,6 +532,16 @@ const withRepairs = (
   excluded: readonly Exclusion[],
   input: typeof CheckInput.Type,
   path: string,
+  /**
+   * The MEASURED budget recommendation, when the run produced one.
+   *
+   * Threaded through so the `solver-budget-exhausted` repair command names the SAME
+   * number `data.budgetHint.recommendedBudgetMs` publishes. Two renderings of one
+   * answer that could disagree is the drift this codebase treats as a defect, and here
+   * it would be visible to an agent as the envelope contradicting itself in two
+   * adjacent fields.
+   */
+  recommendedBudgetMs: number | undefined,
 ): readonly RepairableDemotion[] => {
   const exclusionsById = new Map(excluded.map((e) => [e.id, e]))
   return demotions.map((demotion) => {
@@ -524,6 +550,7 @@ const withRepairs = (
       findings,
       docPath: path,
       ...(input.solverBudgetMs > 0 ? { solverBudgetMs: input.solverBudgetMs } : {}),
+      ...(recommendedBudgetMs !== undefined ? { recommendedBudgetMs } : {}),
     })
     // An empty repair is OMITTED, not emitted as two empty arrays — the same rule
     // the error envelope follows, and for the same reason: "there is a repair, it is
@@ -582,6 +609,15 @@ export const checkOp = defineOperation({
       const embedder = input.semantic ? yield* (yield* EmbedderService).load : undefined
       const donorDoc = toDonorDoc(loaded.document)
 
+      // The AC-A-8 ANCHOR. Measured around the pipeline call and nowhere else, so it
+      // is the wall clock the solver tiers actually consumed on this machine under
+      // this load — which is the only figure a portable recommendation can rest on
+      // (`../formal/budget-hint.ts` records the contention measurement that ruled out
+      // a committed cost table). Started AFTER the WASM boot and the embedder load, so
+      // it measures the same span `--solver-budget-ms` bounds rather than including
+      // two one-off costs no budget governs.
+      const startedAt = Date.now()
+
       const full = yield* Effect.tryPromise({
         try: () => runCheck(donorDoc, toCheckOptions(input, embedder)),
         catch: (cause) =>
@@ -605,6 +641,8 @@ export const checkOp = defineOperation({
           }),
       })
 
+      const measuredMs = Date.now() - startedAt
+
       // Output shaping is applied AFTER the repairs are computed from the full
       // report, so a filter cannot strip a remedy. Presentation only: it never
       // touches `counts`, so the exit code is identical filtered or not.
@@ -616,6 +654,12 @@ export const checkOp = defineOperation({
             })
           : full
 
+      // Computed from the UNFILTERED report and the FULL demotion set, for the same
+      // reason the repairs are: `--min-severity` is a presentation choice, and letting
+      // it change what budget is recommended would strip the hint off exactly the
+      // info-tier truncation demotions that raise it.
+      const budgetHint = budgetHintFor(full, input.solverBudgetMs, measuredMs)
+
       const payload: CheckPayload = {
         ...shaped,
         coverage: {
@@ -626,11 +670,16 @@ export const checkOp = defineOperation({
             full.excluded,
             input,
             path,
+            budgetHint?.recommendedBudgetMs,
           ),
         },
         progress: progressOf(full),
         path,
         diagnostics: loaded.diagnostics,
+        // ABSENT, not `undefined`. A run with nothing measured to say about its budget
+        // emits no key at all — the same convention `repair` and `partial` follow, and
+        // the reason `budgetHint?:` is optional rather than nullable.
+        ...(budgetHint !== undefined ? { budgetHint } : {}),
       }
 
       return ok('check', payload)

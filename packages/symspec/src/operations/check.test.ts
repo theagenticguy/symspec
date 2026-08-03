@@ -128,6 +128,49 @@ const disjointDoc = (): RequirementsDocument =>
     }),
   )
 
+/**
+ * `n` requirements that SHARE one system and one trigger, so every pair is a
+ * candidate pair — the shape whose solver cost a `--solver-budget-ms` actually
+ * bounds, and therefore the only shape that can exercise the AC-A-8 hint.
+ *
+ * ## Two constraints on the generated text, both learned the hard way
+ *
+ * The response objects are word-spelled and drawn from a fixed pool because a BARE
+ * NUMBER fires `GTWR_R6_MISSING_UNITS` at error severity, the AC-3-7 gate then
+ * excludes every requirement from the formal tier, and the document silently becomes
+ * a lint fixture with `pairsChecked: 0`. The first version of `scripts/budget-curve.ts`
+ * did exactly that and measured a flat 110ms at every N while reporting a plausible
+ * number — nothing failed.
+ *
+ * And they must be DISTINCT, or the exact-duplicate detector collapses the pairs.
+ */
+const sharedTriggerDoc = (n: number): RequirementsDocument => {
+  const objects = [
+    'the primary queue',
+    'the standby queue',
+    'the audit log',
+    'the retry ledger',
+    'the dispatch table',
+    'the operator console',
+  ] as const
+  const suffixes = ['', ' alpha', ' beta', ' gamma', ' delta'] as const
+  const requirements: Requirement[] = []
+  for (let i = 0; i < n; i++) {
+    const response = `update ${objects[i % objects.length]}${suffixes[Math.floor(i / objects.length) % suffixes.length]}`
+    requirements.push(
+      req({
+        id: `${i.toString(16).padStart(8, '0')}-1111-4111-8111-111111111111`,
+        patternType: 'event-driven',
+        trigger: 'the operator confirms the plan',
+        systemName: 'scheduler',
+        systemResponse: response,
+        sentence: `When the operator confirms the plan, the scheduler shall ${response}.`,
+      }),
+    )
+  }
+  return docOf(...requirements)
+}
+
 // ---------------------------------------------------------------------------
 // The in-memory store, plus the REAL solver Layer
 // ---------------------------------------------------------------------------
@@ -346,6 +389,116 @@ describe('check — the v5 report additions (AC-A-1, AC-A-2)', () => {
     expect(data.counts.info).toBeGreaterThan(0)
     expect(data.counts.error).toBe(0)
     expect(data.progress.openFindings).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// AC-A-8 — the budget hint, end to end
+// ---------------------------------------------------------------------------
+
+/**
+ * The AC-A-8 claim, stated as the brief states it: a document big enough to demote
+ * for solver-budget reasons carries a hint that, WHEN APPLIED, un-demotes.
+ *
+ * These are the tests that make the hint a capability rather than a computed field.
+ * `../formal/budget-hint.test.ts` covers the arithmetic against a synthetic report;
+ * what only a real run can show is that the recommended number is actually SUFFICIENT
+ * — the extrapolation could be internally consistent and still land below the true
+ * cost, and no unit test over a fabricated report would notice.
+ */
+describe('check — data.budgetHint (AC-A-8)', () => {
+  it('a 1ms budget truncates, and the hint it emits UN-DEMOTES when applied', async () => {
+    const document = sharedTriggerDoc(10)
+
+    // A 1ms budget is below the first tier's first unit of work by construction, so
+    // the truncation is deterministic rather than load-dependent — which matters
+    // because this assertion has to hold on a contended CI machine too.
+    const truncated = await expectOk(document, { solverBudgetMs: 1 })
+    const truncationDemotions = truncated.coverage.demotions.filter(
+      (d) => d.reason === 'solver-budget-exhausted',
+    )
+    expect(truncationDemotions.length).toBeGreaterThan(0)
+    expect(truncated.verified, 'a truncated run can never certify').toBe(false)
+
+    const hint = truncated.budgetHint
+    expect(hint, 'a truncated run must carry a budget hint').toBeDefined()
+    if (hint === undefined) return
+    expect(hint.reason).toBe('truncated')
+    expect(hint.basis.budgetMs).toBe(1)
+    expect(hint.basis.unrunUnits).toBeGreaterThan(0)
+    expect(hint.recommendedBudgetMs).toBeGreaterThan(1)
+
+    // THE CLAIM: apply the hint's own number, and the truncation demotions are gone.
+    const applied = await expectOk(document, { solverBudgetMs: hint.recommendedBudgetMs })
+    expect(
+      applied.coverage.demotions.filter((d) => d.reason === 'solver-budget-exhausted'),
+      'applying the recommended budget must clear every truncation demotion',
+    ).toEqual([])
+    // And on this document nothing else demotes either, so the run reaches the fixed
+    // point the gradient exists to converge on.
+    expect(applied.verified).toBe(true)
+    expect(applied.progress.demotions).toBe(0)
+  })
+
+  it('the un-demoted run emits NO hint — the absence is the all-clear', async () => {
+    // The complement of the test above, and the reason the field is optional: once the
+    // budget is right there is nothing to recommend, so a hint on every run would be
+    // noise an agent learns to skip past.
+    const document = sharedTriggerDoc(10)
+    const truncated = await expectOk(document, { solverBudgetMs: 1 })
+    const recommended = truncated.budgetHint?.recommendedBudgetMs ?? 0
+    expect(recommended).toBeGreaterThan(0)
+
+    const applied = await expectOk(document, { solverBudgetMs: recommended })
+    expect(applied.budgetHint).toBeUndefined()
+    expect('budgetHint' in applied, 'the key is ABSENT, not undefined').toBe(false)
+  })
+
+  it('an UNBOUNDED run emits no hint, however long it takes', async () => {
+    // The default. There is no budget to correct, and suggesting one would push a
+    // bound onto a caller who deliberately ran without.
+    const data = await expectOk(sharedTriggerDoc(10))
+    expect(data.budgetHint).toBeUndefined()
+  })
+
+  it('the truncation REPAIR command names the SAME number the hint publishes', async () => {
+    // Two renderings of one answer. A `repair.commands` line that disagreed with
+    // `budgetHint.recommendedBudgetMs` would be the envelope contradicting itself in
+    // two adjacent fields — and G2a's blind doubling did exactly that until the hint
+    // became its source.
+    const data = await expectOk(sharedTriggerDoc(10), { solverBudgetMs: 1 })
+    const recommended = data.budgetHint?.recommendedBudgetMs
+    expect(recommended).toBeDefined()
+    const demotion = data.coverage.demotions.find((d) => d.reason === 'solver-budget-exhausted')
+    expect(demotion?.repair?.commands).toEqual([
+      `symspec check doc.json --solver-budget-ms ${recommended}`,
+    ])
+  })
+
+  it('the basis reports the run`s OWN measurements, not a table lookup', async () => {
+    const data = await expectOk(sharedTriggerDoc(10), { solverBudgetMs: 1 })
+    const basis = data.budgetHint?.basis
+    expect(basis).toBeDefined()
+    if (basis === undefined) return
+    // Each number is read off the report published next to it, so an agent can check
+    // the arithmetic rather than trusting it.
+    expect(basis.requirements).toBe(data.coverage.encoded)
+    expect(basis.pairs).toBe(data.pairsChecked)
+    // The anchor: wall clock this run spent, on this machine, under this load. A
+    // committed millisecond table was ruled out by measurement — see the module
+    // header in `../formal/budget-hint.ts`.
+    expect(basis.measuredMsAtBudget).toBeGreaterThan(0)
+  })
+
+  it('is ADDITIVE — a --min-severity filter cannot strip it', async () => {
+    // The same rule the demotion repairs follow: an output filter is a presentation
+    // choice, and letting it change what budget is recommended would remove the hint
+    // from exactly the info-tier truncation demotions that raise it.
+    const data = await expectOk(sharedTriggerDoc(10), {
+      solverBudgetMs: 1,
+      minSeverity: 'error',
+    })
+    expect(data.budgetHint?.reason).toBe('truncated')
   })
 })
 

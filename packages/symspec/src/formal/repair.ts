@@ -97,6 +97,18 @@ export interface RepairContext {
    * spread its options straight in with no `undefined` widening.
    */
   readonly solverBudgetMs?: number
+  /**
+   * The MEASURED budget recommendation from `data.budgetHint`, when the run produced
+   * one (G3, AC-A-8).
+   *
+   * Threaded in rather than recomputed, because the repair command and the hint are
+   * two renderings of ONE answer to "what budget should I use" and they must not
+   * disagree. G2a's `raisedBudget` doubling is kept as the fallback for a caller with
+   * no measurement (a direct library call, a test), so this module still works
+   * standalone — but when a hint exists it WINS, and `repair.test.ts` asserts the two
+   * numbers are equal rather than merely both plausible.
+   */
+  readonly recommendedBudgetMs?: number
   /** The document path, so every command is copy-pasteable as-is. */
   readonly docPath: string
 }
@@ -105,12 +117,22 @@ export interface RepairContext {
 const NO_REPAIR: Repair = { ops: [], commands: [] }
 
 /**
- * Suggest a doubled budget, floored so a tiny budget does not suggest a tinier
- * one. Doubling rather than a fixed number because the right budget scales with
- * the document, and the run's own figure is the only evidence available.
+ * The budget to recommend in a raise-the-budget command.
+ *
+ * PREFERS the measured recommendation from `data.budgetHint` (G3): that number is
+ * extrapolated from the work the run actually completed and the time it actually took,
+ * so it lands in one hop where doubling takes several — from a 500ms budget on a
+ * 60-requirement document, doubling needs seven `check` runs to reach a working figure
+ * and each one pays the full truncated cost.
+ *
+ * Falls back to the G2a doubling when no measurement is available (a direct library
+ * call, a unit test), floored so a tiny budget does not suggest a tinier one. The
+ * fallback stays because this module must work without the caller having measured
+ * anything — but it is a guess that happens to converge, not evidence, and the header
+ * says so.
  */
-const raisedBudget = (current: number | undefined): number =>
-  current === undefined ? 10_000 : Math.max(2_000, current * 2)
+const raisedBudget = (current: number | undefined, recommended: number | undefined): number =>
+  recommended ?? (current === undefined ? 10_000 : Math.max(2_000, current * 2))
 
 /**
  * Build the runnable repair for one demotion.
@@ -202,7 +224,7 @@ export const repairForDemotion = (demotion: CoverageDemotion, context: RepairCon
       return {
         ops: [],
         commands: [
-          `symspec check ${context.docPath} --solver-budget-ms ${raisedBudget(context.solverBudgetMs)}`,
+          `symspec check ${context.docPath} --solver-budget-ms ${raisedBudget(context.solverBudgetMs, context.recommendedBudgetMs)}`,
         ],
       }
 

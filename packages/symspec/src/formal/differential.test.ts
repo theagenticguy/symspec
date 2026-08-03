@@ -21,13 +21,23 @@
  * minimality. Comparing donor to greenfield sidesteps that entirely — whatever the
  * donor concludes IS the specification.
  *
- * ## What is excluded from the diff, and why exactly two things
+ * ## What is excluded from the diff, and why exactly three things
  *
- * v5 adds `repair` (on each demotion) and `data.progress`. Both are ADDITIVE: the
- * donor has no field to compare them against, so including them would fail every
- * case for a reason that is not drift. They are stripped before the diff, and
- * covered instead by dedicated assertions in `../operations/check.test.ts` and
- * `../cli.test.ts`.
+ * v5 adds `repair` (on each demotion), `data.progress`, and — from G3 —
+ * `data.budgetHint`. All three are ADDITIVE: the donor has no field to compare them
+ * against, so including them would fail every case for a reason that is not drift.
+ * They are stripped before the diff, and covered instead by dedicated assertions in
+ * `../operations/check.test.ts`, `./budget-hint.test.ts`, and `../cli.test.ts`.
+ *
+ * `budgetHint` is a slightly different case from the other two and worth stating,
+ * because the difference is what keeps this oracle strict. `progress` and `repair`
+ * appear on EVERY run, so the projection has to drop them explicitly. `budgetHint`
+ * appears only on a run given a `--solver-budget-ms` that truncated or ran close to
+ * its bound — and these fixtures run UNBOUNDED, so it is absent here by construction
+ * rather than by exclusion. The projection still names it, so that a future oracle
+ * case that does pass a budget cannot start silently diffing a v5-only field; and
+ * `EXCLUDES exactly the v5 additive fields` below asserts the absence rather than
+ * assuming it.
  *
  * Nothing else is excluded. In particular the diff includes every finding's `code`,
  * `severity`, `tier`, `requirementIds`, and `message` — the full agent-facing text —
@@ -991,7 +1001,7 @@ describe('the oracle can FAIL — a negative control on the comparison itself', 
     ).not.toBe(baseline)
   })
 
-  it('EXCLUDES exactly the two v5 additive fields, and nothing else', async () => {
+  it('EXCLUDES exactly the v5 additive fields, and nothing else', async () => {
     // The exclusion has to be narrow or the oracle is weakened by its own design. So:
     // the greenfield payload really does carry `repair` and `progress`...
     const testCase = evalRoundCases()[0]
@@ -1004,10 +1014,31 @@ describe('the oracle can FAIL — a negative control on the comparison itself', 
     // demotion's donor fields.
     const projected = comparableOfGreenfield(payload) as unknown as Record<string, unknown>
     expect(projected.progress).toBeUndefined()
+    expect(projected.budgetHint).toBeUndefined()
     for (const demotion of projected.demotions as Record<string, unknown>[]) {
       expect(demotion.repair).toBeUndefined()
       expect(demotion.reason).toBeDefined()
       expect(demotion.action).toBeDefined()
     }
+  })
+
+  /**
+   * G3's `budgetHint` is absent from these fixtures BY CONSTRUCTION, and that has to
+   * be asserted rather than assumed.
+   *
+   * These cases run unbounded (`EVAL_OPTIONS` sets no `solverBudgetMs`), so the hint
+   * is never produced and the oracle's byte-identity is untouched by AC-A-8 — which is
+   * the wave-gate claim the brief makes ("if any G3 change perturbs check output
+   * beyond additive budgetHint, that is a defect"). Asserting the absence is what
+   * makes it a claim instead of a coincidence: if a future default gave `check` a
+   * non-zero budget, this fails here and names the reason, rather than surfacing as
+   * twelve mysterious fixture diffs.
+   */
+  it('produces NO budgetHint on an unbounded oracle run, so byte-identity is untouched', async () => {
+    const testCase = evalRoundCases()[0]
+    if (testCase === undefined) throw new Error('no eval-round fixture')
+    const payload = await greenfield(asV3(testCase.doc), EVAL_OPTIONS)
+    expect(payload.budgetHint).toBeUndefined()
+    expect('budgetHint' in payload, 'the key is ABSENT on an unbounded run').toBe(false)
   })
 })
