@@ -84,6 +84,12 @@ export const REACHABILITY_DEMOTION_REASONS = [
   'reachability-frame-relied-upon',
   'reachability-budget-exhausted',
   'reachability-undecidable',
+  // APPENDED at the HARDENING wave. Its own reason rather than reusing
+  // `reachability-undecidable`, because the remedies are opposite: undecidable says "bound
+  // the model", vacuous-initial says "the model admits NO states, fix the initial
+  // predicate". Collapsing them would send an agent to add bounds to a document whose
+  // bounds are already the problem.
+  'reachability-vacuous-initial-state',
 ] as const
 
 export type ReachabilityDemotionReason = (typeof REACHABILITY_DEMOTION_REASONS)[number]
@@ -178,7 +184,84 @@ export const projectReachability = (
   const findings: ReachabilityFinding[] = []
   const demotions: ReachabilityDemotion[] = []
 
-  for (const result of report.results) {
+  // --- SANITY GATE #1, PROJECTED --------------------------------------------
+  //
+  // FIRST, and it REPLACES the per-constraint projection rather than joining it. On a
+  // vacuous model the tier issued no query and every result is `UNKNOWN`, so running the
+  // normal loop would emit N info-severity "the solver did not decide" findings whose
+  // stated remedies (raise the budget / bound the domains) are both WRONG — the solver was
+  // never asked, and the model admits no states. One error-severity finding naming the
+  // actual contradiction, plus one demotion per constraint, is the honest projection.
+  if (report.vacuousInitialState) {
+    const ids = report.results.map((r) => r.requirementId)
+    const quoted =
+      report.initialPredicates.length > 0
+        ? report.initialPredicates.join('; ')
+        : '(the declared variable ranges alone are contradictory)'
+    findings.push({
+      code: 'FND_REACHABILITY_VACUOUS_INITIAL',
+      // ERROR, and the one non-`VIOLATED` error in the family. It earns that because it
+      // does not merely fail to prove — it MASKS proven violations: measured, adding a
+      // contradictory initial predicate to a document with a real reachable violation
+      // turned the error-severity finding into "PROVED with nothing assumed" and flipped
+      // the exit code from 1 to 0. Reporting that at info severity would leave the exit
+      // code lying in exactly the case that matters most.
+      severity: 'error',
+      requirementIds: ids,
+      message:
+        'The INITIAL STATE of this state model is UNSATISFIABLE, so the model has no initial ' +
+        'state at all, NO state is reachable, and every constraint holds VACUOUSLY. Nothing is ' +
+        `proven about anything. The predicates that cannot all hold at once: ${quoted}` +
+        (report.initialPredicates.length > 0
+          ? ' — conjoined with the declared variable ranges.'
+          : '') +
+        ' This is reported at ERROR severity rather than as a disclosure because a vacuous ' +
+        'model MASKS proven defects: with a satisfiable initial predicate this same document ' +
+        'may carry reachable violations, and the vacuous run reports them as proofs. Note the ' +
+        'independent certificate check cannot catch this — an unsatisfiable initial state makes ' +
+        'the inferred invariant `false`, which discharges all three obligations validly.',
+      evidence: {
+        vacuousInitialState: true,
+        initialPredicates: [...report.initialPredicates],
+        constraintsAffected: report.results.length,
+      },
+      repair: {
+        // NO ops. Which predicate to change, and to what, is a statement about the
+        // system's intended starting state — content this must not invent. The reads that
+        // show the author the contradiction are offered instead, together with the two
+        // commands that edit either half.
+        ops: [],
+        commands: [
+          `symspec list ${docPath}`,
+          `symspec state-initial "<satisfiable predicate>" ${docPath}`,
+          `symspec state-initial --clear ${docPath}`,
+        ],
+      },
+    })
+    // ONE DEMOTION PER CONSTRAINT, not one for the run. `verified` is false either way,
+    // but a demotion carries `requirementIds`, and an agent reading the work list needs to
+    // see that EVERY constraint is affected rather than inferring it from a run-scoped
+    // note. On a model with no constraints at all this yields none, which is right: the
+    // coverage disclosure below then carries the run-scoped statement.
+    for (const result of report.results) {
+      demotions.push({
+        reason: 'reachability-vacuous-initial-state' satisfies ReachabilityDemotionReason,
+        requirementIds: [result.requirementId],
+        action:
+          `${result.label} was NOT checked: the model's initial state is unsatisfiable ` +
+          `(${quoted}), so no state is reachable and any answer would be vacuous. Fix the ` +
+          'contradiction, then re-run — the constraint may well be violable once the model ' +
+          'admits states. Raising a budget or bounding the domains will NOT help; the bounds ' +
+          'may themselves be the contradiction.',
+        repair: {
+          ops: [],
+          commands: [`symspec list ${docPath}`, `symspec check ${docPath}`],
+        },
+      })
+    }
+  }
+
+  for (const result of report.vacuousInitialState ? [] : report.results) {
     const ids = [result.requirementId]
     switch (result.verdict) {
       case 'VIOLATED': {

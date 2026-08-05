@@ -25,6 +25,7 @@
  * | V14/V21 | only DECLARED params; kind-gated AST walk | remove the `isApp` gate | 1 test TIMES OUT |
  * | V14/V21 | `interruptibleSolve` + a per-query BOUND | (see the probe's own header) | cancellation measured bounded by the timeout, not instant |
  * | V27 | `stateModel` survives every mutation | (this file) | see below |
+ * | GATE#1 | `checkInitialSatisfiable` before the constraint loop | make it always return satisfiable | 3 tests fail, `PROVED` returns on all 4 repro rows |
  *
  * V27 is the one hazard with no code in `reachability.ts` to sabotage, because its
  * mitigation is the document format itself — `stateModel` is a first-class field rather
@@ -62,6 +63,7 @@ import {
   runReachability,
   verdictOfLbool,
 } from './reachability.ts'
+import { projectReachability } from './reachability-report.ts'
 import { SolverService, solverServiceLayer } from './solver-service.ts'
 
 const TS = '2026-01-01T00:00:00.000Z'
@@ -553,5 +555,216 @@ describe('V27 GUARD — `stateModel` survives EVERY mutation op', () => {
     }
     expect(STATE_VAR_NAME_PATTERN.test('granted')).toBe(true)
     expect(STATE_VAR_NAME_PATTERN.test('when_ready')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SANITY GATE #1 — AN UNSATISFIABLE `Init` MUST NEVER PRODUCE A `PROVED`
+// ---------------------------------------------------------------------------
+
+/**
+ * The hazard both adversarial reviews found independently, and the one the binding AC-2-5
+ * decision doc listed FIRST among its seven sanity gates.
+ *
+ * SABOTAGE VERIFIED: deleting the `checkInitialSatisfiable` call from `runReachability` (or
+ * making it unconditionally return `{satisfiable: true}`) fails every test in this block —
+ * each of the four repro rows reverts to `PROVED` with `vacuousInitialState: false`, and the
+ * masking case's error-severity finding disappears.
+ *
+ * ## Why this needs its own block rather than riding on the V28 certificate check
+ *
+ * Because V28 structurally CANNOT see it, and the reason is worth a test of its own: an
+ * unsatisfiable `Init` makes Spacer infer `Inv := false`, and `false` discharges all three
+ * obligations VALIDLY (`Init ⇒ false` because `Init` is unsatisfiable; `false ∧ T ⇒ false'`
+ * and `false ⇒ ¬Bad` trivially). The existing V28 negative control substitutes the
+ * vacuously-TRUE `Inv = true`, which is correctly rejected at the third obligation — so the
+ * vacuously-FALSE direction was the untested half. The last case in this block is the
+ * negative control for exactly that, and it is the one that explains why the gate is not
+ * redundant.
+ */
+describe('SANITY GATE #1 GUARD — an unsatisfiable initial state is an ERROR, never a proof', () => {
+  /**
+   * A one-variable lock with a GENUINE reachable violation of `held <= 1`: `E1` increments
+   * `held` without a guard, so `held` reaches 2. The `initial` predicate is the parameter,
+   * which is what makes this a clean minimal pair — the DOCUMENT's defect is fixed and only
+   * the initial state varies.
+   */
+  const heldDoc = (initial: string | undefined): RequirementsDocument => ({
+    docVersion: DOC_VERSION,
+    requirements: {
+      [rid(1)]: req(1, 'E1', { responseKind: 'effect', stateEffect: 'held := held + 1' }),
+      [rid(2)]: req(2, 'C1', { responseKind: 'constraint', stateConstraint: 'held <= 1' }),
+    },
+    stateModel: {
+      variables: [{ name: 'held', type: 'int', frame: 'volatile', domain: { min: 0, max: 3 } }],
+      ...(initial !== undefined ? { initial } : {}),
+    },
+    glossary: [],
+    antonyms: [],
+    waivers: [],
+  })
+
+  const runDoc = (document: RequirementsDocument) =>
+    Effect.runPromise(
+      runReachability(document).pipe(Effect.provide(Layer.fresh(solverServiceLayer))),
+    )
+
+  /**
+   * THE RED-TEAM'S EXACT REPRO TABLE, four rows, each an independent route to an empty
+   * reachable-state set:
+   *
+   * | initial | why it is unsatisfiable |
+   * |---|---|
+   * | `false` | the literal; the bluntest possible spelling |
+   * | `held = 5` | outside the DECLARED range `0..3` — the bounds are the contradiction |
+   * | `held = 0 and held = 2` | a self-contradictory conjunction |
+   * | `not (held = held)` | a tautology negated; syntactically opaque, semantically `false` |
+   *
+   * The fourth row is the one that makes the gate's completeness matter: no syntactic
+   * analysis catches it, so only asking the solver does. It is in the table for that reason
+   * and it is the row a cheaper implementation would miss.
+   *
+   * SEQUENTIAL, never `Promise.all` — Asyncify holds one capability slot and concurrent
+   * runs wedge the module (see the module header of `solver-service.ts`).
+   */
+  it('every unsatisfiable initial predicate is caught, and NONE of them PROVES', async () => {
+    for (const initial of ['false', 'held = 5', 'held = 0 and held = 2', 'not (held = held)']) {
+      const report = await runDoc(heldDoc(initial))
+      expect(report.vacuousInitialState, initial).toBe(true)
+      // NO verdict is a proof. Checked as a set membership rather than as equality on the
+      // first result, so a future multi-constraint fixture cannot pass by accident.
+      for (const result of report.results) {
+        expect(result.verdict, `${initial} / ${result.label}`).toBe('UNKNOWN')
+      }
+      // The author's own text is quoted back, so the message names what to edit.
+      expect(report.initialPredicates.join(' '), initial).toContain(initial)
+    }
+  })
+
+  /**
+   * The SATISFIABLE control, and it is not decoration: without it every assertion above
+   * would also pass on an implementation that reported EVERY model vacuous. This is the row
+   * that proves the gate discriminates.
+   */
+  it('a SATISFIABLE initial state is untouched — the gate discriminates', async () => {
+    const report = await runDoc(heldDoc('held = 0'))
+    expect(report.vacuousInitialState).toBe(false)
+    expect(report.initialPredicates).toEqual([])
+    // And the REAL violation is still reported, which is the whole point of the pair.
+    expect(report.results.map((r) => r.verdict)).toContain('VIOLATED')
+  })
+
+  /**
+   * THE MASKING CASE, which is why this is error severity rather than a disclosure.
+   *
+   * The same document, twice, differing only in the initial predicate. With a satisfiable
+   * init the tier proves a violation and `check` must exit 1. With the contradictory init
+   * the tier reported "PROVED ... with nothing assumed", `verified: true`, zero demotions —
+   * and the exit flipped to 0. So the vacuous model did not merely fail to prove: it
+   * SUPPRESSED a defect the tool had already proven.
+   *
+   * The assertion is on the PROJECTED findings rather than on the verdicts, because the
+   * masking was observable at the envelope and that is where a consumer reads it.
+   */
+  it('a contradictory init cannot mask a real violation — the finding is ERROR severity', async () => {
+    const vacuousRun = await runDoc(heldDoc('held = 0 and held = 2'))
+    const projected = projectReachability(vacuousRun, './requirements.json')
+
+    const vacuousFinding = projected.findings.find(
+      (f) => f.code === 'FND_REACHABILITY_VACUOUS_INITIAL',
+    )
+    expect(vacuousFinding).toBeDefined()
+    // ERROR, so the exit contract sees it. An info-severity disclosure here would leave
+    // `symspec check` exiting 0 on a document whose violation it just hid.
+    expect(vacuousFinding?.severity).toBe('error')
+
+    // And NO finding claims a proof. This is the assertion that fails loudest on a revert:
+    // before the fix, this exact document produced `FND_REACHABILITY_PROVED`.
+    expect(projected.findings.map((f) => f.code)).not.toContain('FND_REACHABILITY_PROVED')
+
+    // EVERY constraint is demoted, so `verified` cannot be true.
+    expect(projected.demotions.length).toBeGreaterThanOrEqual(vacuousRun.results.length)
+    for (const demotion of projected.demotions) {
+      expect(demotion.reason).toBe('reachability-vacuous-initial-state')
+    }
+  })
+
+  /**
+   * THE `Inv := false` NEGATIVE CONTROL — the reason the certificate check cannot substitute
+   * for this gate, asserted rather than argued.
+   *
+   * V28's existing negative control substitutes the vacuously-TRUE `Inv = true`, which fails
+   * at `Inv ⇒ ¬Bad`. The vacuously-FALSE direction is the untested one, and it PASSES all
+   * three obligations legitimately:
+   *
+   *   Init ⇒ false      holds, because Init is itself unsatisfiable
+   *   false ∧ T ⇒ false' holds trivially
+   *   false ⇒ ¬Bad      holds trivially
+   *
+   * Proven here by discharging the three obligations directly against a real solver, with
+   * the same unsatisfiable Init the repro table uses. If this test ever FAILS — i.e. if some
+   * obligation starts rejecting `Inv := false` — then the certificate check has grown teeth
+   * against vacuity and this gate's justification would need re-reading. That is a
+   * conclusion worth being told about, which is why the control asserts the uncomfortable
+   * direction rather than the convenient one.
+   */
+  it('`Inv := false` discharges all three certificate obligations — so V28 cannot catch vacuity', async () => {
+    const holds = await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* SolverService
+        const { module } = yield* service.boot
+        // biome-ignore lint/suspicious/noExplicitAny: the low-level Z3 namespace is untyped
+        const Z3 = (module as unknown as { Z3: Record<string, any> }).Z3
+        const ctx = Z3.mk_context(Z3.mk_config())
+        const int = Z3.mk_int_sort(ctx)
+        const num = (n: number) => Z3.mk_numeral(ctx, String(n), int)
+        const held = Z3.mk_const(ctx, Z3.mk_string_symbol(ctx, 's_held'), int)
+        const held2 = Z3.mk_const(ctx, Z3.mk_string_symbol(ctx, 't_held'), int)
+
+        // The UNSATISFIABLE Init from the repro table: `held = 0 and held = 2`.
+        const initTerm = Z3.mk_and(ctx, [Z3.mk_eq(ctx, held, num(0)), Z3.mk_eq(ctx, held, num(2))])
+        // T: `held' = held + 1` — the document's own effect.
+        const transition = Z3.mk_eq(ctx, held2, Z3.mk_add(ctx, [held, num(1)]))
+        // Bad: `not (held <= 1)` — the document's own violated constraint.
+        const badTerm = Z3.mk_not(ctx, Z3.mk_le(ctx, held, num(1)))
+        // THE VACUOUS INVARIANT Spacer infers on an unsatisfiable Init.
+        const inv = Z3.mk_false(ctx)
+
+        const discharge = (formula: unknown) =>
+          Effect.gen(function* () {
+            const s = Z3.mk_solver(ctx)
+            Z3.solver_inc_ref(ctx, s)
+            Z3.solver_assert(ctx, s, Z3.mk_not(ctx, formula))
+            const lbool = yield* service.solve(
+              {
+                start: () => Z3.solver_check(ctx, s) as Promise<number>,
+                interrupt: () => {
+                  Z3.interrupt(ctx)
+                },
+              },
+              0,
+            )
+            Z3.solver_dec_ref(ctx, s)
+            // `-1` is `unsat` on the NEGATION, i.e. the obligation holds.
+            return lbool === -1
+          })
+
+        const forall = (bound: readonly unknown[], body: unknown) =>
+          Z3.mk_forall_const(ctx, 0, bound, [], body)
+        const implies = (a: unknown, b: unknown) => Z3.mk_implies(ctx, a, b)
+
+        // SEQUENTIAL — one Asyncify slot.
+        const one = yield* discharge(forall([held], implies(initTerm, inv)))
+        const two = yield* discharge(
+          forall([held, held2], implies(Z3.mk_and(ctx, [inv, transition]), inv)),
+        )
+        const three = yield* discharge(forall([held], implies(inv, Z3.mk_not(ctx, badTerm))))
+        return { one, two, three }
+      }).pipe(Effect.provide(Layer.fresh(solverServiceLayer))),
+    )
+
+    // ALL THREE HOLD. The certificate is sound and the conclusion is worthless — which is
+    // precisely why satisfiability of `Init` has to be checked separately.
+    expect(holds).toEqual({ one: true, two: true, three: true })
   })
 })

@@ -1013,6 +1013,142 @@ export const touchedByEffect = (effect: StateEffect, vars: DeclaredVars): Readon
   return found
 }
 
+// ---------------------------------------------------------------------------
+// The CHEAPLY-DECIDABLE half of sanity gate #1
+// ---------------------------------------------------------------------------
+
+/**
+ * Is this conjunction of initial-state predicates PROVABLY unsatisfiable, by a check that
+ * needs no solver? Returns the human-readable contradiction, or `undefined`.
+ *
+ * ## Why an authoring-time check exists when the solver already gates the run
+ *
+ * Because the two failures land in different places and only one of them is preventable.
+ * `../formal/reachability.ts`'s satisfiability gate is the COMPLETE answer — it runs plain
+ * SMT over the real conjunction and catches everything — but it fires at `check` time, on
+ * a document already written to disk, as an error-severity finding. This fires at WRITE
+ * time, where the message can name the flag the author just typed and the write can be
+ * REFUSED, so the contradictory document never exists. That is the same split
+ * `stateVariableOf`'s per-type rules already use against the document schema, and the
+ * reasoning in its header applies verbatim.
+ *
+ * ## SOUNDNESS DIRECTION: this may only ever report a contradiction it has PROVEN
+ *
+ * A false positive here REFUSES A VALID DOCUMENT, which is strictly worse than missing a
+ * contradiction the solver-backed gate will catch minutes later. So the analysis is
+ * deliberately incomplete and deliberately syntactic, and it gives up (returns
+ * `undefined`) on anything it cannot decide with certainty:
+ *
+ * - Only a TOP-LEVEL CONJUNCTION is decomposed. A predicate containing `or` or `not`
+ *   anywhere above the facts is skipped entirely — `a = 0 or a = 2` is satisfiable, and an
+ *   analysis that flattened the disjuncts would refuse it.
+ * - Only EQUALITIES AGAINST LITERALS are collected. `held = other_var` and `held <= 3`
+ *   contribute nothing; ordering facts interact in ways a solver should decide.
+ * - The three contradictions it does report are each individually conclusive:
+ *   1. one variable equated to TWO DIFFERENT literals (`held = 0 and held = 2`);
+ *   2. one variable equated to a literal OUTSIDE its declared int bounds (`held = 5` with
+ *      `--min 0 --max 3`) or outside its declared enum domain (already caught by the sort
+ *      checker, so this is the int case in practice);
+ *   3. a boolean required both `true` and `false`, which is case 1 in boolean clothing.
+ *
+ * Everything else is the solver's job, and the solver has it.
+ *
+ * `sources` is parallel to `predicates` and names where each came from, so the message can
+ * point at the per-variable `initial` or at `state-initial` specifically — the two are
+ * edited by different commands and LOW-13's shape (each half fine, the conjunction
+ * contradictory) is unfixable without knowing which is which.
+ */
+export const cheapInitialContradiction = (
+  predicates: readonly { readonly expr: Expr; readonly source: string }[],
+  model: StateModel,
+): string | undefined => {
+  const vars = declaredVars(model)
+
+  /** Flatten a top-level `and` chain into its conjuncts. */
+  const conjunctsOf = (expr: Expr): readonly Expr[] =>
+    expr.kind === 'and' ? expr.operands.flatMap(conjunctsOf) : [expr]
+
+  /**
+   * Does this subtree contain an `or` or a `not` ANYWHERE? If so the whole predicate is
+   * skipped — see the soundness note. Checked on the conjunct rather than the root so one
+   * disjunctive conjunct does not discard the definite facts beside it.
+   */
+  const hasBranching = (expr: Expr): boolean => {
+    switch (expr.kind) {
+      case 'or':
+      case 'not':
+        return true
+      case 'and':
+        return expr.operands.some(hasBranching)
+      case 'compare':
+      case 'arith':
+        return hasBranching(expr.left) || hasBranching(expr.right)
+      default:
+        return false
+    }
+  }
+
+  /** The literal value a side denotes, as a comparable string, or `undefined`. */
+  const literalOf = (expr: Expr): string | undefined => {
+    if (expr.kind === 'bool') return String(expr.value)
+    if (expr.kind === 'int') return String(expr.value)
+    // A bare ref that is NOT a declared variable is an enum member, and the sort checker
+    // has already proven it belongs to the compared variable's domain.
+    if (expr.kind === 'ref' && !vars.has(expr.name)) return expr.name
+    return undefined
+  }
+
+  /** The declared variable a side names, or `undefined`. */
+  const variableOf = (expr: Expr): string | undefined =>
+    expr.kind === 'ref' && vars.has(expr.name) ? expr.name : undefined
+
+  // variable → the literal it was pinned to, and by which predicate.
+  const pinned = new Map<string, { readonly value: string; readonly source: string }>()
+
+  for (const { expr, source } of predicates) {
+    for (const conjunct of conjunctsOf(expr)) {
+      if (hasBranching(conjunct)) continue
+      if (conjunct.kind !== 'compare' || conjunct.op !== '=') continue
+      // Either orientation: `held = 0` and `0 = held` are the same fact.
+      const name = variableOf(conjunct.left) ?? variableOf(conjunct.right)
+      const value = literalOf(conjunct.right) ?? literalOf(conjunct.left)
+      if (name === undefined || value === undefined) continue
+
+      // (1) TWO DIFFERENT LITERALS for one variable.
+      const already = pinned.get(name)
+      if (already !== undefined && already.value !== value) {
+        return (
+          `${JSON.stringify(name)} is required to equal both ${already.value} and ${value}, ` +
+          `which cannot both hold (${already.source}; ${source})`
+        )
+      }
+      pinned.set(name, { value, source })
+
+      // (2) OUTSIDE THE DECLARED INT BOUNDS. The enum case is already refused by the sort
+      // checker (a non-member ref does not resolve), so only int bounds reach here.
+      const variable = vars.get(name)
+      if (variable?.type === 'int' && variable.domain !== undefined) {
+        const n = Number(value)
+        if (Number.isInteger(n)) {
+          if (variable.domain.min !== undefined && n < variable.domain.min) {
+            return (
+              `${JSON.stringify(name)} is required to equal ${value}, which is below its ` +
+              `declared minimum of ${variable.domain.min} (${source})`
+            )
+          }
+          if (variable.domain.max !== undefined && n > variable.domain.max) {
+            return (
+              `${JSON.stringify(name)} is required to equal ${value}, which is above its ` +
+              `declared maximum of ${variable.domain.max} (${source})`
+            )
+          }
+        }
+      }
+    }
+  }
+  return undefined
+}
+
 /**
  * Every declared variable one expression SOURCE references, or `undefined` when the
  * source does not currently validate.

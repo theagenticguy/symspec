@@ -1193,6 +1193,157 @@ describe('the state-model ops (G4)', () => {
     expect(result.document.stateModel.variables).toHaveLength(0)
   })
 
+  // -------------------------------------------------------------------------
+  // SANITY GATE #1, authoring half — an unsatisfiable INITIAL STATE
+  // -------------------------------------------------------------------------
+
+  /**
+   * The write-time half of the gate `../formal/reachability.ts` enforces at check time.
+   *
+   * GUARDS MUST FIRE: deleting the `initialStateSatisfiable` call from `applyState` /
+   * `applyStateInitial` makes every case here pass the write, which is what these assert
+   * against — the refusal, and the file staying unwritten.
+   *
+   * ## Why a WRITE-time refusal on top of the solver-backed gate
+   *
+   * Because a document that never existed cannot be shipped. `check` catches everything
+   * (the analysis here is deliberately incomplete — see `cheapInitialContradiction`), but
+   * it catches it on a file already on disk, as a finding. Refusing the write names the
+   * flag the author just typed. Exactly the split the existing empty-range refusal uses,
+   * and an empty range IS this defect through a different field.
+   */
+  describe('an unsatisfiable initial state is refused at WRITE time', () => {
+    it('refuses a SELF-CONTRADICTORY model-wide predicate', () => {
+      const doc = ok(emptyDocument(), {
+        op: 'state',
+        name: 'held',
+        type: 'int',
+        min: 0,
+        max: 3,
+      }).document
+      const failure = bad(doc, { op: 'state-initial', predicate: 'held = 0 and held = 2' })
+      expect(failure.code).toBe('ERR_USAGE')
+      expect(failure.error).toContain('UNSATISFIABLE')
+      // The message names BOTH literals, so the author sees the contradiction rather than
+      // being told one exists.
+      expect(failure.error).toContain('0')
+      expect(failure.error).toContain('2')
+      // And it says what a vacuous model DOES, which is the part that makes the refusal
+      // read as protection rather than pedantry.
+      expect(failure.suggestions.join(' ')).toContain('VACUOUSLY')
+    })
+
+    it('refuses a per-variable initial that CONTRADICTS the model-wide one (LOW-13)', () => {
+      // Neither half is wrong alone. They are CONJOINED, so the contradiction exists only
+      // in their conjunction — which is why the message has to name which command set
+      // which half.
+      const doc = ok(emptyDocument(), {
+        op: 'state',
+        name: 'held',
+        type: 'int',
+        min: 0,
+        max: 3,
+        initial: 'held = 0',
+      }).document
+      const failure = bad(doc, { op: 'state-initial', predicate: 'held = 2' })
+      expect(failure.code).toBe('ERR_USAGE')
+      expect(failure.error).toContain('--initial')
+      expect(failure.error).toContain('state-initial')
+    })
+
+    it('refuses an initial value OUTSIDE the declared bounds, from either edit order', () => {
+      // (a) bounds first, then the out-of-range initial.
+      const bounded = ok(emptyDocument(), {
+        op: 'state',
+        name: 'held',
+        type: 'int',
+        min: 0,
+        max: 3,
+      }).document
+      expect(bad(bounded, { op: 'state-initial', predicate: 'held = 5' }).error).toContain(
+        'above its declared maximum',
+      )
+
+      // (b) THE OTHER ORDER, from ONE op — bounds and initial declared together, which is
+      // how `symspec state held --type int --min 0 --max 3 --initial "held = 5"` arrives.
+      // Both halves are individually legal and the CONJUNCTION is empty.
+      //
+      // Note the third conceivable order — an initial already committed, then a bare
+      // redeclaration that narrows — cannot reach this gate, and deliberately so: a
+      // redeclaration REPLACES the whole variable (see the redeclaration test above), so a
+      // `state` op with no `--initial` DROPS the initial rather than narrowing around it.
+      // There is then no contradiction because there is no initial. That is existing
+      // documented behavior, and this comment exists so a future reader does not mistake
+      // the missing case for a hole in the gate.
+      const together = bad(emptyDocument(), {
+        op: 'state',
+        name: 'held',
+        type: 'int',
+        min: 0,
+        max: 3,
+        initial: 'held = 5',
+      })
+      expect(together.code).toBe('ERR_USAGE')
+      expect(together.error).toContain('above its declared maximum')
+    })
+
+    it('refuses a boolean required both true and false', () => {
+      const doc = ok(emptyDocument(), {
+        op: 'state',
+        name: 'lock_held',
+        type: 'bool',
+        initial: 'lock_held = true',
+      }).document
+      expect(bad(doc, { op: 'state-initial', predicate: 'lock_held = false' }).error).toContain(
+        'UNSATISFIABLE',
+      )
+    })
+
+    /**
+     * THE INCOMPLETENESS, asserted rather than left implicit — and this is the assertion
+     * that keeps the check SOUND.
+     *
+     * A false positive here REFUSES A VALID DOCUMENT, which is strictly worse than a miss
+     * (the solver-backed gate catches every miss on the next `check`). So the analysis
+     * gives up on anything it cannot decide with certainty, and these are the cases it must
+     * NOT refuse. Without this test, "tighten the check" is an easy and unsafe edit.
+     */
+    it('ACCEPTS everything it cannot decide with certainty — a false positive would be worse', () => {
+      const doc = ok(
+        ok(emptyDocument(), { op: 'state', name: 'held', type: 'int', min: 0, max: 3 }).document,
+        { op: 'state', name: 'other', type: 'int', min: 0, max: 3 },
+      ).document
+      for (const predicate of [
+        // A DISJUNCTION: satisfiable, and flattening its branches would refuse it.
+        'held = 0 or held = 2',
+        // A NEGATION anywhere above the facts.
+        'not (held = 2)',
+        // ORDERING facts, which interact in ways a solver should decide.
+        'held <= 3 and held >= 1',
+        // Variable-to-variable, where no literal is pinned at all.
+        'held = other',
+        // Two pins of the SAME value are consistent, not a contradiction.
+        'held = 1 and held = 1',
+      ]) {
+        const result = applyOp(doc, op({ op: 'state-initial', predicate }), TS)
+        expect(isOpFailure(result), predicate).toBe(false)
+      }
+    })
+
+    it('does not fire on a SATISFIABLE model — the gate discriminates', () => {
+      const doc = ok(emptyDocument(), {
+        op: 'state',
+        name: 'held',
+        type: 'int',
+        min: 0,
+        max: 3,
+        initial: 'held = 0',
+      }).document
+      const result = applyOp(doc, op({ op: 'state-initial', predicate: 'held = 0' }), TS)
+      expect(isOpFailure(result)).toBe(false)
+    })
+  })
+
   it('round-trips every state-model op through `opLine`, so a repair plan is applicable', () => {
     // The property that makes `repair.ops` decodable BY CONSTRUCTION: an op serialized
     // by a producer must decode back through the same union `apply` reads.

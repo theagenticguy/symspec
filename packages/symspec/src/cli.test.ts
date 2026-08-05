@@ -930,6 +930,93 @@ describe('check — exit codes and envelope integrity from the real process', ()
     expect(stderr).toBe('')
   })
 
+  /**
+   * SANITY GATE #1, END TO END — the masking case at the PROCESS boundary.
+   *
+   * The two adversarial reviews found this independently and it reproduced here: a document
+   * with a GENUINE reachable violation, plus a contradictory `initial`, exited 0 while
+   * printing `PROVED ... with nothing assumed` and `verified: true`. So the tool suppressed
+   * a defect it had already proven, at the one observable an agent or a CI job actually
+   * reads — the process status.
+   *
+   * The pair is what makes it a proof rather than an anecdote: SAME requirements, SAME
+   * constraint, SAME violation, differing only in the initial predicate. If both rows do not
+   * exit 1, either the violation stopped being detected (row 1) or the vacuity is masking it
+   * again (row 2), and the two failures read differently.
+   *
+   * Spawned rather than in-process because the exit STATUS is the contract being asserted,
+   * and delta #23 records an exit mapping that unit-tested perfectly and was never wired.
+   */
+  const heldFixture = (initial: string | undefined): string => {
+    const { writeFileSync } = require('node:fs') as typeof import('node:fs')
+    const path = join(work(), 'requirements.json')
+    const effect = {
+      ...req(
+        '55555555-5555-4555-8555-555555555555',
+        'the worker claims the run',
+        'lock service',
+        'increment the held count',
+      ),
+      responseKind: 'effect',
+      stateEffect: 'held := held + 1',
+    }
+    const constraint = {
+      ...req(
+        '66666666-6666-4666-8666-666666666666',
+        'the worker claims the run',
+        'lock service',
+        'bound the held count',
+      ),
+      responseKind: 'constraint',
+      stateConstraint: 'held <= 1',
+    }
+    writeFileSync(
+      path,
+      JSON.stringify({
+        docVersion: 3,
+        requirements: { [effect.id as string]: effect, [constraint.id as string]: constraint },
+        stateModel: {
+          variables: [{ name: 'held', type: 'int', frame: 'volatile', domain: { min: 0, max: 3 } }],
+          ...(initial !== undefined ? { initial } : {}),
+        },
+        glossary: [],
+        antonyms: [],
+        waivers: [],
+      }),
+    )
+    return path
+  }
+
+  it('a real violation exits 1 — WITH or WITHOUT a contradictory initial predicate', () => {
+    // ROW 1: the honest baseline. A satisfiable init, a proven reachable violation, exit 1.
+    const sane = run('check', heldFixture('held = 0'))
+    expect(sane.code, 'satisfiable init must still report the violation').toBe(1)
+    const saneEnvelope = JSON.parse(sane.stdout) as {
+      data: { findings: { code: string; severity: string }[] }
+    }
+    expect(saneEnvelope.data.findings.map((f) => f.code)).toContain('FND_REACHABILITY_VIOLATED')
+
+    // ROW 2: the SAME document with a contradictory init. Before the fix this exited 0 and
+    // claimed a proof. It must still exit 1 — now via the vacuity finding rather than the
+    // violation, because the violation genuinely cannot be decided over an empty state set.
+    const vacuous = run('check', heldFixture('held = 0 and held = 2'))
+    expect(vacuous.code, 'a contradictory init must NEVER silence a run').toBe(1)
+    const vacuousEnvelope = JSON.parse(vacuous.stdout) as {
+      data: {
+        verified: boolean
+        findings: { code: string; severity: string }[]
+        reachability?: { proved: number }
+      }
+    }
+    const codes = vacuousEnvelope.data.findings.map((f) => f.code)
+    expect(codes).toContain('FND_REACHABILITY_VACUOUS_INITIAL')
+    // NOTHING is claimed proven. This is the assertion that fails on a revert.
+    expect(codes).not.toContain('FND_REACHABILITY_PROVED')
+    expect(vacuousEnvelope.data.reachability?.proved).toBe(0)
+    expect(vacuousEnvelope.data.verified).toBe(false)
+    expect(vacuous.stderr).toBe('')
+  })
+
   it('every demotion in a REAL run carries a placeholder-free repair', () => {
     const { stdout } = run('check', disjoint())
     const envelope = JSON.parse(stdout) as {

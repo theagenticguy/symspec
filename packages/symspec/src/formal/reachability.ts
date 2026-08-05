@@ -127,6 +127,31 @@
  * A failed obligation is an ERROR — "the solver's answer did not re-verify" — never a
  * proof and never merely a demotion.
  *
+ * ## SANITY GATE #1 — AN UNSATISFIABLE `Init` FABRICATES A `PROVED` THAT V28 CANNOT CATCH
+ *
+ * The binding AC-2-5 decision doc lists "Init satisfiable — else ERROR, gate the run" as
+ * the first and most dominant of seven sanity gates, and the first implementation shipped
+ * without it. Two independent adversarial reviews found the same hole, and it reproduces
+ * end-to-end: adding `initial: "held = 0 and held = 2"` to a lock document with a GENUINE
+ * reachable violation of `held <= 1` empties the reachable-state set, so Spacer honestly
+ * reports `unreachable` on every constraint, the lattice reads that as `PROVED`, and the
+ * tier prints "no reachable state violates this constraint ... with nothing assumed" with
+ * `verified: true`, zero demotions, and a process exit that flipped from 1 to 0.
+ *
+ * The load-bearing subtlety, and the reason a dedicated gate is not redundant with V28:
+ * an unsatisfiable `Init` makes Spacer infer `Inv := false`, and `false` discharges ALL
+ * THREE certificate obligations VALIDLY (`Init ⇒ false` because `Init` is unsatisfiable;
+ * `false ∧ T ⇒ false'` and `false ⇒ ¬Bad` trivially). So the certificate check is sound
+ * and the proof is still worthless — vacuity is not a solver error, and the only thing
+ * that sees it is a satisfiability query on `Init` itself.
+ *
+ * {@link checkInitialSatisfiable} is that query, issued ONCE before the constraint loop.
+ * On `unsat` no reachability query runs at all, every constraint is recorded `UNKNOWN`,
+ * and the run reports `vacuousInitialState: true` — which
+ * `./reachability-report.ts` turns into an error-severity
+ * `FND_REACHABILITY_VACUOUS_INITIAL` plus a demotion on every constraint. The authoring
+ * path closes the cheaply-decidable half of the same hole in `../core/mutate.ts`.
+ *
  * ## A FRESH CONTEXT PER RUN
  *
  * Cheap against 30-300ms queries, and it removes both the evidence-stability question
@@ -368,6 +393,16 @@ export interface PreparedModel {
   readonly constraints: readonly ConstraintRule[]
   /** The conjunction of every per-variable `initial` and the model-wide one. */
   readonly initial: readonly Expr[]
+  /**
+   * The SOURCE TEXT of each predicate in {@link initial}, in the same order and labelled
+   * with where it came from.
+   *
+   * Carried alongside the ASTs rather than re-derived, so the vacuous-initial finding can
+   * quote the author's own strings. Re-rendering the AST would produce a normalized form
+   * the author never typed, and an error message that does not match the file is an error
+   * message a reader distrusts.
+   */
+  readonly initialSources: readonly string[]
   /** Variables declared `frame: stable` — the hypotheses a framed run assumes. */
   readonly stableVars: readonly string[]
   /**
@@ -402,9 +437,15 @@ export const prepareModel = (document: RequirementsDocument): PreparedModel => {
   const constraints: ConstraintRule[] = []
   const skipped: { label: string; reason: string }[] = []
   const initial: Expr[] = []
+  const initialSources: string[] = []
 
   // Per-variable initials, then the model-wide one. CONJOINED rather than
   // overriding, so adding either can only ever NARROW the initial states.
+  //
+  // That narrowing is exactly why the satisfiability gate exists: conjoining two
+  // individually-sensible predicates can produce a contradiction NEITHER of them contains
+  // (`held = 0` per-variable plus `held = 2` model-wide), which is the shape LOW-13 names
+  // and the one an author reaches by editing the two halves at different times.
   for (const variable of model.variables) {
     if (variable.initial === undefined) continue
     const parsed = validateExpression(variable.initial, model, 'initial')
@@ -416,6 +457,7 @@ export const prepareModel = (document: RequirementsDocument): PreparedModel => {
       continue
     }
     initial.push(parsed)
+    initialSources.push(`state ${variable.name}.initial: "${variable.initial}"`)
   }
   if (model.initial !== undefined) {
     const parsed = validateExpression(model.initial, model, 'initial')
@@ -426,6 +468,7 @@ export const prepareModel = (document: RequirementsDocument): PreparedModel => {
       })
     } else {
       initial.push(parsed)
+      initialSources.push(`stateModel.initial: "${model.initial}"`)
     }
   }
 
@@ -483,6 +526,7 @@ export const prepareModel = (document: RequirementsDocument): PreparedModel => {
     effects,
     constraints,
     initial,
+    initialSources,
     stableVars: model.variables.filter((v) => v.frame === 'stable').map((v) => v.name),
     skipped,
   }
@@ -977,6 +1021,97 @@ export interface TraceStep {
   /** The requirement key (or `init`) whose rule fired. */
   readonly rule: string
 }
+
+/**
+ * THE INITIAL-STATE SATISFIABILITY GATE — sanity gate #1 from the binding AC-2-5
+ * decision doc, and the one it listed FIRST.
+ *
+ * ## What it prevents, measured
+ *
+ * An unsatisfiable initial predicate makes the reachable-state set EMPTY. Spacer then
+ * honestly reports every constraint `unreachable`, the lattice reads that as `PROVED`,
+ * and the tier says "no reachable state violates this constraint ... with nothing assumed
+ * beyond what the document states". On the red-team's gold fixture — a lock document with
+ * a GENUINE reachable violation of `held <= 1` — adding `initial: "held = 0 and held = 2"`
+ * turned an error-severity `FND_REACHABILITY_VIOLATED` into that sentence and flipped the
+ * process exit from 1 to 0. A contradiction the tool could see for free suppressed a
+ * defect the tool had already proven.
+ *
+ * ## Why V28's certificate check cannot substitute for this
+ *
+ * Because an unsatisfiable `Init` makes Spacer infer `Inv := false`, and `false`
+ * discharges all three obligations VALIDLY: `Init ⇒ false` holds because `Init` is itself
+ * unsatisfiable, `false ∧ T ⇒ false'` holds trivially, and `false ⇒ ¬Bad` holds trivially.
+ * So the certificate is genuinely sound and the conclusion is still worthless. The V28
+ * negative control substitutes the vacuously-TRUE `Inv = true`, which is correctly
+ * rejected at the third obligation — the vacuously-FALSE direction is the one the check
+ * structurally cannot see, and there is a negative control for exactly that now.
+ *
+ * ## `unsat` is the ONLY failing answer
+ *
+ * `sat` means an initial state exists. `unknown` (a timeout on what should be a trivial
+ * query) is deliberately treated as SATISFIABLE-enough to proceed rather than as a gate
+ * failure, because the two errors are asymmetric: a false "your model is vacuous" on a
+ * healthy document is an error-severity finding about a defect that does not exist, while
+ * proceeding leaves every other honesty mechanism (prove-twice, the certificate check,
+ * every demotion) fully in force. So the gate fires only on a PROVEN contradiction.
+ *
+ * Uses a plain solver rather than the Fixedpoint interface: the question is
+ * propositional/arithmetic satisfiability of one conjunction, which needs no fixedpoint
+ * engine, and V13's polarity inversion does not apply — `Z3_solver_check` returns `+1`
+ * for `sat` and `-1` for `unsat`, the ordinary reading.
+ */
+const checkInitialSatisfiable = (
+  Z3: LowLevelZ3,
+  ctx: Ast,
+  prepared: PreparedModel,
+  timeoutMs: number,
+): Effect.Effect<{ readonly satisfiable: boolean }, never, SolverService> =>
+  Effect.gen(function* () {
+    const solver = yield* SolverService
+    const sorts = prepared.variables.map((v) => sortFor(Z3, ctx, v))
+    const consts = prepared.variables.map((v, i) =>
+      Z3.mk_const(ctx, Z3.mk_string_symbol(ctx, `i_${v.name}`), sorts[i]),
+    )
+    const binding = new Map(prepared.variables.map((v, i) => [v.name, consts[i]]))
+
+    // THE SAME conjunction the Horn `init` rule is built from — every per-variable and
+    // model-wide initial, plus the declared range constraints. Range constraints are in
+    // deliberately: `--min 0 --max 3` with `initial "held = 5"` is exactly as vacuous as
+    // a self-contradictory predicate, and it is the shape an author reaches by narrowing
+    // a bound after writing the initial.
+    const terms = [
+      ...prepared.initial.map((e) => compile(Z3, ctx, e, binding, prepared.vars)),
+      ...rangeConstraints(Z3, ctx, prepared.variables, binding),
+    ]
+    // NOTHING declared initial and no ranges: `true` is trivially satisfiable and there
+    // is nothing to ask. Skipping the solver call here is not merely an optimization —
+    // it keeps the common (unconstrained-initial) document from paying a query at all.
+    if (terms.length === 0) return { satisfiable: true }
+
+    const s = Z3.mk_solver(ctx)
+    Z3.solver_inc_ref(ctx, s)
+    const params = Z3.mk_params(ctx)
+    Z3.params_inc_ref(ctx, params)
+    Z3.params_set_uint(ctx, params, Z3.mk_string_symbol(ctx, 'timeout'), timeoutMs)
+    Z3.solver_set_params(ctx, s, params)
+    Z3.params_dec_ref(ctx, params)
+    Z3.solver_assert(ctx, s, terms.length === 1 ? terms[0] : Z3.mk_and(ctx, terms))
+    const lbool = yield* solver.solve(
+      {
+        start: () => Z3.solver_check(ctx, s) as Promise<number>,
+        interrupt: () => {
+          Z3.interrupt(ctx)
+        },
+      },
+      // An interrupted gate resumes as `0` (unknown), which is NOT `-1` and therefore
+      // does NOT trip the gate — the conservative direction HERE is to proceed, because
+      // the gate's own failure is an error-severity finding.
+      0,
+    )
+    Z3.solver_dec_ref(ctx, s)
+    return { satisfiable: lbool !== -1 }
+  })
 
 /** A counterexample, as evidence. */
 export interface TraceEvidence {
@@ -1530,6 +1665,26 @@ export interface ReachabilityReport {
   readonly variables: number
   /** Variables declared `stable` but written by NO requirement — the V16 shape. */
   readonly frameDrift: readonly string[]
+  /**
+   * TRUE when `Init ∧ rangeConstraints` was PROVEN unsatisfiable — sanity gate #1.
+   *
+   * When this is true the reachable-state set is empty, so every verdict below is
+   * vacuous and NONE of them is a proof. {@link runReachability} therefore also forces
+   * every constraint's verdict to `UNKNOWN` rather than leaving a `PROVED` in the record
+   * for a downstream consumer to read positively — the flag and the verdicts agree, so
+   * there is no way to honor one and miss the other.
+   *
+   * Named for the CAUSE rather than the symptom (`vacuousInitialState`, not
+   * `noProofsHere`) because the remedy is about the initial predicate, and a field an
+   * agent reads has to point at what to edit.
+   */
+  readonly vacuousInitialState: boolean
+  /**
+   * The initial-state predicates the gate found unsatisfiable, as written — so the
+   * finding can quote the author's own text instead of describing it. Empty when the
+   * gate passed.
+   */
+  readonly initialPredicates: readonly string[]
   /** True when NO requirement contributes a transition, so the only reachable states
    * are the initial ones. An invariant holding over a frozen state says almost
    * nothing, so this is disclosed. */
@@ -1575,8 +1730,41 @@ export const runReachability = (
     const refused = new Set<string>()
     let elapsedMs = 0
 
+    // --- SANITY GATE #1: IS THERE AN INITIAL STATE AT ALL? ---------------------
+    //
+    // ONE query, before the constraint loop, and it is the cheapest thing this tier does
+    // (plain SMT over one conjunction — no fixedpoint engine). It runs FIRST because every
+    // verdict below is meaningless without it: an empty reachable-state set makes Spacer
+    // honestly report `unreachable` on everything, which the lattice reads as `PROVED`.
+    // See {@link checkInitialSatisfiable} for the measured masking of a real violation and
+    // for why the V28 certificate check structurally cannot catch it.
+    const gate = yield* checkInitialSatisfiable(Z3, ctx, prepared, timeoutMs)
+    const vacuous = !gate.satisfiable
+
     // SEQUENTIAL. See the module header's "NEVER PARALLELIZE".
     for (const constraint of prepared.constraints) {
+      if (vacuous) {
+        // NO QUERY IS ISSUED on a vacuous model, and that is a correctness decision rather
+        // than a saving. Running the queries would produce `unreachable` verdicts whose
+        // ONLY honest reading is "there are no states", and a `PROVED` sitting in
+        // `results[]` is a fact a future consumer could read positively no matter what the
+        // `vacuousInitialState` flag beside it says. Recording `UNKNOWN` — the verdict
+        // whose contract is "nothing is claimed either way" — makes the record itself
+        // honest, so the flag and the verdicts cannot disagree.
+        results.push({
+          label: constraint.label,
+          requirementId: constraint.requirementId,
+          verdict: 'UNKNOWN',
+          strict: 'unknown',
+          // NOT a budget or a solver limitation — the model admits no states, so the
+          // question has no content. `undecidable` is the closer of the two, and the
+          // finding's own message carries the real reason.
+          unknownReason: 'undecidable',
+          elapsedMs: 0,
+          refusedParams: [],
+        })
+        continue
+      }
       const result = yield* decideConstraint(Z3, ctx, prepared, constraint, timeoutMs)
       results.push(result)
       elapsedMs += result.elapsedMs
@@ -1590,6 +1778,8 @@ export const runReachability = (
       variables: prepared.variables.length,
       frameDrift: frameDriftOf(prepared),
       emptyTransitionRelation: prepared.effects.length === 0 && prepared.constraints.length > 0,
+      vacuousInitialState: vacuous,
+      initialPredicates: vacuous ? [...prepared.initialSources] : [],
       refusedParams: [...refused].sort(),
       elapsedMs,
       timeoutMs,

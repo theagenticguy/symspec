@@ -21,7 +21,7 @@
  * never remove. New codes go at the END of {@link REACHABILITY_FND_CODES}. The count is
  * pinned in `catalog.test.ts` so growing the vocabulary is a visible edit in review.
  *
- * ## Why exactly five, and why each severity
+ * ## Why exactly six, and why each severity
  *
  * Each code answers a question with a DIFFERENT remedy, which is the test for whether a
  * code deserves to exist:
@@ -46,11 +46,33 @@
  *   `FND_NO_PAIRS_CHECKED` tradition: without it, a document with no state model looks
  *   exactly like a document that passed.
  *
+ * - `FND_REACHABILITY_VACUOUS_INITIAL` — **error**, and DEMOTES every constraint. The
+ *   initial-state predicate conjoined with the declared ranges is UNSATISFIABLE, so the
+ *   reachable-state set is EMPTY and every invariant holds vacuously. Its own code rather
+ *   than a `NOT_CHECKED` disclosure because the failure mode is categorically different:
+ *   not-checked says "the question was not asked", while this says "the question was
+ *   asked, answered `unreachable` on every constraint, and that answer means NOTHING".
+ *   Error severity because it silently masks REAL violations — measured on the gold
+ *   fixture, adding `held = 0 and held = 2` to the model flipped a genuine
+ *   `FND_REACHABILITY_VIOLATED` into `PROVED ... with nothing assumed` and the exit code
+ *   from 1 to 0.
+ *
  * `FND_REACHABILITY_CERTIFICATE_FAILED` is deliberately NOT here. When the three
  * obligations do not discharge, the tier does not report a weaker proof — it reports
  * `FND_REACHABILITY_UNKNOWN`, because an answer that did not re-verify is an answer the
  * tool has no basis to state. Adding a code for "we proved it but could not check the
  * proof" would create a rung on the confidence ladder that the contract does not have.
+ *
+ * ## Why the certificate check cannot substitute for the vacuous-initial gate
+ *
+ * The obvious objection to a dedicated gate is that V28's independent certificate check
+ * should already catch a fabricated proof. It cannot, and the reason is worth stating
+ * because it is the whole justification for a sixth code: when `Init` is unsatisfiable
+ * Spacer infers `Inv := false`, and `false` discharges ALL THREE obligations VALIDLY —
+ * `Init ⇒ false` holds because `Init` is itself false, `false ∧ T ⇒ false'` holds
+ * trivially, and `false ⇒ ¬Bad` holds trivially. So the certificate is sound and the
+ * conclusion is still worthless. Vacuity is not a solver error; it is a question that was
+ * never really asked, and only a satisfiability check on `Init` itself can see it.
  */
 
 /**
@@ -66,6 +88,8 @@ export const REACHABILITY_FND_CODES = [
   'FND_REACHABILITY_UNDER_HYPOTHESES',
   'FND_REACHABILITY_UNKNOWN',
   'FND_REACHABILITY_NOT_CHECKED',
+  // APPENDED at the HARDENING wave, never inserted — see the append-only rule above.
+  'FND_REACHABILITY_VACUOUS_INITIAL',
 ] as const
 
 export type ReachabilityFndCode = (typeof REACHABILITY_FND_CODES)[number]
@@ -137,5 +161,24 @@ export const ReachabilityFndCodeMeta: Record<
       'defect: silence over a question that was never asked reads exactly like a pass, which is the ' +
       'one thing this tool must never do. Suggestion: declare state variables with `symspec state`, ' +
       'then classify the responses that touch them with `symspec classify`.',
+  },
+  FND_REACHABILITY_VACUOUS_INITIAL: {
+    code: 'FND_REACHABILITY_VACUOUS_INITIAL',
+    description:
+      'error — the INITIAL STATE is UNSATISFIABLE: the model-wide `initial` predicate, the ' +
+      'per-variable `initial` predicates, and the declared integer/enum ranges cannot all hold at ' +
+      'once, so the model has NO initial state, the reachable-state set is EMPTY, and every ' +
+      'constraint holds VACUOUSLY. Nothing is proven about anything and every constraint is ' +
+      'DEMOTED. Error severity rather than a disclosure because a vacuous model does not merely ' +
+      'fail to prove — it MASKS proven violations: measured, adding a contradictory initial ' +
+      'predicate to a document with a genuine reachable violation turned an error-severity ' +
+      'FND_REACHABILITY_VIOLATED into a confident "PROVED with nothing assumed" and flipped the ' +
+      'exit code from 1 to 0. The independent certificate check cannot catch this, because an ' +
+      'unsatisfiable Init makes `Inv := false` discharge all three obligations validly. ' +
+      'Suggestion: inspect the predicates with `symspec list`, then fix the contradiction — ' +
+      '`symspec state-initial "<satisfiable predicate>"` for the model-wide one, ' +
+      '`symspec state <name> --type <type> --initial "<predicate>"` for a per-variable one, or ' +
+      '`symspec state-initial --clear` to drop the model-wide constraint entirely. Also check ' +
+      'the declared --min/--max bounds do not exclude the initial value.',
   },
 }

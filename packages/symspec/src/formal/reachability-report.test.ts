@@ -35,6 +35,11 @@ const reportOf = (over: Partial<ReachabilityReport> = {}): ReachabilityReport =>
   variables: 1,
   frameDrift: [],
   emptyTransitionRelation: false,
+  // The DEFAULT is the healthy model: an initial state exists. Spelled out rather than
+  // left off so a case about vacuity has to say so, and so every existing case is
+  // explicitly a non-vacuous one.
+  vacuousInitialState: false,
+  initialPredicates: [],
   refusedParams: [],
   elapsedMs: 10,
   timeoutMs: 2000,
@@ -558,7 +563,7 @@ describe('every emitted repair is runnable rather than a placeholder to parse', 
  * demotion THIS tier raises has a mechanical next step, because each names a missing input
  * (a variable, a classification) or a knob (the per-query bound) rather than a judgment.
  *
- * So the totality claim is narrow and checkable: **for each of the four demotion reasons,
+ * So the totality claim is narrow and checkable: **for each of the five demotion reasons,
  * the demotion carries at least one runnable command, and the command names the thing the
  * reason is about.** The cross-product loop is what makes adding a fifth reason a failure
  * rather than an omission — the existing per-case tests would all still pass.
@@ -598,6 +603,19 @@ describe('every reachability demotion names the command that supplies what is mi
       'reachability-undecidable',
       reportOf({
         results: [resultOf({ verdict: 'UNKNOWN', unknownReason: 'undecidable', elapsedMs: 40 })],
+      }),
+    ],
+    // Vacuous initial state: the model admits no states, so the mechanical next step is
+    // READING the contradiction (`list`) and re-running — which predicate to change is
+    // authoring content the repair must not invent, so no `state-initial` op appears here.
+    [
+      'reachability-vacuous-initial-state',
+      reportOf({
+        vacuousInitialState: true,
+        initialPredicates: ['held = 0', 'held = 2'],
+        results: [
+          resultOf({ verdict: 'UNKNOWN', strict: 'unknown', unknownReason: 'undecidable' }),
+        ],
       }),
     ],
   ]

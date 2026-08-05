@@ -59,7 +59,13 @@ import {
 import { type DocumentOp, EDGE_OP_RELATION } from './ops.ts'
 import { renderSentence } from './render.ts'
 import { resolveId, resolveRef } from './resolve.ts'
-import { isExprError, referencedNames, validateEffect, validateExpression } from './state-expr.ts'
+import {
+  cheapInitialContradiction,
+  isExprError,
+  referencedNames,
+  validateEffect,
+  validateExpression,
+} from './state-expr.ts'
 
 // ---------------------------------------------------------------------------
 // The result shapes
@@ -875,7 +881,76 @@ const applyState = (
   const initialBroken = modelInitialValid(next)
   if (initialBroken !== undefined) return initialBroken
 
+  // SANITY GATE #1, authoring half. Reached from BOTH directions here: a new `--initial`
+  // that contradicts the model-wide predicate, and a narrowed `--min`/`--max` that excludes
+  // an initial value already committed. The second is the shape an author reaches by
+  // bounding a variable after writing its initial, and it is exactly as vacuous as a
+  // self-contradictory predicate.
+  const vacuous = initialStateSatisfiable(next)
+  if (vacuous !== undefined) return vacuous
+
   return { document: next, noop: false }
+}
+
+/**
+ * Refuse a state model whose INITIAL STATE is provably unsatisfiable — the authoring-time
+ * half of sanity gate #1.
+ *
+ * ## Why this is worth a write-time refusal when `check` already gates the run
+ *
+ * The solver-backed gate in `../formal/reachability.ts` is the complete answer and it fires
+ * on every `check`. This closes the same hole one step earlier, where it is preventable
+ * rather than merely detectable: the write is REFUSED, so the vacuous document never
+ * reaches disk and the author sees the contradiction while they still remember what they
+ * meant. It is the same authoring-vs-schema split `stateVariableOf` documents, and the
+ * same one the existing empty-range and empty-domain refusals already use — an empty range
+ * is exactly this defect reached through a different field, and it was already refused
+ * here for exactly this reason.
+ *
+ * ## It is deliberately INCOMPLETE, and that direction is the sound one
+ *
+ * `cheapInitialContradiction` reports only contradictions it has PROVEN with a syntactic
+ * check and gives up on everything else — see its header for the three cases and why a
+ * false positive (refusing a valid document) would be strictly worse than a miss. What it
+ * misses, `check` catches. So the two halves are not redundant; they are the same gate at
+ * two different costs, and neither is load-bearing alone.
+ *
+ * Collects the SOURCE of each predicate so the message names which half to edit: the
+ * per-variable `initial` and the model-wide one are set by different commands, and a
+ * contradiction that exists only in their CONJUNCTION cannot be fixed without knowing
+ * which one the author wants to keep.
+ */
+const initialStateSatisfiable = (document: RequirementsDocument): OpFailure | undefined => {
+  const model = document.stateModel
+  const collected: {
+    expr: Parameters<typeof cheapInitialContradiction>[0][number]['expr']
+    source: string
+  }[] = []
+
+  for (const variable of model.variables) {
+    if (variable.initial === undefined) continue
+    const parsed = validateExpression(variable.initial, model, 'initial')
+    // An expression that does not VALIDATE is not this check's business — the caller has
+    // already refused it, or (on a hand-edited document) `check` discloses it as skipped.
+    // Silently ignoring it here is what keeps this check's failures about satisfiability
+    // only.
+    if (isExprError(parsed)) continue
+    collected.push({ expr: parsed, source: `\`--initial\` on state ${variable.name}` })
+  }
+  if (model.initial !== undefined) {
+    const parsed = validateExpression(model.initial, model, 'initial')
+    if (!isExprError(parsed)) {
+      collected.push({ expr: parsed, source: '`symspec state-initial`' })
+    }
+  }
+
+  const contradiction = cheapInitialContradiction(collected, model)
+  if (contradiction === undefined) return undefined
+  return usage(`The state model's initial state would be UNSATISFIABLE: ${contradiction}.`, [
+    'An unsatisfiable initial state means the model has NO initial state, so NO state is reachable and every constraint holds VACUOUSLY — `check` would report every constraint PROVED while proving nothing, and would MASK any real violation the document contains.',
+    'Fix the contradiction: change one of the predicates, or clear the model-wide one with `symspec state-initial --clear`.',
+    'Per-variable initials are CONJOINED with the model-wide one (adding either only narrows the initial states), so two individually-sensible predicates can contradict each other.',
+  ])
 }
 
 /** Re-validate the model-wide initial predicate, when there is one. */
@@ -964,10 +1039,18 @@ const applyStateInitial = (
     ])
   }
   if (document.stateModel.initial === predicate) return { document, noop: true }
-  return {
-    document: { ...document, stateModel: { ...document.stateModel, initial: predicate } },
-    noop: false,
+  const next: RequirementsDocument = {
+    ...document,
+    stateModel: { ...document.stateModel, initial: predicate },
   }
+  // SANITY GATE #1, authoring half — the LOW-13 route. This is the command that most easily
+  // reaches the contradiction, because the model-wide predicate is CONJOINED with every
+  // per-variable one: `state-initial "held = 2"` over a variable already declared
+  // `--initial "held = 0"` produces a model with no initial state, and neither half is
+  // wrong on its own.
+  const vacuous = initialStateSatisfiable(next)
+  if (vacuous !== undefined) return vacuous
+  return { document: next, noop: false }
 }
 
 const applyClassify = (

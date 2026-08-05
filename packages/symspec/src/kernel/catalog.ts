@@ -283,6 +283,7 @@ const REACHABILITY_TIER = {
   FND_REACHABILITY_UNDER_HYPOTHESES: 'formal',
   FND_REACHABILITY_UNKNOWN: 'formal',
   FND_REACHABILITY_NOT_CHECKED: 'formal',
+  FND_REACHABILITY_VACUOUS_INITIAL: 'formal',
 } as const satisfies Record<(typeof REACHABILITY_FND_CODES)[number], 'formal'>
 
 /**
