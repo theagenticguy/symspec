@@ -18,6 +18,12 @@ allowBuilds:
   # (tsdown). Its JS fallback is complete, so declining the native build costs
   # nothing and keeps `pnpm install` non-interactive (S2 spike hit this prompt).
   msgpackr-extract: false
-  onnxruntime-node: set this to true or false
-  protobufjs: set this to true or false
-  sharp: set this to true or false
+  # onnxruntime-web's transitive baggage. None of the three needs its build
+  # script: onnxruntime-node is the NODE backend and symspec deliberately runs
+  # the web/WASM one, protobufjs's script only regenerates bundled artifacts it
+  # already ships, and sharp without its native build is simply unused. All
+  # three declined so `pnpm install --frozen-lockfile` stays non-interactive —
+  # a placeholder string here ("set this to…") is what killed CI at install.
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: false
