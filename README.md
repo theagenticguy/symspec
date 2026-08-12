@@ -2,25 +2,31 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**symspec writes software requirements you can *prove* consistent — and is honest when it
-can't.** You describe what a system should do in structured sentences; symspec turns each
-into a clean requirement, and a mathematical prover (Z3) either **proves** that two of them
-cannot both be true — naming the exact culprits with the smallest conflicting subset as
-evidence — or tells you `verified: false` and hands back the precise work list that would
-make the spec provable.
+**Your coding agent writes requirements. symspec finds the two that can't both be true — and
+proves it.**
 
-Declare a **state model** and it goes further: it proves your invariants over *every
-reachable state of the system your requirements describe*, with no bound on how many steps
-it takes to get there — and when an invariant is violable, it hands back the exact sequence
-of your own requirements that violates it.
+Ask an agent to spec a feature and you get a plausible list. The expensive bug is rarely
+inside one requirement; it is between two that quietly disagree, and you find it three weeks
+later in the code. Reviewing for that by hand is slow and easy to get wrong. Asking another
+LLM to review it gets you a confident paragraph that misses the conflict.
 
-That honesty is the whole design. `verified: true` is a claim the tool refuses to make
-unless a prover discharged it; every abstention is a named demotion with a runnable command
-attached. A similarity score can never certify a spec. Only a sound proof can.
+symspec does it mechanically. It turns each requirement into a structured sentence, hands the
+whole set to a mathematical prover (Z3), and one of two things happens:
 
-**Built for a coding agent to drive.** Every command answers with a typed JSON envelope and a
-stable exit code, so an agent always knows whether it succeeded and what to do next. A human
-reads the same result with `--pretty`.
+- it **proves** two requirements contradict, and names which ones, or
+- it tells you it could not prove anything, and hands back the exact work list.
+
+It never says "looks fine". `verified: true` is a claim it refuses to make unless a prover
+actually discharged it — so a clean result means *no conflict was proven*, not *there is no
+conflict*. That distinction is the whole point, and the tool is built to keep saying it out
+loud rather than let a green checkmark imply more than it earned.
+
+**Everything answers with JSON and a stable exit code**, so an agent can run it in a loop and
+know what to do next without parsing prose. Add `--pretty` to read the same result yourself.
+
+New here? Skip to [If you are an agent, do this](#if-you-are-an-agent-do-this) if you are
+wiring this into a coding agent, or run the quick start below to see a conflict get proven in
+about a minute.
 
 ---
 
@@ -66,21 +72,51 @@ cd symspec && pnpm install && pnpm build && npm install -g .
 
 </details>
 
-Then author and check a document:
+### See it prove a conflict
+
+Two requirements that disagree. Every command below runs as written:
 
 ```bash
 symspec init ./requirements.json
 
-# Prose in, structured requirements out — with the ops already computed.
-symspec parse "When the user submits valid credentials, the auth service shall grant access."
-
-# Or state the EARS slots directly.
+# One requirement: on valid credentials, grant access.
 symspec add --pattern-type event-driven \
   --trigger "the user submits valid credentials" \
   --system-name "auth service" --system-response "grant access"
 
-symspec check
+# The same trigger, the opposite obligation. `--negated` is how you say "shall NOT",
+# instead of writing "not" into the response text.
+symspec add --pattern-type event-driven \
+  --trigger "the user submits valid credentials" \
+  --system-name "auth service" --system-response "grant access" --negated
+
+symspec check --pretty
 ```
+
+```
+code: FND_CONTRADICTION
+severity: error
+message: Requirements 7d095571…, e4601bb3… cannot all hold: their responses resolve to
+         the same atom with opposite polarity under a reachable context.
+```
+
+Exit code **1**. It named both culprits, and the `evidence` block shows exactly which pieces
+of text it compared to get there — so you can check its work rather than take its word.
+
+Nothing here is a language model guessing. Rewrite the second requirement as *deny access*
+and the contradiction stays proven; change the trigger and it disappears, because the two
+requirements do not apply at the same time.
+
+Prose in, requirements out — if you'd rather not fill in slots by hand:
+
+```bash
+symspec parse "When the user submits valid credentials, the auth service shall grant access."
+```
+
+That returns the structured requirement **and** the ready-to-apply op, so nothing gets
+retyped between reading and writing.
+
+### Exit codes are the contract
 
 A clean run exits 0. A proven conflict exits 1 with the culprits named. An opt-in strict
 coverage gate (`--strict`) exits 3 when the tool could not verify the document — which is a
@@ -95,6 +131,82 @@ different answer from "the document is bad", and the exit codes keep the two apa
 
 Node 24 or later. The solver is Z3 compiled to WebAssembly and runs in-process — no external
 binary, no JVM, no network.
+
+---
+
+## If you are an agent, do this
+
+You are reading this because a human pointed you at symspec. Follow these steps literally.
+
+**1. Set up once.** Both are idempotent — run them without checking first.
+
+```bash
+symspec download-model     # required; `check` fails closed without it
+symspec install            # writes the full authoring guide into this host's skill directory
+```
+
+**2. Learn the surface from the tool, not from this file.**
+
+```bash
+symspec manifest           # every operation, every flag, every code, as JSON
+```
+
+Do not memorise flags from prose. `manifest` is generated from the same table the CLI is
+built from, so it cannot disagree with the binary you are running.
+
+**3. Author into a document.** Prefer `parse` when you have a sentence, `add` when you have
+the pieces, and `apply` when you have more than one change:
+
+```bash
+symspec init ./requirements.json
+symspec parse "<one requirement sentence>"     # returns the structured req AND the op
+symspec apply --ops plan.jsonl                 # batch: one op per line, atomic
+```
+
+Never hand-write a requirement's JSON. Take the `proposedOp` from `parse` and apply it — that
+is what keeps the polarity flag and the slot boundaries intact.
+
+**4. Check, and branch on the exit code — not on the text.**
+
+```bash
+symspec check --strict
+```
+
+| Exit | What it means | What to do |
+|---|---|---|
+| 0 | Nothing was proven wrong, and coverage was complete | Done |
+| 1 | An error-severity finding. A valid envelope is still on stdout | Fix the named requirements |
+| 2 | An `ERR_*` operational failure (bad flag, missing file, missing model) | Read `code`, run `repair.commands` |
+| 3 | `--strict` only: nothing was proven wrong, but coverage was incomplete | Work the demotion list |
+
+**5. Converge.** Read the work list, apply the fixes it hands you, and re-check:
+
+```bash
+symspec check --field data.coverage.demotions    # the work list
+symspec apply --ops repairs.jsonl                # from repair.ops
+symspec check --strict --field data.progress     # watch all three numbers fall
+```
+
+`data.progress` is `{demotions, openFindings, atomsUncompared}`. **If none of the three moved
+after you applied a repair, that repair did nothing — change approach instead of retrying it.**
+
+**6. When you don't recognise a code**, ask. One code, no manifest fetch:
+
+```bash
+symspec explain --code FND_CONTRADICTION
+```
+
+**Rules that will save you tokens and mistakes:**
+
+- JSON is the default. You never need a flag to get parseable output.
+- `--dense` minifies and drops the heavy `evidence` payload; `--field a.b,c.d` projects to
+  dotted paths. Neither ever changes the exit code.
+- The single highest-leverage habit is **vocabulary alignment**: the same words for the same
+  things. Two requirements that mean the same thing in different words are invisible to the
+  prover, so aligning them is what turns a conflict you suspect into a conflict that is
+  *proven*. Commit merges with `glossary add` and opposites with `antonym add`.
+- A clean `check` means "no conflict was proven". It does not mean the spec is consistent. If
+  you report to a human, report it that way.
 
 ---
 
@@ -135,7 +247,7 @@ must never look like "the tier found nothing". The two honest alternatives:
 |---|---|---|
 | The model, ahead of time | `symspec download-model` | Nothing. |
 | The model, fetched on first use | `SYMSPEC_EMBED_ALLOW_REMOTE=1 symspec check …` | A ~110 MB download inside the latency of a `check`. |
-| To run without it | `symspec check --semantic=false` | `verified` can no longer be true — the skip is **disclosed** as a `semantic-tier-skipped` demotion rather than passing quietly. |
+| To run without it | `symspec check --semantic=false` | `verified` cannot be true — the skip is **disclosed** as a `semantic-tier-skipped` demotion rather than passing quietly. |
 
 Fully offline after the fetch. Nothing else in `symspec` touches the network — Z3 is bundled
 WebAssembly.
@@ -267,8 +379,9 @@ it. Every proof is also **independently re-verified** (three plain-SMT obligatio
 
 `symspec install` drops the full state-model authoring guide — when to declare a variable, the
 effect-vs-constraint procedure, and this worked example — into your agent host. That guide is
-**generated from the same corpus as this README and the manifest**, so it cannot drift from the
-tool; the repository's `AGENTS.md` is the same content rendered for a human reading the source.
+**generated from the same table the CLI and `symspec manifest` are built from**, so it cannot
+drift from the tool; the repository's `AGENTS.md` is the same content rendered for a human
+reading the source.
 
 ---
 
@@ -323,7 +436,7 @@ invariant — auditable evidence, not a certificate.
 
 ## What is in the box
 
-21 operations, all projections of one operations table, so `--help`, `symspec manifest`, and
+22 operations, all projections of one operations table, so `--help`, `symspec manifest`, and
 the generated `AGENTS.md` cannot disagree with the tool:
 
 | Group | Operations |
@@ -333,9 +446,9 @@ the generated `AGENTS.md` cannot disagree with the tool:
 | Vocabulary | `glossary`, `antonym`, `waive` |
 | State model | `state`, `state-initial`, `classify` |
 | Analysis | `check` |
-| Agent surface | `manifest`, `explain`, `version`, `install` |
+| Agent surface | `manifest`, `explain`, `version`, `install`, `download-model` |
 
-**80 stable codes** across three catalogs — `ERR_*` operational failures, `FND_*` check
+**81 stable codes** across three catalogs — `ERR_*` operational failures, `FND_*` check
 findings, `GTWR_*` INCOSE *Guide to Writing Requirements* lint rules — every one resolvable
 with `symspec explain`. The catalogs are append-only: a code's meaning never changes and a
 code is never removed, because the codes are the API an agent branches on.
@@ -364,10 +477,9 @@ it as an op, so the deterministic solver always reads a committed table rather t
 
 `1.0.0` <!-- x-release-please-version -->
 
-The document format is **v3** and there is no read-compatibility with the v2 format;
-migration is a one-shot `reproduce | symspec import`. The CLI surface is built on
-`effect/unstable/cli` at an exact pin, so a beta bump is a deliberate, reviewed change rather
-than a floating range.
+The document format is **v3**. `symspec import` reads a v2 op stream in one shot, so an older
+document migrates without hand-editing. The CLI surface is built on `effect/unstable/cli` at an
+exact pin, so a beta bump is a deliberate, reviewed change rather than a floating range.
 
 Treat the **codes and the envelope shape** as the stable contract — those are what an agent
 branches on, and they are guarded by append-only snapshot tests. Flag names and payload

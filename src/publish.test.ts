@@ -29,6 +29,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { VERSION } from './kernel/version.ts'
+import { currentManifest } from './operations/index.ts'
 
 const read = (relative: string): string =>
   readFileSync(fileURLToPath(new URL(`../${relative}`, import.meta.url)), 'utf8')
@@ -404,5 +405,62 @@ describe('the release config bumps every place the version appears', () => {
     // Scoped to the publish job, never granted workflow-wide.
     expect(workflow).toContain('permissions: {}')
     expect(read('RELEASING.md')).toContain('--file release-please.yml')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The README's own numbers, checked against the tool
+// ---------------------------------------------------------------------------
+
+/**
+ * A README that counts things WILL rot, because nothing else reads it.
+ *
+ * "21 operations" and "80 stable codes" were both true when written and both wrong by the
+ * time anyone noticed — the operations table had also silently dropped a command. A reader
+ * who runs `symspec manifest` and counts 22 has no way to tell which source is stale, and
+ * the answer they trust is the one that is easier to read.
+ *
+ * So the counts are asserted against the table they describe. The alternative — deleting
+ * the numbers to avoid the problem — loses real information: "22 operations" tells a reader
+ * the surface is small enough to learn, which "several operations" does not.
+ */
+describe('the README agrees with the tool about its own surface', () => {
+  const readme = read('README.md')
+  const manifestNow = currentManifest()
+  const codeCount =
+    manifestNow.errorCodes.length + manifestNow.findingCodes.length + manifestNow.lintCodes.length
+
+  it('states the operation count the table actually holds', () => {
+    expect(readme).toContain(`${manifestNow.operations.length} operations`)
+  })
+
+  it('states the total code count across the three catalogs', () => {
+    expect(readme).toContain(`**${codeCount} stable codes**`)
+  })
+
+  it('lists EVERY operation in the operations TABLE, not merely somewhere', () => {
+    // Scoped to the table on purpose. Searching the whole README passes as long as the
+    // command is mentioned anywhere — and every command is mentioned somewhere, so that
+    // version of this test cannot fail. Verified by sabotage: removing `download-model`
+    // from the table left a whole-file search green.
+    const table = readme.slice(readme.indexOf('| Group | Operations |'))
+    const rows = table.slice(0, table.indexOf('\n\n'))
+    expect(rows, 'the operations table moved or lost its header').toContain('| Documents |')
+
+    const missing = manifestNow.operations
+      .map((op) => op.name)
+      .filter((name) => !rows.includes(`\`${name}\``))
+    expect(missing).toEqual([])
+  })
+
+  it('names no command the tool does not have', () => {
+    // The other direction: a README that documents a removed command sends a reader to a
+    // usage error. Checked against the backticked words that look like subcommands.
+    const known = new Set(manifestNow.operations.map((op) => op.name))
+    const advertised = [...readme.matchAll(/`symspec ([a-z][a-z-]*)/g)].map((m) => m[1])
+    const unknown = [
+      ...new Set(advertised.filter((name) => name !== undefined && !known.has(name))),
+    ]
+    expect(unknown).toEqual([])
   })
 })
