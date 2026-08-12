@@ -2,7 +2,7 @@
   "name": "symspec",
   "version": "1.0.0",
   "type": "module",
-  "description": "Prove your software requirements consistent, or get an honest work list. EARS authoring, INCOSE GtWR lint, Z3 SMT conflict proofs with unsat-core evidence, and unbounded state-model reachability — behind an agent-first CLI with typed JSON envelopes and 81 stable codes.",
+  "description": "Prove your software requirements consistent, or get an honest work list. EARS authoring, INCOSE GtWR lint, Z3 SMT conflict proofs with unsat-core evidence, and unbounded state-model reachability \u2014 behind an agent-first CLI with typed JSON envelopes and 81 stable codes.",
   "keywords": [
     "requirements",
     "requirements-engineering",
@@ -47,8 +47,7 @@
     "LICENSE"
   ],
   "publishConfig": {
-    "access": "public",
-    "tag": "alpha"
+    "access": "public"
   },
   "engines": {
     "node": ">=24",
@@ -68,7 +67,7 @@
     "bench:budget": "tsx scripts/budget-curve.ts",
     "check": "biome ci . && tsc --noEmit && pnpm run check:agents && pnpm run gate:reachability && pnpm run build && vitest run && pnpm run knip",
     "gen:agents": "tsx scripts/gen-agents.ts",
-    "check:agents": "tsx scripts/gen-agents.ts --stdout | diff -u AGENTS.md - >/dev/null || (echo \"AGENTS.md is stale — run pnpm gen:agents\" >&2; exit 1)",
+    "check:agents": "tsx scripts/gen-agents.ts --stdout | diff -u AGENTS.md - >/dev/null || (echo \"AGENTS.md is stale \u2014 run pnpm gen:agents\" >&2; exit 1)",
     "gate:reachability": "tsx scripts/reachability-feasibility.ts",
     "knip": "knip --no-progress",
     "pack:dry": "npm pack --dry-run",
