@@ -93,6 +93,7 @@ Failure:
 | `symspec explain` | Explain one stable diagnostic code (ERR_*, FND_*, or GTWR_*): its severity, meaning, and remedy |
 | `symspec version` | Report the package version and the envelope API version |
 | `symspec install` | Install the symspec agent skill into every detected coding-agent host |
+| `symspec download-model` | Fetch the pinned embedding model into the local cache, so later runs are offline |
 
 ## Choosing an EARS pattern: a decision procedure
 

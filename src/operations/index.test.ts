@@ -73,6 +73,8 @@ describe('the table', () => {
       // it is how the tool describes itself to a HOST, which is the job `manifest` does
       // for an agent.
       'install',
+      // The model pre-warm, last: a one-time setup step rather than part of any loop.
+      'download-model',
     ])
   })
 

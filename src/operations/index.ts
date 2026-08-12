@@ -67,6 +67,7 @@ import { checkOp } from './check.ts'
 import { initOp, listOp, showOp } from './document.ts'
 import { importOp } from './import.ts'
 import { installOp } from './install.ts'
+import { downloadModelOp } from './model.ts'
 import {
   addOp,
   antonymOp,
@@ -86,6 +87,7 @@ export { checkOp } from './check.ts'
 export { initOp, listOp, showOp } from './document.ts'
 export { importOp } from './import.ts'
 export { installOp } from './install.ts'
+export { downloadModelOp } from './model.ts'
 export {
   addOp,
   antonymOp,
@@ -306,6 +308,10 @@ export const OPERATIONS = [
   // is how the tool describes itself to a HOST, which is the same job `manifest` does for
   // an agent.
   installOp,
+  // The pre-warm, LAST: like `install` it acts on the developer's machine rather than on
+  // a document, and unlike everything above it, it is a one-time setup step rather than
+  // part of any loop.
+  downloadModelOp,
 ] as const
 
 /**

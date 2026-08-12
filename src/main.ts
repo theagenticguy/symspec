@@ -52,12 +52,21 @@ import { Effect, Layer, Logger } from 'effect'
 import { cli } from './cli.ts'
 import { storeLayer } from './core/store.ts'
 import { embedderServiceLayer } from './formal/embedder.ts'
+import { modelDownloadLayer } from './formal/model-download.ts'
 import { solverServiceLayer } from './formal/solver-service.ts'
 import { streamSourceLayer } from './operations/index.ts'
 
 /** Everything the operations require, over the platform services. */
 const appLayer = Layer.provideMerge(
-  Layer.mergeAll(storeLayer, streamSourceLayer, solverServiceLayer, embedderServiceLayer),
+  Layer.mergeAll(
+    storeLayer,
+    streamSourceLayer,
+    solverServiceLayer,
+    embedderServiceLayer,
+    // Lazy like the two above: its effect dynamically imports the model-cache module, so
+    // no command except `download-model` pays for it.
+    modelDownloadLayer,
+  ),
   NodeServices.layer,
 )
 

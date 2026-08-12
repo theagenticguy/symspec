@@ -35,6 +35,7 @@ import {
   checkOp,
   classifyOp,
   deleteOp,
+  downloadModelOp,
   explainOp,
   glossaryOp,
   importOp,
@@ -349,6 +350,11 @@ const explainCommand = Command.make('explain', { code: stringFlag(explainOp, 'co
 const versionCommand = Command.make('version', {}, () => emit(versionOp, {})).pipe(
   Command.withDescription(versionOp.summary),
 )
+
+/** No flags: the model is sha256-pinned and the cache location is `SYMSPEC_MODEL_DIR`. */
+const downloadModelCommand = Command.make('download-model', {}, () =>
+  emit(downloadModelOp, {}),
+).pipe(Command.withDescription(downloadModelOp.summary))
 
 const initCommand = Command.make(
   'init',
@@ -837,6 +843,7 @@ const rootWithSubcommands = root.pipe(
     explainCommand,
     versionCommand,
     installCommand,
+    downloadModelCommand,
   ]),
 )
 
