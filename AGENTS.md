@@ -1,5 +1,5 @@
 <!-- GENERATED FILE — do not edit by hand. -->
-<!-- Regenerate: pnpm --filter symspec gen:agents   (drift fails `pnpm check`) -->
+<!-- Regenerate: pnpm gen:agents   (drift fails `pnpm check`) -->
 
 # symspec — agent guide
 

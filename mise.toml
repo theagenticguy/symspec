@@ -1,20 +1,18 @@
 [tools]
 node = "24"
 # pnpm is provided by corepack (bundled with node); the exact version is pinned
-# by `packageManager` in package.json (pnpm@11.1.1), which corepack reads
+# by `packageManager` in package.json, which corepack reads
 # natively. Not declared as a mise tool to avoid a second, conflicting owner.
 
-# Optional system solver/certify binaries (AC-4-9, AC-4-10, AC-5-4, AC-7-6).
-# These are the OPTIONAL SYSTEM binaries — a different thing from the npm
-# runtime dependencies (z3-solver, wink-nlp, wink-eng-lite-web-model) in
-# package.json. symspec's default `check` runs the in-process z3-solver WASM
-# backend and needs NONE of these; they are only for the `--solver z3-bin`
-# cross-check (external z3/cvc5) and the opt-in `certify` tier (Lean/elan).
-# Uncomment to pin them locally; installed via mise's `github:` backend.
+# Optional system solver binaries (AC-4-9, AC-4-10). These are OPTIONAL SYSTEM
+# binaries — a different thing from the npm runtime dependencies (z3-solver,
+# wink-nlp, wink-eng-lite-web-model) in package.json. The default `check` runs the
+# in-process z3-solver WASM backend and needs NEITHER; they serve only the
+# `--solver z3-bin` cross-check. Uncomment to pin locally; installed via mise's
+# `github:` backend.
 #
 # "z3" = "github:Z3Prover/z3@z3-4.16.0"   # external z3 binary cross-check (ERR_SOLVER_MISSING suggests this exact pin)
 # "cvc5" = "github:cvc5/cvc5@cvc5-1.2.0"  # alternate external SMT backend for the portable .smt2 artifact
-# "elan" = "github:leanprover/elan"       # Lean toolchain manager for `symspec certify` (ERR_LEAN_TOOLCHAIN_MISSING suggests `elan default stable`)
 
 [tasks.install]
 description = "Install dependencies from lockfile"
@@ -26,7 +24,9 @@ run = "pnpm build"
 
 [tasks.test]
 description = "Run vitest unit tests"
-run = "pnpm vitest run"
+# `build` first: the CLI suite spawns `dist/cli.mjs`, so a bare `vitest run` tests
+# whatever the last build left behind.
+run = "pnpm build && pnpm vitest run"
 
 [tasks.lint]
 description = "Lint + format check (biome)"
@@ -44,6 +44,12 @@ run = "pnpm typecheck"
 description = "Find unused files, deps, and exports"
 run = "pnpm knip"
 
+[tasks."gate:reachability"]
+description = "Reachability tier feasibility + latency gate"
+run = "pnpm run gate:reachability"
+
 [tasks.check]
-description = "Full quality gate: biome ci + typecheck + vitest + knip"
-depends = ["lint", "typecheck", "test", "knip"]
+description = "Full quality gate — the same one CI and the pre-push hook run"
+# One `run`, not a `depends` graph: `depends` is parallel and cannot express
+# build-before-vitest, and a gate that differs from CI's is not a gate.
+run = "pnpm check"

@@ -2,7 +2,7 @@
   "name": "symspec",
   "version": "1.0.0-alpha.0",
   "type": "module",
-  "description": "Prove your software requirements consistent, or get an honest work list. EARS authoring, INCOSE GtWR lint, Z3 SMT conflict proofs with unsat-core evidence, and unbounded state-model reachability — behind an agent-first CLI with typed JSON envelopes and 81 stable codes.",
+  "description": "Prove your software requirements consistent, or get an honest work list. EARS authoring, INCOSE GtWR lint, Z3 SMT conflict proofs with unsat-core evidence, and unbounded state-model reachability \u2014 behind an agent-first CLI with typed JSON envelopes and 81 stable codes.",
   "keywords": [
     "requirements",
     "requirements-engineering",
@@ -32,10 +32,9 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/theagenticguy/symspec.git",
-    "directory": "packages/symspec"
+    "url": "git+https://github.com/theagenticguy/symspec.git"
   },
-  "homepage": "https://github.com/theagenticguy/symspec/tree/main/packages/symspec#readme",
+  "homepage": "https://github.com/theagenticguy/symspec#readme",
   "bugs": {
     "url": "https://github.com/theagenticguy/symspec/issues"
   },
@@ -58,6 +57,7 @@
   "scripts": {
     "build": "tsdown",
     "prepack": "tsdown",
+    "prepare": "tsdown",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
@@ -66,11 +66,13 @@
     "cli": "node dist/cli.mjs",
     "bench": "./scripts/bench.sh",
     "bench:budget": "tsx scripts/budget-curve.ts",
-    "check": "biome ci . && tsc --noEmit && pnpm run check:agents && pnpm run gate:reachability && pnpm run build && vitest run",
+    "check": "biome ci . && tsc --noEmit && pnpm run check:agents && pnpm run gate:reachability && pnpm run build && vitest run && pnpm run knip",
     "gen:agents": "tsx scripts/gen-agents.ts",
-    "check:agents": "tsx scripts/gen-agents.ts --stdout | diff -u AGENTS.md - >/dev/null || (echo \"AGENTS.md is stale — run pnpm --filter symspec gen:agents\" >&2; exit 1)",
+    "check:agents": "tsx scripts/gen-agents.ts --stdout | diff -u AGENTS.md - >/dev/null || (echo \"AGENTS.md is stale \u2014 run pnpm gen:agents\" >&2; exit 1)",
     "gate:reachability": "tsx scripts/reachability-feasibility.ts",
-    "pack:dry": "npm pack --dry-run"
+    "knip": "knip --no-progress",
+    "pack:dry": "npm pack --dry-run",
+    "hooks:install": "lefthook install"
   },
   "dependencies": {
     "@effect/platform-node": "4.0.0-beta.102",
@@ -84,14 +86,12 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
     "@types/node": "^25.7.0",
+    "knip": "^6.13.1",
+    "lefthook": "^2.1.6",
     "tsdown": "^0.22.0",
     "tsx": "^4.21.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "z3-solver"
-    ]
-  }
+  "packageManager": "pnpm@11.21.0"
 }

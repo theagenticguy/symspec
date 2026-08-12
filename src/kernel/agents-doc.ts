@@ -50,7 +50,7 @@ import { SCOPE_KEYS, scopeParagraphs } from './scope.ts'
 /** The banner every generated file carries, so no one hand-edits it by mistake. */
 export const GENERATED_BANNER = [
   '<!-- GENERATED FILE — do not edit by hand. -->',
-  '<!-- Regenerate: pnpm --filter symspec gen:agents   (drift fails `pnpm check`) -->',
+  '<!-- Regenerate: pnpm gen:agents   (drift fails `pnpm check`) -->',
 ].join('\n')
 
 /** Escape a cell so a pipe in a description cannot break the table. */

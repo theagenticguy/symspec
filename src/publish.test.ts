@@ -70,11 +70,39 @@ describe('the package is publishable', () => {
     // published tarball whose `--version` disagrees with its registry version is
     // unfixable after the fact.
     expect(manifest.version).toBe(VERSION)
-    // An ALPHA version must not land on the `latest` tag, or `npm install symspec` gives a
-    // prerelease to someone who asked for a release.
-    expect(manifest.version).toContain('-alpha.')
-    expect(manifest.publishConfig?.tag).toBe('alpha')
     expect(manifest.publishConfig?.access).toBe('public')
+  })
+
+  /**
+   * The dist-tag has to AGREE with the version, in both directions.
+   *
+   * Pinning `tag: 'alpha'` outright would have to be edited by hand at the moment of the
+   * first stable release — which is the moment nobody is looking at this file. So the
+   * invariant is asserted instead, and it fails in whichever direction is wrong:
+   *
+   * - a prerelease on the default tag means `npm install symspec` hands a prerelease to
+   *   someone who asked for a release. npm 11 refuses this outright, and the refusal
+   *   arrives mid-publish;
+   * - a STABLE version still carrying `tag: 'alpha'` is the quieter and worse failure. It
+   *   publishes successfully, to a channel nobody installs from, and `npm install symspec`
+   *   keeps serving the old release with no error anywhere.
+   *
+   * The second case is why this test exists: release tooling bumps the version and does
+   * not know about `publishConfig`.
+   */
+  it('ships a dist-tag that agrees with the version', () => {
+    const tag = manifest.publishConfig?.tag
+    const prerelease = manifest.version.includes('-')
+    if (prerelease) {
+      expect(tag, 'a prerelease must name a non-default dist-tag').toBeDefined()
+      expect(tag).not.toBe('latest')
+    } else {
+      expect(
+        tag === undefined || tag === 'latest',
+        `version ${manifest.version} is stable but publishConfig.tag is "${tag}" — ` +
+          'it would publish to a channel nobody installs from',
+      ).toBe(true)
+    }
   })
 
   it('describes what the tool DOES, in a length a registry renders', () => {
@@ -111,9 +139,11 @@ describe('the package is publishable', () => {
 
   it('points at a repository, a homepage, and an issue tracker', () => {
     expect(manifest.repository?.url).toContain('github.com')
-    // The MONOREPO directory, so a registry page links to the package rather than the root.
-    expect(manifest.repository?.directory).toBe('packages/symspec')
-    expect(manifest.homepage).toContain('packages/symspec')
+    // No `directory`: the package IS the repository root, and a `directory` pointing at a
+    // path that does not exist breaks npm provenance, which matches the field
+    // case-sensitively against the repo it was built from.
+    expect(manifest.repository?.directory).toBeUndefined()
+    expect(manifest.homepage).toContain('github.com/theagenticguy/symspec')
     expect(manifest.bugs?.url).toContain('issues')
   })
 
@@ -197,6 +227,16 @@ describe('the `files` whitelist ships the artifact and nothing else', () => {
     // from a clean checkout would produce a tarball with no `dist/` at all — a package that
     // installs and then cannot run.
     expect(manifest.scripts.prepack).toBe('tsdown')
+  })
+
+  it('builds on `prepare` too, which is the hook a git-URL install runs', () => {
+    // `prepack` fires on pack/publish and NEVER for a dependency. Installing straight from
+    // the git URL runs `prepare` instead, so without it `pnpm add -g git+https://…` yields
+    // an installed package whose `bin` points into an empty `dist/`.
+    //
+    // Both, and asserted EQUAL: two build hooks that can disagree are a tarball and a
+    // git install that ship different bytes.
+    expect(manifest.scripts.prepare).toBe(manifest.scripts.prepack)
   })
 })
 

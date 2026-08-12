@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*", "tsdown.config.ts", "vitest.config.ts"]
+  "include": ["src/**/*", "scripts/**/*", "tsdown.config.ts", "vitest.config.ts"]
 }

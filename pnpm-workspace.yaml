@@ -1,29 +1,40 @@
-# The donor (symspec v4) remains the workspace ROOT package — pnpm always treats
-# the root as a project, so it keeps building without appearing in this glob.
-# `packages/*` adds the v5 greenfield (`packages/symspec`) alongside it.
+# One package, at the repo root. There is no `packages:` glob, and this file exists
+# for the SETTINGS below — pnpm 11 reads them here and nowhere else.
 #
-# BOTH declare the name `symspec`, and only the ROOT is still `private: true`.
-# That asymmetry is the G5 publish posture: the greenfield is the package that
-# OWNS the published name, the donor is frozen as the differential oracle and must
-# never reach a registry. pnpm resolves workspace projects by path rather than by
-# name, so the duplicate label stays a workspace-internal detail — verified with
-# `pnpm install --frozen-lockfile` after the flip.
-packages:
-  - packages/*
+# Two migrations are load-bearing and both fail at INSTALL time, in messages that
+# name neither this file nor the setting:
+#
+#   - `pnpm.onlyBuiltDependencies` / `ignoredBuiltDependencies` in package.json are
+#     removed in pnpm 11. `allowBuilds` replaces them, and it lives here.
+#   - non-auth settings in `.npmrc` are no longer read. `autoInstallPeers`,
+#     `strictPeerDependencies` and `verifyDepsBeforeRun` are camelCase keys here.
+#
+# `verifyDepsBeforeRun: false` is not a preference. A non-zero `prepare` script (this
+# package builds with tsdown on `prepare`, so a git-URL install produces a runnable
+# `dist/`) otherwise makes every subsequent `pnpm exec` fail with an opaque error
+# pointing into pnpm's internals rather than at the build that broke.
+autoInstallPeers: true
+strictPeerDependencies: false
+verifyDepsBeforeRun: false
 
+# Every dependency that ships a build script gets a decision here, because an
+# UNDECIDED entry makes `pnpm install --frozen-lockfile` interactive and CI hangs or
+# fails on it. A placeholder string is not a decision.
 allowBuilds:
   esbuild: true
   lefthook: true
+  # z3-solver ships prebuilt WASM (`build/z3-built.{js,wasm}`) and declares no install
+  # hook, so this is belt-and-braces: if a future release adds one, the decision is
+  # already recorded rather than discovered as an interactive prompt in CI.
+  z3-solver: true
   # A msgpackr optional native accelerator pulled in transitively by rolldown
   # (tsdown). Its JS fallback is complete, so declining the native build costs
-  # nothing and keeps `pnpm install` non-interactive (S2 spike hit this prompt).
+  # nothing.
   msgpackr-extract: false
-  # onnxruntime-web's transitive baggage. None of the three needs its build
-  # script: onnxruntime-node is the NODE backend and symspec deliberately runs
-  # the web/WASM one, protobufjs's script only regenerates bundled artifacts it
-  # already ships, and sharp without its native build is simply unused. All
-  # three declined so `pnpm install --frozen-lockfile` stays non-interactive —
-  # a placeholder string here ("set this to…") is what killed CI at install.
+  # onnxruntime-web's transitive baggage. None of the three needs its build script:
+  # onnxruntime-node is the NODE backend and symspec deliberately runs the web/WASM
+  # one, protobufjs's script only regenerates bundled artifacts it already ships, and
+  # sharp without its native build is simply unused.
   onnxruntime-node: false
   protobufjs: false
   sharp: false
