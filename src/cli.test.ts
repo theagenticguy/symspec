@@ -43,11 +43,12 @@
  * when a projection stops deriving and starts restating.
  */
 
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFile, execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Manifest } from './kernel/operation.ts'
 
@@ -65,20 +66,71 @@ const runJson = (...args: string[]): { envelope: Record<string, unknown>; code: 
   return { envelope: JSON.parse(stdout) as Record<string, unknown>, code }
 }
 
+/**
+ * {@link runJson}, concurrently.
+ *
+ * For loops over an independent set of invocations, where the cost is 21 node boots and
+ * not 21 computations. Resolves rather than rejects on a non-zero exit, because the exit
+ * code is part of what these tests assert.
+ */
+const runJsonAsync = async (
+  ...args: string[]
+): Promise<{ envelope: Record<string, unknown>; code: number }> =>
+  new Promise((resolve, reject) => {
+    execFile(process.execPath, [BUNDLE, ...args], { encoding: 'utf8' }, (error, stdout) => {
+      const code = error === null ? 0 : ((error as { code?: number }).code ?? -1)
+      try {
+        resolve({ envelope: JSON.parse(stdout) as Record<string, unknown>, code })
+      } catch (parseError) {
+        reject(new Error(`${args.join(' ')}: stdout was not JSON (${String(parseError)})`))
+      }
+    })
+  })
+
 let manifest: Manifest
 let rootHelp: string
 
-beforeAll(() => {
+/**
+ * `<command> --help` for every operation, spawned ONCE and concurrently.
+ *
+ * Every drift assertion below needs the same per-command help text, and spawning it
+ * per assertion means one boot of a 2.2 MB bundle per operation per test. Serially that
+ * is tens of seconds of pure process startup, which is a timeout on a loaded runner and
+ * a green run on an idle laptop — the failure mode the a-passing-test-on-a-fast-machine
+ * lesson is about. Cached and parallel, the whole set costs about one spawn.
+ */
+let commandHelp: ReadonlyMap<string, string>
+
+beforeAll(async () => {
   if (!existsSync(BUNDLE)) {
     throw new Error(
       `The shipped bundle is missing at ${BUNDLE}. These are drift tests against the BUILT ` +
-        'artifact — run `pnpm --filter symspec build` first (the `check` script does).',
+        'artifact — run `pnpm build` first (the `check` script does).',
     )
   }
   const { envelope } = runJson('manifest')
   manifest = envelope.data as Manifest
   rootHelp = execFileSync(process.execPath, [BUNDLE, '--help'], { encoding: 'utf8' })
+
+  const helpOf = promisify(execFile)
+  commandHelp = new Map(
+    await Promise.all(
+      manifest.operations.map(
+        async (op): Promise<readonly [string, string]> => [
+          op.name,
+          (await helpOf(process.execPath, [BUNDLE, op.name, '--help'])).stdout,
+        ],
+      ),
+    ),
+  )
 })
+
+/** The cached `<command> --help`, or a loud failure rather than a silent empty string. */
+const helpFor = (name: string): string => {
+  const help = commandHelp.get(name)
+  if (help === undefined) throw new Error(`no cached --help for ${name}`)
+  return help
+}
 
 // ---------------------------------------------------------------------------
 // Exit-code contract, end to end
@@ -271,9 +323,7 @@ describe('drift — every flag description reaches BOTH surfaces', () => {
   it('shows every manifest field description verbatim in that command --help', () => {
     const missing: string[] = []
     for (const op of manifest.operations) {
-      const help = execFileSync(process.execPath, [BUNDLE, op.name, '--help'], {
-        encoding: 'utf8',
-      })
+      const help = helpFor(op.name)
       for (const [field, node] of Object.entries(propertiesOf(op))) {
         const d = descriptionOf(node)
         if (d !== undefined && !help.includes(d)) missing.push(`${op.name}.${field}`)
@@ -287,9 +337,7 @@ describe('drift — every flag description reaches BOTH surfaces', () => {
     // This asserts the rendered help line itself carries text, not just that the
     // manifest does.
     for (const op of manifest.operations) {
-      const help = execFileSync(process.execPath, [BUNDLE, op.name, '--help'], {
-        encoding: 'utf8',
-      })
+      const help = helpFor(op.name)
       const flagsBlock = help.split(/\nFLAGS\n/)[1]?.split(/\nGLOBAL FLAGS\n/)[0] ?? ''
       for (const line of flagsBlock.split('\n').filter((l) => l.trim().startsWith('--'))) {
         const doc = line
@@ -370,10 +418,18 @@ describe('the shipped manifest is internally consistent', () => {
     expect(run('--version').stdout).toContain(manifest.version)
   })
 
-  it('publishes every error code it can actually explain', () => {
-    for (const row of manifest.errorCodes) {
-      const { envelope, code } = runJson('explain', '--code', row.code)
-      expect(code).toBe(0)
+  it('publishes every error code it can actually explain', async () => {
+    // CONCURRENT, because the 21 spawns are independent and each is a full node boot of
+    // a 2.2 MB bundle. Serially this was the slowest test in the suite and the one
+    // setting the timeout budget for every other test in it.
+    const explained = await Promise.all(
+      manifest.errorCodes.map(async (row) => ({
+        row,
+        ...(await runJsonAsync('explain', '--code', row.code)),
+      })),
+    )
+    for (const { row, envelope, code } of explained) {
+      expect(code, row.code).toBe(0)
       expect((envelope.data as { description: string }).description).toBe(row.description)
     }
   })

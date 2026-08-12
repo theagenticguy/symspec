@@ -20,11 +20,19 @@ export default defineConfig({
     // Several drift tests spawn the built bundle as a CHILD PROCESS (that is the
     // point — the drift they guard is between the SHIPPED manifest and the
     // SHIPPED help, not between two in-process function calls). Each spawn is a
-    // full node boot (~110ms quiet, ~330ms on a loaded box), so the bare 5000ms
-    // default has no headroom on a shared machine. 20s matches the donor's
-    // reasoning: a ~5x margin over the slowest real test, still short enough to
-    // catch a genuine hang.
-    testTimeout: 20_000,
-    hookTimeout: 20_000,
+    // full node boot of a 2.2 MB bundle (~110ms quiet, ~330ms on a loaded box), so
+    // the bare 5000ms default has no headroom on a shared machine.
+    //
+    // The budget is sized against a MEASUREMENT, and it is restated when the
+    // measurement moves: slowest test 8.1s on an 8-core devbox, quiet. 45s keeps the
+    // ~5x margin that makes this a hang detector rather than a load detector — a
+    // 2-core CI runner is comfortably slower than quiet-devbox numbers, and a test
+    // that fails only under contention gets muted rather than fixed.
+    //
+    // Any loop over an independent SET of spawns runs concurrently (see
+    // `runJsonAsync` and the cached `commandHelp` map in `cli.test.ts`). That is the
+    // real fix; the timeout is only the backstop.
+    testTimeout: 45_000,
+    hookTimeout: 45_000,
   },
 })
