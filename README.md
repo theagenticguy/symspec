@@ -28,9 +28,43 @@ reads the same result with `--pretty`.
 
 ```bash
 npm install -g symspec          # puts the `symspec` command on your PATH
+symspec download-model          # one time: fetch the embedding model (~110 MB, sha256-pinned)
 symspec install                 # drop the authoring skill into your agent host
 symspec manifest                # every operation, flag, and code as JSON
 ```
+
+`download-model` is not optional. The semantic tier runs on every `check` and a missing model
+**fails the run closed** rather than skipping the tier — see [The embedding
+model](#the-embedding-model) for why, and for the two ways around it.
+
+<details>
+<summary><strong>Build from source instead</strong></summary>
+
+One command, straight from the git URL. `--allow-build` is required and not a nicety: pnpm
+10.26+ refuses to run a git dependency's `prepare` script unless you name it, and `prepare` is
+what compiles `dist/` — without it you get an installed package whose `symspec` points at
+nothing. The allowlist key is `<name>@<git-url>`; a bare `symspec` does not match a git
+dependency.
+
+```bash
+pnpm add -g --allow-build='symspec@git+https://github.com/theagenticguy/symspec.git' \
+  git+https://github.com/theagenticguy/symspec.git
+
+symspec version   # if this is "command not found", run `pnpm setup` — pnpm 11 puts
+                  # global bins in $PNPM_HOME/bin, and `pnpm setup` is what adds it to PATH
+```
+
+Add `#<branch>`, `#<tag>`, or `#<commit>` to the URL to pin a revision.
+
+Prefer a clone you can edit? Nothing is allowlisted on this path, because the build is yours
+rather than a dependency's:
+
+```bash
+git clone https://github.com/theagenticguy/symspec.git
+cd symspec && pnpm install && pnpm build && npm install -g .
+```
+
+</details>
 
 Then author and check a document:
 
@@ -61,6 +95,50 @@ different answer from "the document is bad", and the exit codes keep the two apa
 
 Node 24 or later. The solver is Z3 compiled to WebAssembly and runs in-process — no external
 binary, no JVM, no network.
+
+---
+
+## The embedding model
+
+One command, once per machine:
+
+```bash
+symspec download-model
+```
+
+It fetches three files (~110 MB total), verifies each against a pinned sha256, and prints where
+they landed. It is **idempotent** — a second run downloads nothing and reports
+`"alreadyComplete": true` — so it is safe in a Dockerfile layer, a postinstall script, or an
+agent's setup step.
+
+```console
+$ symspec download-model
+{"apiVersion":1,"type":"modelDownload","data":{
+  "model":"Xenova/bge-base-en-v1.5",
+  "revision":"4d6cd88e18e51a5e020c2c305726d76ada9c03cf",
+  "cacheDir":"/home/you/.cache/symspec/models/Xenova__bge-base-en-v1.5@4d6cd88e…",
+  "assets":[{"name":"model_quantized.onnx","bytes":110083337,"cached":false}, …],
+  "alreadyComplete":false,"totalBytes":110795099}}
+```
+
+**Where it goes.** `$SYMSPEC_MODEL_DIR` if set (used verbatim, nothing appended — so an
+air-gapped host can be provisioned at an exact path), else `$XDG_CACHE_HOME`, else
+`~/.cache`. The directory name carries the model revision, so bumping the pin lands in a fresh
+directory instead of half-overwriting the old assets.
+
+**Why it is required.** The semantic tier is on by default, and without the model `check` exits
+2 with `ERR_EMBED_MODEL_MISSING` rather than running without it. That is deliberate: a detector
+that can be skipped silently is a gate that can be gamed by omission, and "the tier did not run"
+must never look like "the tier found nothing". The two honest alternatives:
+
+| You want | Do this | What you give up |
+|---|---|---|
+| The model, ahead of time | `symspec download-model` | Nothing. |
+| The model, fetched on first use | `SYMSPEC_EMBED_ALLOW_REMOTE=1 symspec check …` | A ~110 MB download inside the latency of a `check`. |
+| To run without it | `symspec check --semantic=false` | `verified` can no longer be true — the skip is **disclosed** as a `semantic-tier-skipped` demotion rather than passing quietly. |
+
+Fully offline after the fetch. Nothing else in `symspec` touches the network — Z3 is bundled
+WebAssembly.
 
 ---
 
