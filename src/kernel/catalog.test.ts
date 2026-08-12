@@ -294,8 +294,12 @@ describe('worked examples are extracted where the corpus carries one', () => {
 
 describe('runnable commands are lifted out of the description text', () => {
   it('finds the discharging command on the propose-only candidates', () => {
+    // POSITIONAL, not `antonym add`. The vendored description spells it with `import`'s
+    // side-table verb, and `commands` is the field `explain` hands an agent to run — so
+    // it is normalized on the way out (`kernel/command-form.ts`). Pinning the `add` form
+    // here would pin a command that prints usage.
     expect(lookupCode('FND_OPPOSITION_CANDIDATE')?.commands).toEqual([
-      'symspec antonym add <verbA> <verbB>',
+      'symspec antonym <verbA> <verbB>',
     ])
     expect(lookupCode('FND_SIMILAR_SEMANTIC')?.commands).toEqual(['symspec glossary'])
   })

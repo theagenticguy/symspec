@@ -185,7 +185,7 @@ describe('the contract sections are projected from their constants', () => {
 })
 
 describe('the scope and craft corpora are projected whole', () => {
-  it('quotes ALL seven scope claims verbatim — unlike the thin skill body', () => {
+  it('quotes ALL eight scope claims verbatim — unlike the thin skill body', () => {
     const rendered = doc()
     const paragraphs = scopeParagraphs()
     expect(paragraphs).toHaveLength(SCOPE_KEYS.length)

@@ -52,6 +52,7 @@
 import { FND_CODES, FndCodeMeta } from '../donor/formal/codes.ts'
 import { GTWR_CODES, GtwrCodeMeta } from '../donor/lint/codes.ts'
 import { REACHABILITY_FND_CODES, ReachabilityFndCodeMeta } from '../formal/reachability-codes.ts'
+import { runnable } from './command-form.ts'
 import { descriptionOf, ERR_CLASSES, tagOf } from './errors.ts'
 
 // ---------------------------------------------------------------------------
@@ -165,12 +166,23 @@ const extractExample = (description: string): string | undefined => {
   return undefined
 }
 
-/** Every runnable `symspec …` invocation in a description, in order, deduplicated. */
+/**
+ * Every runnable `symspec …` invocation in a description, in order, deduplicated.
+ *
+ * Normalized through {@link runnable} because this list is published as `commands` —
+ * the field `symspec explain` hands an agent that does not recognise a code, which is
+ * the one moment it is least able to tell a working invocation from a broken one. The
+ * vendored descriptions spell the three side tables with `import`'s `add`; see
+ * `kernel/command-form.ts`. Deduplication happens AFTER the rewrite, so two spellings
+ * of one command collapse to a single entry.
+ */
 const extractCommands = (description: string): readonly string[] => {
   const found: string[] = []
   for (const match of description.matchAll(SYMSPEC_COMMAND)) {
     const command = match[1]
-    if (command !== undefined && !found.includes(command)) found.push(command)
+    if (command === undefined) continue
+    const normalized = runnable(command)
+    if (!found.includes(normalized)) found.push(normalized)
   }
   return found
 }
@@ -450,7 +462,7 @@ export const nearestCodesAll = (code: string, limit = 3): readonly string[] => {
 }
 
 /** How many codes the catalog holds, per family — for the manifest's own assertion
- * and for the tests that pin the 21/30/24 split. */
+ * and for the tests that pin the per-family split. */
 export const catalogCounts = (): {
   readonly ERR: number
   readonly FND: number

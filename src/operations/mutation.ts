@@ -55,6 +55,7 @@ import { normalize } from '../donor/formal/atomize.ts'
 // ladder is in the main chunk on every run regardless. The lazy form only added an await
 // and made the build report an ineffective dynamic import.
 import { parseLine } from '../donor/parse/result.ts'
+import { catalogCounts } from '../kernel/catalog.ts'
 import { ok } from '../kernel/envelope.ts'
 import {
   ErrDuplicateId,
@@ -760,7 +761,12 @@ export const waiveOp = defineOperation({
     code: requiredString(
       lines(
         'The finding code to waive — any GTWR_*, FND_* or other code `check` emits.',
-        'Run `symspec manifest` for all 75 codes with their meanings.',
+        // INTERPOLATED from the catalog, never written out — the third place this exact
+        // sentence has needed it. `explain` and the installed skill body both read the
+        // count for the same reason: a number that has to be hand-updated on every
+        // append is a number that will be wrong, and this one reaches `waive --help`
+        // and the manifest, where an agent takes it as the tool's own word.
+        `Run \`symspec manifest\` for all ${catalogCounts().total} codes with their meanings.`,
         'Example: GTWR_R6_MISSING_UNITS',
       ),
     ),

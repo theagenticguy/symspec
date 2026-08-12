@@ -251,8 +251,11 @@ describe('explain — AC-A-3: every code through the operation', () => {
       runOperation(explainOp, { code: 'FND_OPPOSITION_CANDIDATE' }),
     )
     expect(env.data.example).toBe('"open the valve" vs "shut the valve"')
-    // And the runnable discharge, lifted out of the same description text.
-    expect(env.data.commands).toEqual(['symspec antonym add <verbA> <verbB>'])
+    // And the runnable discharge, lifted out of the same description text — in the
+    // POSITIONAL form the CLI accepts. `explain` is what an agent calls when it does not
+    // recognise a code, so a `commands` entry that prints usage would fail it at exactly
+    // the moment it has the least other information to go on.
+    expect(env.data.commands).toEqual(['symspec antonym <verbA> <verbB>'])
   })
 
   it('did-you-mean now ranks across every family, not the 21 ERR_* codes', async () => {

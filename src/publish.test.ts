@@ -325,6 +325,102 @@ describe('the README is a PACKAGE readme, greenfield-first and honest', () => {
     expect(prose).toContain('it does not certify specs')
   })
 
+  it('names the agent-CLI contract as ONE section, each move stated once', () => {
+    expect(readme).toContain('## The agent-CLI contract')
+    const moves = [
+      '`manifest` is the surface',
+      'Branch on exit codes, not prose',
+      'Movement, not retries',
+      'The tool owns the load-bearing format',
+    ]
+    for (const move of moves) {
+      expect(prose, move).toContain(move)
+      // COUNTED, not merely present. The four properties were each stated twice, in the
+      // runbook and again in the loop section — and a section that names a reusable unit
+      // while leaving its restatements two screens down is duplication, not a contract.
+      // The count is what keeps the absorption from silently reverting.
+      expect(prose.split(move).length - 1, `"${move}" is stated more than once`).toBe(1)
+    }
+    // The pointer a reader hits before deciding whether to keep reading.
+    expect(readme.slice(0, readme.indexOf('## Quick start'))).toContain('#the-agent-cli-contract')
+  })
+
+  it('names the COVERAGE boundary before the reader installs anything', () => {
+    // The one critique the honest-scope section does not answer: scope is EARS-shaped
+    // requirements, and a reader who points this at a design doc should learn that here
+    // rather than from a parse error. Asserted on the first screen, because a boundary
+    // disclosed on screen four is a boundary the skeptic has already invented for you.
+    const opening = prose.slice(0, prose.indexOf('## Quick start'))
+    expect(opening).toContain('Narrative prose is not in scope')
+    expect(opening).toContain('EARS')
+  })
+
+  it('shows ONE copy-pasteable session with the tool`s own output at every step', () => {
+    // Bytes only a real `parse` produces: the recovered slots, the ladder rung that
+    // recovered them, and the op line `apply` consumes. A section that describes the
+    // envelope without showing it is a claim rather than a demonstration.
+    expect(readme).toContain('"slots"')
+    expect(readme).toContain('"tier":1')
+    expect(readme).toContain('opsJsonl')
+    const session = readme.slice(
+      readme.indexOf('### See it prove a conflict'),
+      readme.indexOf('## The agent-CLI contract'),
+    )
+    for (const step of ['symspec init', 'symspec parse', 'symspec apply', 'symspec check']) {
+      expect(session, step).toContain(step)
+    }
+    // The measured atom table, which is what makes the proof auditable rather than
+    // asserted: one response atom, present at both polarities.
+    expect(session).toContain('FND_CONTRADICTION')
+    expect(session).toContain('sys__auth_service__resp__allow_access')
+    expect(session.indexOf('symspec parse')).toBeLessThan(session.indexOf('FND_CONTRADICTION'))
+  })
+
+  it('carries an SMT-tier case study that ABSTAINS before it proves', () => {
+    expect(readme).toContain('## Two requirements that quietly disagree')
+    const study = readme.slice(
+      readme.indexOf('## Two requirements that quietly disagree'),
+      readme.indexOf('## The state model'),
+    )
+    // Asserted as an ORDERING, not as two `toContain`s. A case study that proved the
+    // conflict first and mentioned the candidate afterwards would demonstrate the exact
+    // opposite of the propose-then-decide claim it exists to make.
+    expect(study).toContain('FND_QUANTITY_ALIAS_CANDIDATE')
+    expect(study).toContain('FND_NUMERIC_CONTRADICTION')
+    expect(study.indexOf('FND_QUANTITY_ALIAS_CANDIDATE')).toBeLessThan(
+      study.indexOf('FND_NUMERIC_CONTRADICTION'),
+    )
+    // Abstention SHOWN rather than asserted: `verified` is false while nothing is proven.
+    expect(study).toContain('"verified":false')
+    // And the decide step in the form the CLI accepts — two positionals. The vendored
+    // finding message spells it `glossary add`, which parses `add` as the canonical.
+    expect(study).toMatch(/symspec glossary \\?"[^"\\]+\\?" \\?"[^"\\]+\\?"/)
+  })
+
+  it('names the gates that make the no-drift claim checkable', () => {
+    expect(readme).toContain('### Check these claims yourself')
+    for (const gate of [
+      'pnpm check',
+      'check:agents',
+      'src/publish.test.ts',
+      'src/cli.test.ts',
+      'src/kernel/agents-doc.test.ts',
+      'src/formal/repair.test.ts',
+    ]) {
+      expect(readme, gate).toContain(gate)
+    }
+    // The cited gates EXIST. Checked in the OTHER files, because a literal named here is
+    // present by virtue of being written here — `toContain` on this file would pass for a
+    // describe block that had already been renamed away.
+    expect(read('src/kernel/agents-doc.test.ts')).toContain(
+      "describe('the committed AGENTS.md matches the generator'",
+    )
+    expect(read('src/cli.test.ts')).toContain('drift — manifest summaries vs root --help')
+    // And the script the README sends a skeptic to is real, and is IN the gate.
+    expect(manifest.scripts['check:agents']).toContain('gen-agents.ts')
+    expect(manifest.scripts.check).toContain('check:agents')
+  })
+
   it('states the version posture and what is stable', () => {
     expect(readme).toContain('## Status')
     expect(readme).toContain(VERSION)
@@ -451,6 +547,23 @@ describe('the README agrees with the tool about its own surface', () => {
       .map((op) => op.name)
       .filter((name) => !rows.includes(`\`${name}\``))
     expect(missing).toEqual([])
+  })
+
+  it('names no SUBCOMMAND form the tool does not accept', () => {
+    // The surface is FLAT: every operation is `symspec <op>` with flags and positionals,
+    // and none has a nested verb. `glossary add "a" "b"` is `import`'s v2 op-stream
+    // side-table grammar, not a shell command — run it and `add` binds to the `canonical`
+    // positional, the extra argument fails, and the CLI prints usage.
+    //
+    // The test below cannot see this: its regex captures only the FIRST word after
+    // `symspec`, so `glossary add` passes as `glossary`. Which is exactly how this README
+    // came to instruct a reader to run a command that does nothing.
+    const nested = [...readme.matchAll(/`(?:symspec )?([a-z][a-z-]*) (add|remove|list|set)\b/g)]
+      .filter(
+        (m) => m[1] !== undefined && new Set(manifestNow.operations.map((o) => o.name)).has(m[1]),
+      )
+      .map((m) => `${m[1]} ${m[2]}`)
+    expect([...new Set(nested)]).toEqual([])
   })
 
   it('names no command the tool does not have', () => {

@@ -70,6 +70,7 @@
 import type { DocumentOp } from '../core/ops.ts'
 import type { CheckFinding, CoverageDemotion } from '../donor/pipeline/check.ts'
 import type { Exclusion } from '../donor/pipeline/gate.ts'
+import { runnable } from '../kernel/command-form.ts'
 import type { Repair } from '../kernel/envelope.ts'
 
 /** The reason strings a {@link CoverageDemotion} may carry. */
@@ -80,8 +81,8 @@ export type DemotionReason = CoverageDemotion['reason']
  *
  * `exclusionsById` is the join that resolves `<blocking-code>`: the AC-3-7 gate
  * recorded the blocking findings as evidence, and this is how they reach the
- * repair. `findingsById` resolves the verb/quantity pairs an
- * `antonym add`/`glossary add` command needs.
+ * repair. `findingsById` resolves the verb/quantity pairs an `antonym`/`glossary`
+ * command needs.
  */
 export interface RepairContext {
   /** Gate exclusions, indexed by requirement id — the `<blocking-code>` source. */
@@ -292,9 +293,9 @@ export const repairForDemotion = (demotion: CoverageDemotion, context: RepairCon
  * ## The ONE reason this reason's `ops` are only the WAIVER
  *
  * An opposition candidate's message deliberately offers TWO mutually-exclusive
- * remedies — `antonym add` if the verbs are opposites, `glossary add` if they are
- * synonyms — with an explicit warning that committing the wrong one MANUFACTURES a
- * false contradiction. Embeddings cannot tell which, because antonyms embed CLOSE.
+ * remedies — an `antonym` link if the verbs are opposites, a `glossary` link if they
+ * are synonyms — with an explicit warning that committing the wrong one MANUFACTURES
+ * a false contradiction. Embeddings cannot tell which, because antonyms embed CLOSE.
  *
  * So emitting both as ops would hand an agent a plan that is wrong half the time and
  * catastrophic in one direction, and emitting one would be the tool picking — which is
@@ -345,20 +346,35 @@ const fromFindingMessage = (
 
 /**
  * Pull every backticked `symspec …` invocation out of a finding message, in order,
- * deduplicated.
+ * deduplicated, in the form the CLI accepts.
  *
  * Deliberately narrow: it matches only a backtick-delimited run that STARTS with
  * `symspec `, so surrounding prose, quoted code strings, and inline `code` spans
  * that are not commands are all ignored. A message that mentions two alternatives
- * (`antonym add` if opposites, `glossary add` if synonyms) yields both, in the
- * order the message presents them — which is the order the finding's own reasoning
- * recommends trying them.
+ * (an antonym link if the verbs are opposites, a glossary link if they are synonyms)
+ * yields both, in the order the message presents them — which is the order the
+ * finding's own reasoning recommends trying them.
+ *
+ * ## Why the rewrite lives HERE
+ *
+ * An agent runs these verbatim — that is the contract this module exists to honour,
+ * and the reason the header calls them RUNNABLE. A command that prints usage is
+ * worse than no command: the agent reads exit 0, concludes the repair applied, and
+ * re-checks to find nothing moved, which is indistinguishable from a repair that was
+ * a legitimate no-op. So validity is enforced at the one seam every extracted command
+ * passes through, rather than trusted at each of the eight messages that build one.
+ *
+ * The messages themselves are the frozen vendored tier and cannot be edited, so
+ * normalizing on read is also the only place the fix can go. Deduplication happens
+ * AFTER the rewrite, so two spellings of one command collapse to one entry.
  */
 const extractSymspecCommands = (message: string): readonly string[] => {
   const found: string[] = []
   for (const match of message.matchAll(/`(symspec [^`]+)`/g)) {
     const command = match[1]
-    if (command !== undefined && !found.includes(command)) found.push(command)
+    if (command === undefined) continue
+    const normalized = runnable(command)
+    if (!found.includes(normalized)) found.push(normalized)
   }
   return found
 }

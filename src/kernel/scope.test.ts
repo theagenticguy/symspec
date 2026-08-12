@@ -1,13 +1,13 @@
 /**
  * The honest-scope corpus, pinned claim by claim against a frozen snapshot.
  *
- * These seven sentences are the load-bearing honesty of the tool: "silence is not a
+ * These eight sentences are the load-bearing honesty of the tool: "silence is not a
  * consistency certificate" is what stops a clean `check` from being read as a proof.
  *
  * The direction of the risk is what shapes this file. The dangerous edit to a disclosure
  * is not a typo, it is a paraphrase that drifts toward reassurance — and a softened claim
  * still reads fine, so review alone does not catch it. Byte-equality does, which is why
- * {@link FROZEN} spells all seven out in full rather than sampling them: changing a
+ * {@link FROZEN} spells all eight out in full rather than sampling them: changing a
  * disclosure has to be a deliberate two-place edit that shows up as a diff on this file.
  *
  * The phrase-level assertions below are kept SEPARATE from the byte-diff, because they
@@ -18,7 +18,7 @@
 import { describe, expect, it } from 'vitest'
 import { SCOPE, SCOPE_ESSENTIAL, SCOPE_KEYS, scopeParagraphs } from './scope.ts'
 
-/** The seven claims, verbatim. A diff here is the review signal. */
+/** The eight claims, verbatim. A diff here is the review signal. */
 const FROZEN: Record<(typeof SCOPE_KEYS)[number], string> = {
   soundness:
     'The formal (SMT) tier is sound modulo atomization, given the conservative near-exact normalization of the atom table: every reported conflict is a genuine logical conflict of the requirements as atomized, and the atom table attached to each finding shows exactly what the solver compared.',

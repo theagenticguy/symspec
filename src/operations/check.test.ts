@@ -1081,3 +1081,87 @@ describe('--reachability-timeout-ms bounds the reachability tier alone (G5)', ()
     expect(failure.repair?.commands[0]).toMatch(/--reachability-timeout-ms/)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Every command the ENVELOPE prints is one the CLI accepts
+// ---------------------------------------------------------------------------
+
+/**
+ * The whole-envelope sweep, over a real run.
+ *
+ * `formal/repair.test.ts` proves the normalizer works and that no source file spells a
+ * command the CLI rejects. What it cannot prove is that `check` actually CALLS it on
+ * every field it publishes — the wiring, not the function. So this asserts the property
+ * an agent depends on, stated over the serialized payload: nothing anywhere in it names
+ * a nested subcommand.
+ *
+ * The document is the quantity-alias shape because its finding message is the one that
+ * carries a discharge command in FOUR places at once — the message, the demotion's
+ * action, the coverage row's suggestion, and `repair.commands` — so a field left
+ * unnormalized shows up here rather than in whichever surface someone reads next.
+ */
+describe('no command in a check envelope spells a nested subcommand', () => {
+  const aliasDoc = (): RequirementsDocument =>
+    docOf(
+      req({
+        id: 'aaaaaaaa-1111-4111-8111-111111111111',
+        patternType: 'event-driven',
+        trigger: 'the clinician starts an infusion',
+        systemName: 'infusion pump',
+        systemResponse: 'complete the infusion within 30 minutes',
+        sentence:
+          'When the clinician starts an infusion, the infusion pump shall complete the infusion within 30 minutes.',
+      }),
+      req({
+        id: 'bbbbbbbb-2222-4222-8222-222222222222',
+        patternType: 'event-driven',
+        trigger: 'the clinician starts an infusion',
+        systemName: 'infusion pump',
+        systemResponse: 'run the infusion for at least 60 minutes',
+        sentence:
+          'When the clinician starts an infusion, the infusion pump shall run the infusion for at least 60 minutes.',
+      }),
+    )
+
+  it('raises the alias candidate, so the sweep is over a real payload', async () => {
+    const result = await runCheckOp(aliasDoc(), { strict: true })
+    expect(result._tag).toBe('Success')
+    if (result._tag !== 'Success') return
+    // Guards the fixture: if the detector stops firing, the sweep below would pass
+    // vacuously and this whole describe would silently stop testing anything.
+    expect(result.success.data.findings.map((f) => f.code)).toContain(
+      'FND_QUANTITY_ALIAS_CANDIDATE',
+    )
+  })
+
+  it('names no `<operation> add` anywhere in the serialized payload', async () => {
+    const result = await runCheckOp(aliasDoc(), { strict: true })
+    expect(result._tag).toBe('Success')
+    if (result._tag !== 'Success') return
+    const wire = JSON.stringify(result.success.data)
+    for (const operation of ['glossary', 'antonym', 'waive']) {
+      expect(wire, `${operation} still carries import's side-table verb`).not.toContain(
+        `symspec ${operation} add`,
+      )
+    }
+  })
+
+  it('publishes the discharge in the form that RUNS', async () => {
+    const result = await runCheckOp(aliasDoc(), { strict: true })
+    expect(result._tag).toBe('Success')
+    if (result._tag !== 'Success') return
+    const alias = result.success.data.coverage.demotions.find(
+      (d) => d.reason === 'quantity-alias-candidate',
+    )
+    expect(alias?.repair?.commands[0]).toBe(
+      'symspec glossary "complete the infusion" "run the infusion"',
+    )
+    // And the prose a human copies out of `--pretty` agrees with it.
+    const finding = result.success.data.findings.find(
+      (f) => f.code === 'FND_QUANTITY_ALIAS_CANDIDATE',
+    )
+    expect(finding?.message).toContain(
+      '`symspec glossary "complete the infusion" "run the infusion"`',
+    )
+  })
+})

@@ -81,6 +81,7 @@ import { type ReachabilityReport, runReachability } from '../formal/reachability
 import { projectReachability } from '../formal/reachability-report.ts'
 import { repairForDemotion } from '../formal/repair.ts'
 import { SolverService } from '../formal/solver-service.ts'
+import { runnableInProse } from '../kernel/command-form.ts'
 import { ok, type Repair } from '../kernel/envelope.ts'
 import { ErrSolverInconclusive, ErrUsage } from '../kernel/errors.ts'
 import { defineOperation } from '../kernel/operation.ts'
@@ -874,7 +875,16 @@ export const checkOp = defineOperation({
         ...(d.repair !== undefined ? { repair: d.repair } : {}),
       }))
 
-      const allFindings = [...shaped.findings, ...reachabilityFindings]
+      // Every piece of ADVICE prose leaves through here in the form the CLI accepts.
+      // The vendored tier spells the three side tables with `import`'s `add` verb (see
+      // `kernel/command-form.ts`), and a human reading `--pretty` copies the command out
+      // of the message, not out of `repair.commands`. Normalizing one and not the other
+      // would print two spellings of one command in adjacent fields of one envelope.
+      const allFindings = [...shaped.findings, ...reachabilityFindings].map((f) => ({
+        ...f,
+        message: runnableInProse(f.message),
+        ...(f.suggestion !== undefined ? { suggestion: runnableInProse(f.suggestion) } : {}),
+      }))
       const allDemotions = [
         ...withRepairs(
           full.coverage.demotions,
@@ -904,7 +914,13 @@ export const checkOp = defineOperation({
         counts,
         coverage: {
           ...shaped.coverage,
-          demotions: allDemotions,
+          requirements: shaped.coverage.requirements.map((row) => ({
+            ...row,
+            ...(row.suggestion !== undefined
+              ? { suggestion: runnableInProse(row.suggestion) }
+              : {}),
+          })),
+          demotions: allDemotions.map((d) => ({ ...d, action: runnableInProse(d.action) })),
         },
         // `verified` is recomputed from the MERGED demotion set, preserving the donor's
         // single-writer rule (`verified = demotions.length === 0`). A reachability

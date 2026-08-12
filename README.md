@@ -23,6 +23,15 @@ loud rather than let a green checkmark imply more than it earned.
 
 **Everything answers with JSON and a stable exit code**, so an agent can run it in a loop and
 know what to do next without parsing prose. Add `--pretty` to read the same result yourself.
+Four properties make that loop safe to automate, and none of them is specific to requirements
+or to Z3 — see [The agent-CLI contract](#the-agent-cli-contract).
+
+**What it reads.** Requirements in [EARS](#what-is-in-the-box) form — *"When \<trigger>, the
+\<system> shall \<response>"* and its four siblings. A sentence that misses the shape gets one
+repair attempt from a linguistic pass, and is otherwise reported as a parse failure with the
+slots it could recover. **Narrative prose is not in scope**: point this at a design doc and it
+will tell you it could not parse it, which is the honest answer rather than a guess. It is a
+strong verifier over a disciplined spec, not a reader of arbitrary documents.
 
 New here? Skip to [If you are an agent, do this](#if-you-are-an-agent-do-this) if you are
 wiring this into a coding agent, or run the quick start below to see a conflict get proven in
@@ -46,24 +55,21 @@ model](#the-embedding-model) for why, and for the two ways around it.
 <details>
 <summary><strong>Build from source instead</strong></summary>
 
-One command, straight from the git URL. `--allow-build` is required and not a nicety: pnpm
-10.26+ refuses to run a git dependency's `prepare` script unless you name it, and `prepare` is
-what compiles `dist/` — without it you get an installed package whose `symspec` points at
-nothing. The allowlist key is `<name>@<git-url>`; a bare `symspec` does not match a git
-dependency.
+`--allow-build` is required and not a nicety: pnpm 10.26+ refuses to run a git dependency's
+`prepare` script unless you name it, and `prepare` is what compiles `dist/` — without it the
+installed `symspec` points at nothing. The allowlist key is `<name>@<git-url>`; a bare
+`symspec` does not match a git dependency. Add `#<branch>`, `#<tag>`, or `#<commit>` to pin a
+revision.
 
 ```bash
 pnpm add -g --allow-build='symspec@git+https://github.com/theagenticguy/symspec.git' \
   git+https://github.com/theagenticguy/symspec.git
 
-symspec version   # if this is "command not found", run `pnpm setup` — pnpm 11 puts
-                  # global bins in $PNPM_HOME/bin, and `pnpm setup` is what adds it to PATH
+symspec version   # "command not found"? run `pnpm setup` — pnpm 11 puts global bins in
+                  # $PNPM_HOME/bin, and `pnpm setup` is what adds it to PATH
 ```
 
-Add `#<branch>`, `#<tag>`, or `#<commit>` to the URL to pin a revision.
-
-Prefer a clone you can edit? Nothing is allowlisted on this path, because the build is yours
-rather than a dependency's:
+A clone you can edit needs no allowlist, because the build is yours rather than a dependency's:
 
 ```bash
 git clone https://github.com/theagenticguy/symspec.git
@@ -74,87 +80,144 @@ cd symspec && pnpm install && pnpm build && npm install -g .
 
 ### See it prove a conflict
 
-Two requirements that disagree. Every command below runs as written:
+One session, start to finish. Every command runs as written, and every block is that command's
+real output on this build — exit codes included, because that is what an agent branches on.
 
-```bash
-symspec init ./requirements.json
+**1. A document, and a sentence.** `parse` turns English into slots, and hands back both the
+structured requirement and the op that writes it:
 
-# One requirement: on valid credentials, grant access.
-symspec add --pattern-type event-driven \
-  --trigger "the user submits valid credentials" \
-  --system-name "auth service" --system-response "grant access"
+```console
+$ symspec init ./requirements.json
+{"apiVersion":1,"type":"init","data":{"path":"./requirements.json","docVersion":3,
+ "created":true,"overwritten":false,"requirements":0}}                          # exit 0
 
-# The same trigger, the opposite obligation. `--negated` is how you say "shall NOT",
-# instead of writing "not" into the response text.
-symspec add --pattern-type event-driven \
-  --trigger "the user submits valid credentials" \
-  --system-name "auth service" --system-response "grant access" --negated
+$ symspec parse "When the user submits valid credentials, the auth service shall grant access." \
+    --field data.results.0.slots,data.results.0.tier,data.opsJsonl
+{"data":{"results":{"0":{
+  "slots":{"patternType":"event-driven","systemName":"auth service",
+           "systemResponse":"grant access","trigger":"the user submits valid credentials"},
+  "tier":1}},
+ "opsJsonl":"{\"op\":\"add\",\"patternType\":\"event-driven\",\"systemName\":\"auth service\",\"systemResponse\":\"grant access\",\"trigger\":\"the user submits valid credentials\"}\n"}}
+```
 
-symspec check --pretty
+`tier: 1` means the regex pass matched outright; a sentence needing the linguistic repair
+reports `tier: 2`, and one beyond recovery is a parse error carrying the slots it did find.
+
+**2. Apply the op you were handed, not one you wrote.** `data.opsJsonl` goes to `apply`
+verbatim — that is the whole point of it existing:
+
+```console
+$ symspec apply <<'OP'
+{"op":"add","patternType":"event-driven","systemName":"auth service","systemResponse":"grant access","trigger":"the user submits valid credentials"}
+OP
+{"apiVersion":1,"type":"apply","data":{"path":"./requirements.json","written":true,
+ "requirements":1,"results":[{"index":0,"op":"add","ok":true,"id":"99c274ba…"}],
+ "summary":{"total":1,"ok":1,"failed":0,"noop":0},"write":true,"problems":[]}}   # exit 0
+```
+
+**3. Check it — and read what "clean" actually means.**
+
+```console
+$ symspec check --field data.verified,data.progress.atomsUncompared,data.coverage.pairsCheckedNote
+{"data":{"verified":true,"progress":{"atomsUncompared":2},
+ "coverage":{"pairsCheckedNote":"Fewer than two requirements: nothing to cross-compare."}}}
+                                                                                # exit 0
+```
+
+Clean — and in the same breath it says why that is worth nothing: one requirement cannot
+contradict anything, so two atoms went uncompared and no pair was checked. `verified` is a
+claim about **how much got compared**, never about whether the spec is right.
+
+**4. Now the requirement that disagrees.** `--negated` is how you say *shall NOT*; writing
+"not" into the response text is the mistake that makes a contradiction invisible, because the
+negation lands inside the atom rather than on it:
+
+```console
+$ symspec add --pattern-type event-driven \
+    --trigger "the user submits valid credentials" \
+    --system-name "auth service" --system-response "grant access" --negated
+$ symspec check --pretty
 ```
 
 ```
 code: FND_CONTRADICTION
 severity: error
-message: Requirements 7d095571…, e4601bb3… cannot all hold: their responses resolve to
+tier: formal
+message: Requirements 778c1db4…, 99c274ba… cannot all hold: their responses resolve to
          the same atom with opposite polarity under a reachable context.
+evidence:
+  atomTable:
+    - atom: sys__auth_service__trig__user_submits_valid_credentials   negated: false
+    - atom: sys__auth_service__resp__allow_access                     negated: true
+    - atom: sys__auth_service__resp__allow_access                     negated: false
+  core: [778c1db4…, 99c274ba…]
 ```
 
-Exit code **1**. It named both culprits, and the `evidence` block shows exactly which pieces
-of text it compared to get there — so you can check its work rather than take its word.
-
-Nothing here is a language model guessing. Rewrite the second requirement as *deny access*
-and the contradiction stays proven; change the trigger and it disappears, because the two
-requirements do not apply at the same time.
-
-Prose in, requirements out — if you'd rather not fill in slots by hand:
-
-```bash
-symspec parse "When the user submits valid credentials, the auth service shall grant access."
-```
-
-That returns the structured requirement **and** the ready-to-apply op, so nothing gets
-retyped between reading and writing.
-
-### Exit codes are the contract
-
-A clean run exits 0. A proven conflict exits 1 with the culprits named. An opt-in strict
-coverage gate (`--strict`) exits 3 when the tool could not verify the document — which is a
-different answer from "the document is bad", and the exit codes keep the two apart.
-
-| Exit | Meaning |
-|---|---|
-| **0** | Clean — no error-severity finding. |
-| **1** | At least one error-severity finding. A valid success envelope is still on stdout. |
-| **2** | An `ERR_*` operational failure. The error envelope is on stdout. |
-| **3** | An opt-in strict gate tripped on a run with no error-severity finding. |
+Exit code **1**. It named both culprits, and the `atomTable` shows exactly what it compared —
+one response atom, asserted at both polarities — so you can audit the logic against the
+English instead of taking its word. Nothing here is a language model guessing: rewrite the
+second requirement as *deny access* and the contradiction stays proven; change its trigger and
+it disappears, because the two no longer apply at the same time.
 
 Node 24 or later. The solver is Z3 compiled to WebAssembly and runs in-process — no external
 binary, no JVM, no network.
 
 ---
 
+## The agent-CLI contract
+
+An agent driving a tool has one failure mode worse than getting a wrong answer: believing it
+made progress when it did not. Four properties close that gap. None is specific to
+requirements or to Z3 — strip both out and the contract still stands, which is why it is
+stated here as its own thing rather than left implicit in the runbook below.
+
+**1. `manifest` is the surface.** One call returns every operation, flag, and code as JSON. It
+is generated from the same table the CLI is built from, so it cannot disagree with the binary
+you are running — and `--help`, `manifest`, and the generated `AGENTS.md` are three renderings
+of that one table rather than three documents to keep in sync. Do not memorise flags from
+prose, including this file's. That claim is enforced, not asserted: see
+[Check these claims yourself](#check-these-claims-yourself).
+
+**2. Branch on exit codes, not prose.** Four typed outcomes, and the two that mean "something
+is wrong with your document" are kept apart from the one that means "I could not tell".
+
+| Exit | Meaning | What to do |
+|---|---|---|
+| **0** | Clean — no error-severity finding. | Done. |
+| **1** | At least one error-severity finding. A valid success envelope is still on stdout. | Fix the named requirements. |
+| **2** | An `ERR_*` operational failure. The error envelope is on stdout. | Read `code`, run `repair.commands`. |
+| **3** | An opt-in `--strict` gate tripped on a run with no error-severity finding. | Work the demotion list. |
+
+**3. Movement, not retries.** `data.progress` is `{demotions, openFindings, atomsUncompared}`
+— three numbers that each fall for a different reason, and all three at zero is the fixed
+point. The stop condition is explicit: **if none of them moved after you applied a repair,
+that repair did nothing.** Change approach rather than running it again. An agent without a
+movement signal retries the same no-op until it runs out of budget and calls that a failure of
+the document.
+
+**4. The tool owns the load-bearing format.** Never hand-write a requirement's JSON. Take the
+`proposedOp` from `parse` — or the whole `data.opsJsonl` line — and apply it, which is what
+keeps the polarity flag and the slot boundaries intact; step 2 of the session above is that
+move. The same rule covers advice: every command in `repair.commands` and in `symspec explain`
+is a real invocation you can run verbatim, so an agent never has to reconstruct one from a
+sentence.
+
+---
+
 ## If you are an agent, do this
 
-You are reading this because a human pointed you at symspec. Follow these steps literally.
+You are reading this because a human pointed you at symspec. The
+[contract](#the-agent-cli-contract) above is why these steps work; this is the procedure.
 
 **1. Set up once.** Both are idempotent — run them without checking first.
 
 ```bash
 symspec download-model     # required; `check` fails closed without it
 symspec install            # writes the full authoring guide into this host's skill directory
-```
-
-**2. Learn the surface from the tool, not from this file.**
-
-```bash
 symspec manifest           # every operation, every flag, every code, as JSON
 ```
 
-Do not memorise flags from prose. `manifest` is generated from the same table the CLI is
-built from, so it cannot disagree with the binary you are running.
-
-**3. Author into a document.** Prefer `parse` when you have a sentence, `add` when you have
+**2. Author into a document.** Prefer `parse` when you have a sentence, `add` when you have
 the pieces, and `apply` when you have more than one change:
 
 ```bash
@@ -163,34 +226,16 @@ symspec parse "<one requirement sentence>"     # returns the structured req AND 
 symspec apply --ops plan.jsonl                 # batch: one op per line, atomic
 ```
 
-Never hand-write a requirement's JSON. Take the `proposedOp` from `parse` and apply it — that
-is what keeps the polarity flag and the slot boundaries intact.
-
-**4. Check, and branch on the exit code — not on the text.**
+**3. Check, and converge.** Read the work list, apply the fixes it hands you, and re-check:
 
 ```bash
-symspec check --strict
-```
-
-| Exit | What it means | What to do |
-|---|---|---|
-| 0 | Nothing was proven wrong, and coverage was complete | Done |
-| 1 | An error-severity finding. A valid envelope is still on stdout | Fix the named requirements |
-| 2 | An `ERR_*` operational failure (bad flag, missing file, missing model) | Read `code`, run `repair.commands` |
-| 3 | `--strict` only: nothing was proven wrong, but coverage was incomplete | Work the demotion list |
-
-**5. Converge.** Read the work list, apply the fixes it hands you, and re-check:
-
-```bash
+symspec check --strict                           # exit 3 means "I could not verify this"
 symspec check --field data.coverage.demotions    # the work list
 symspec apply --ops repairs.jsonl                # from repair.ops
 symspec check --strict --field data.progress     # watch all three numbers fall
 ```
 
-`data.progress` is `{demotions, openFindings, atomsUncompared}`. **If none of the three moved
-after you applied a repair, that repair did nothing — change approach instead of retrying it.**
-
-**6. When you don't recognise a code**, ask. One code, no manifest fetch:
+**4. When you don't recognise a code**, ask. One code, no manifest fetch:
 
 ```bash
 symspec explain --code FND_CONTRADICTION
@@ -199,12 +244,12 @@ symspec explain --code FND_CONTRADICTION
 **Rules that will save you tokens and mistakes:**
 
 - JSON is the default. You never need a flag to get parseable output.
-- `--dense` minifies and drops the heavy `evidence` payload; `--field a.b,c.d` projects to
-  dotted paths. Neither ever changes the exit code.
 - The single highest-leverage habit is **vocabulary alignment**: the same words for the same
   things. Two requirements that mean the same thing in different words are invisible to the
   prover, so aligning them is what turns a conflict you suspect into a conflict that is
-  *proven*. Commit merges with `glossary add` and opposites with `antonym add`.
+  *proven*. Commit merges with `symspec glossary` and opposites with `symspec antonym` — both
+  take two positionals, and `check` hands you the exact invocation. Worked end to end in
+  [Two requirements that quietly disagree](#two-requirements-that-quietly-disagree).
 - A clean `check` means "no conflict was proven". It does not mean the spec is consistent. If
   you report to a human, report it that way.
 
@@ -212,16 +257,10 @@ symspec explain --code FND_CONTRADICTION
 
 ## The embedding model
 
-One command, once per machine:
-
-```bash
-symspec download-model
-```
-
-It fetches three files (~110 MB total), verifies each against a pinned sha256, and prints where
-they landed. It is **idempotent** — a second run downloads nothing and reports
-`"alreadyComplete": true` — so it is safe in a Dockerfile layer, a postinstall script, or an
-agent's setup step.
+One command, once per machine. It fetches three files (~110 MB total), verifies each against a
+pinned sha256, and prints where they landed. It is **idempotent** — a second run downloads
+nothing and reports `"alreadyComplete": true` — so it is safe in a Dockerfile layer, a
+postinstall script, or an agent's setup step.
 
 ```console
 $ symspec download-model
@@ -256,8 +295,8 @@ WebAssembly.
 
 ## The agent loop
 
-symspec is designed so an agent can converge without a human in the middle. Three fields do
-that work, and they are on every relevant response rather than behind a flag.
+Three fields do the converging, and they are on every relevant response rather than behind a
+flag.
 
 **`repair: {ops, commands}`** — every coverage demotion and most error envelopes carry one.
 `ops` are records `symspec apply` decodes **by construction**; `commands` run verbatim.
@@ -265,8 +304,7 @@ There are no placeholders: a repair that would have required inventing requireme
 is **omitted** rather than emitted with a `<fill-this-in>`, and the absence means "no
 mechanical fix exists, read `action`".
 
-**`data.progress`** — the convergence gradient, three numbers that each fall for a different
-reason:
+**`data.progress`** — the convergence gradient:
 
 ```json
 { "demotions": 3, "openFindings": 1, "atomsUncompared": 2 }
@@ -274,31 +312,92 @@ reason:
 
 All three at zero is exactly the fixed point: no demotions means `verified` is true, no error
 findings means exit 0, no uncompared atoms means the formal tier saw the whole document. **If
-none of the three moved after a repair batch, the batch did nothing** — which is the signal
-to try a different repair rather than the same one again.
+none of the three moved after a repair batch, the batch did nothing.**
 
 **`data.budgetHint`** — appears only when a run has something *measured* to say about its own
 `--solver-budget-ms`, extrapolated from the work this run completed and the time it took on
 this machine. Absent on an unbounded run and on a run with comfortable headroom, and **the
 absence is the all-clear**.
 
-The loop, end to end:
-
-```bash
-symspec check --strict                              # exit 3 means "I could not verify this"
-symspec check --field data.coverage.demotions       # read the work list
-# ... extract repair.ops, or run repair.commands verbatim ...
-symspec apply --ops repairs.jsonl
-symspec check --strict                              # re-check; watch data.progress fall
-```
-
 `symspec explain --code FND_CONTRADICTION` answers for one code without fetching the
-manifest — family, severity, tier, meaning, remedy, and a worked example where the catalog
-carries one. Every code an envelope can contain is stable and branchable.
+manifest — family, severity, tier, meaning, remedy, the runnable discharge command, and a
+worked example where the catalog carries one. Every code an envelope can contain is stable and
+branchable.
 
 For token economy, `--dense` minifies and elides the heavy `evidence` payload (`--evidence`
 keeps it), and `--field data.verified,data.counts.error` projects the envelope down to dotted
 paths. Neither ever changes the exit code.
+
+---
+
+## Two requirements that quietly disagree
+
+The contradiction in the quick start was easy: the same words at opposite polarity. The
+expensive bug is the one where the words differ. Two requirements about one infusion, both
+plausible, both reviewed and approved:
+
+> **R1** — When the clinician starts an infusion, the infusion pump shall complete the
+> infusion within 30 minutes.
+>
+> **R2** — When the clinician starts an infusion, the infusion pump shall run the infusion for
+> at least 60 minutes.
+
+A human sees it: 30 minutes cannot also be 60. A literal checker does not, because *complete
+the infusion* and *run the infusion* are two different quantities. The words do not match, so a
+naive tool compares nothing and reports all-clear. Every number below is measured on this
+build.
+
+```console
+$ symspec check --strict --field data.verified,data.progress
+{"data":{"verified":false,"progress":{"demotions":2,"openFindings":0,"atomsUncompared":2}}}
+                                                                                # exit 3
+```
+
+**Exit 3, not 0.** No error finding — `openFindings` is zero, nothing was proven wrong — and it
+still refuses to say the document is verified. The reason is in the work list, with the
+command that fixes it:
+
+```console
+$ symspec check --strict --field data.coverage.demotions.0.repair
+{"data":{"coverage":{"demotions":{"0":{"repair":{
+  "ops":[{"op":"waive","code":"FND_QUANTITY_ALIAS_CANDIDATE",
+          "reason":"triaged: <why this candidate is not a conflict>"}],
+  "commands":["symspec glossary \"complete the infusion\" \"run the infusion\"",
+              "symspec check","symspec check ./requirements.json"]}}}}}}
+```
+
+`FND_QUANTITY_ALIAS_CANDIDATE`, info severity, propose-only: two opposed bounds under one
+system and trigger landed on **different quantity keys** that share the noun *infusion*, so
+they were never compared. The tool does not decide they are one quantity — that is a judgment
+about your domain. It reports that it did not check, and hands you the command that would let
+it. That is the propose/decide split. Commit the decision:
+
+```console
+$ symspec glossary "complete the infusion" "run the infusion"
+{"apiVersion":1,"type":"glossary","data":{"path":"./requirements.json","written":true,
+ "requirements":2,"summary":{"total":1,"ok":1,"failed":0,"noop":0},"write":true}}  # exit 0
+
+$ symspec check --field data.verified,data.progress,data.counts
+{"data":{"verified":false,"progress":{"demotions":1,"openFindings":1,"atomsUncompared":2},
+ "counts":{"error":1,"warn":4,"info":2}}}                                         # exit 1
+```
+
+```
+code: FND_NUMERIC_CONTRADICTION
+severity: error
+message: Requirements 1329e420…, aff4d931… place jointly unsatisfiable numeric constraints
+         on "complete the infusion".
+```
+
+**Exit 1.** Now it is a proven conflict over linear arithmetic — ≤30min ∧ ≥60min is
+unsatisfiable — with both requirements named. The document did not change; one committed
+vocabulary decision did, and `openFindings` moved 0 → 1 to show it.
+
+Read the two runs together, because the pair is the point. Before the commit, the tool knew it
+had not compared something and said so. After it, the same solver proved the conflict. A
+cosine never certified anything; a table you committed did. And that is why `verified` stayed
+false in both runs — one demotion remains, disclosing that the aggregate reasoning this
+document's shape could hide was never attempted.
 
 ---
 
@@ -482,6 +581,24 @@ code is never removed, because the codes are the API an agent branches on.
 **Determinism:** given a document, its committed tables, and the pinned embedding model,
 `check` is byte-reproducible. Every semantic suggestion becomes durable only when you commit
 it as an op, so the deterministic solver always reads a committed table rather than a cosine.
+
+### Check these claims yourself
+
+"The docs cannot disagree with the tool" is the kind of promise every README makes. Here is
+where each one is enforced, so you can read the gate instead of trusting the sentence:
+
+| Claim | Where it is enforced |
+|---|---|
+| `manifest` and `--help` cannot disagree | [`src/cli.test.ts`](https://github.com/theagenticguy/symspec/blob/main/src/cli.test.ts) — *drift — manifest summaries vs root `--help`* spawns the built binary and diffs both directions, plus *every flag description reaches BOTH surfaces*. Both carry negative controls that corrupt a summary and assert the guard fires, because a drift test that cannot fail is decoration. |
+| This README cannot outrun the tool | [`src/publish.test.ts`](https://github.com/theagenticguy/symspec/blob/main/src/publish.test.ts) — *the README agrees with the tool about its own surface*: the operation count, the code count, every operation present in the table above, and no command named that the tool does not have. Verified by sabotage — the first version of that last check passed on a deliberately broken table. |
+| `AGENTS.md` is generated, never hand-edited | [`src/kernel/agents-doc.test.ts`](https://github.com/theagenticguy/symspec/blob/main/src/kernel/agents-doc.test.ts) — *the committed AGENTS.md matches the generator*, byte for byte. The `check:agents` script re-renders and diffs it, so an edit to the committed file fails the build. |
+| The honest-scope claims are the tool's own words | `src/publish.test.ts` asserts the sentences below verbatim against `src/kernel/scope.ts`, the same corpus `symspec manifest` publishes. Softening them here fails a corpus test. |
+| Every command it tells you to run, runs | [`src/formal/repair.test.ts`](https://github.com/theagenticguy/symspec/blob/main/src/formal/repair.test.ts) sweeps every `symspec …` literal in the tree, and `src/operations/check.test.ts` sweeps a whole serialized `check` envelope, asserting none names a subcommand the flat CLI surface has no parser for. |
+| `--version`, this README, `AGENTS.md` and the source agree | `src/publish.test.ts` — *the release config bumps every place the version appears*, in both directions. |
+
+All of it runs in `pnpm check`, which is the whole gate: the same one
+[CI](https://github.com/theagenticguy/symspec/blob/main/.github/workflows/check.yml) and the
+pre-push hook run, in the same order.
 
 ---
 
