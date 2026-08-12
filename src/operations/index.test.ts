@@ -11,6 +11,7 @@ import { API_VERSION } from '../kernel/envelope.ts'
 import { ERR_CODES, errCodeCatalog, toErrorEnvelope } from '../kernel/errors.ts'
 import { exitCodeForEnvelope } from '../kernel/exit.ts'
 import { runOperation } from '../kernel/operation.ts'
+import { SCOPE, SCOPE_KEYS } from '../kernel/scope.ts'
 import { VERSION } from '../kernel/version.ts'
 import {
   allOperations,
@@ -133,6 +134,33 @@ describe('manifest', () => {
   it('publishes all 21 error codes, single-sourced from the catalog', () => {
     expect(currentManifest().errorCodes).toEqual([...errCodeCatalog()])
     expect(currentManifest().errorCodes.map((e) => e.code)).toEqual([...ERR_CODES])
+  })
+
+  /**
+   * The manifest is where an agent is TOLD to learn the surface, so the boundary of what a
+   * verdict means has to be in it.
+   *
+   * This gap shipped once: the corpus reached the generated `AGENTS.md` and the installed
+   * skill, but not the manifest — while the README claimed it did. An agent that followed
+   * the documented path read every code and never read the one sentence that says a clean
+   * `check` means "no conflict was proven" rather than "this spec is consistent".
+   */
+  it('publishes the honest-scope corpus, verbatim and claim by claim', () => {
+    const scope = currentManifest().scope
+    expect(Object.keys(scope).sort()).toEqual([...SCOPE_KEYS].sort())
+    for (const key of SCOPE_KEYS) {
+      expect(scope[key], `${key} was not published verbatim`).toBe(SCOPE[key])
+    }
+  })
+
+  it('publishes the claim that changes what an agent may CONCLUDE', () => {
+    // Named individually because the loop above passes on an empty corpus paired with an
+    // empty key list. `silence` is the load-bearing one: without it, a clean run reads as
+    // proof of consistency.
+    const scope = currentManifest().scope
+    expect(scope.silence).toContain('silence is not a consistency certificate')
+    expect(scope.soundness).toContain('sound modulo atomization')
+    expect(scope.reachabilityModelScoped).toContain('STATE MODEL you declared')
   })
 
   it('publishes an honest input schema for every operation', () => {

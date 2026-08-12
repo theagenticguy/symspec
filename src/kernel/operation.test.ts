@@ -297,12 +297,14 @@ describe('buildManifest() — projection (b)', () => {
       apiVersion: 1,
       version: '9.9.9',
       exitCodes: [{ code: 0, meaning: 'clean' }],
-      // All three catalogs are REQUIRED arguments, not optional ones, which is what
-      // makes "the manifest publishes every stable code" structural: a build that
-      // forgot a catalog would not compile rather than shipping a partial contract.
+      // All three catalogs and the scope corpus are REQUIRED arguments, not optional
+      // ones, which is what makes "the manifest publishes every stable code and the
+      // boundary of what a verdict means" structural: a build that forgot one would not
+      // compile rather than shipping a partial contract.
       errorCodes: [{ code: 'ERR_IO', description: 'io' }],
       findingCodes: [{ code: 'FND_CONTRADICTION', description: 'a proven conflict' }],
       lintCodes: [{ code: 'GTWR_R1_PATTERN', description: 'not EARS' }],
+      scope: { silence: 'silence is not a consistency certificate' },
     })
 
   it('reads name, summary and type off the operation', () => {

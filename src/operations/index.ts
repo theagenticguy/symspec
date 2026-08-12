@@ -62,6 +62,7 @@ import {
   defineOperation,
   type Manifest,
 } from '../kernel/operation.ts'
+import { SCOPE } from '../kernel/scope.ts'
 import { VERSION } from '../kernel/version.ts'
 import { checkOp } from './check.ts'
 import { initOp, listOp, showOp } from './document.ts'
@@ -175,6 +176,11 @@ const manifestEnvelope = () =>
         code,
         description: GtwrCodeMeta[code].description,
       })),
+      // The honest-scope corpus, verbatim and claim by claim. An agent is told to read the
+      // manifest to learn the surface, so the boundary of what a verdict MEANS has to be in
+      // it — a disclosure that lives only in prose is one the agent following instructions
+      // never sees.
+      scope: SCOPE,
     }),
   )
 

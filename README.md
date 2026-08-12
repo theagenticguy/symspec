@@ -387,8 +387,11 @@ reading the source.
 
 ## Honest scope — read this before trusting a verdict
 
-These are the tool's own words, published verbatim in `symspec manifest` and asserted
-byte-identical by its test suite. They are the load-bearing honesty of the whole thing.
+Every tier that reaches a verdict states its own boundary. These are the tool's own words —
+published verbatim in `symspec manifest` under `scope`, quoted in the guide `symspec install`
+writes, and asserted byte-identical by the test suite, so they cannot drift between surfaces.
+
+If you read one thing here, read the second claim.
 
 > The formal (SMT) tier is **sound modulo atomization**, given the conservative near-exact
 > normalization of the atom table: every reported conflict is a genuine logical conflict of the
@@ -413,6 +416,15 @@ byte-identical by its test suite. They are the load-bearing honesty of the whole
 
 > Numeric conflicts are checked over **linear** integer/real arithmetic (LIA/LRA).
 > **Nonlinear-integer arithmetic remains out of scope** (undecidable).
+
+> The unbounded reachability tier proves a declared constraint over **every reachable state**
+> with no bound on path length, and every proof is **independently re-verified** so a claim
+> never rests on trusting the solver. But the claim is about **the state model you declared**,
+> not about the requirement text: the `classify` expressions *are* the model, so a mis-declared
+> effect yields a sound proof of the wrong thing. Its common success is
+> `FND_REACHABILITY_UNDER_HYPOTHESES`, which **demotes `verified`**, and an unsatisfiable
+> initial state makes every constraint hold vacuously — reported at error severity because it
+> **masks** violations rather than merely failing to prove one.
 
 > `data.verified` is a **whole-document** claim: true only when every requirement shares
 > vocabulary with a peer, every opposition candidate has been triaged, and a decide-tier
