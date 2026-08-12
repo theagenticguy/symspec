@@ -950,7 +950,9 @@ describe('check — exit codes and envelope integrity from the real process', ()
   const heldFixture = (initial: string | undefined): string => {
     const { writeFileSync } = require('node:fs') as typeof import('node:fs')
     const path = join(work(), 'requirements.json')
-    const effect = {
+    // Annotated because spreading `req()`'s `Record<string, unknown>` into a literal that
+    // adds known keys discards the index signature, and the `id` read below needs it.
+    const effect: Record<string, unknown> = {
       ...req(
         '55555555-5555-4555-8555-555555555555',
         'the worker claims the run',
@@ -960,7 +962,7 @@ describe('check — exit codes and envelope integrity from the real process', ()
       responseKind: 'effect',
       stateEffect: 'held := held + 1',
     }
-    const constraint = {
+    const constraint: Record<string, unknown> = {
       ...req(
         '66666666-6666-4666-8666-666666666666',
         'the worker claims the run',

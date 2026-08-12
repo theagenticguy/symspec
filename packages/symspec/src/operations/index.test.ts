@@ -174,13 +174,13 @@ describe('explain — success', () => {
  * one of these was an `ERR_NOT_FOUND` at exit 2 — an agent holding an
  * `FND_CONTRADICTION` from `check` could list it in the manifest and not explain it.
  */
-describe('explain — AC-A-3: all 80 codes through the operation', () => {
+describe('explain — AC-A-3: every code through the operation', () => {
   it('resolves every code the MANIFEST publishes, across all three catalogs', async () => {
     const manifest = currentManifest()
     const published = [...manifest.errorCodes, ...manifest.findingCodes, ...manifest.lintCodes].map(
       (row) => row.code,
     )
-    expect(published).toHaveLength(80)
+    expect(published).toHaveLength(81)
 
     for (const code of published) {
       const env = await Effect.runPromise(runOperation(explainOp, { code }))
@@ -225,7 +225,7 @@ describe('explain — AC-A-3: all 80 codes through the operation', () => {
     expect(env.data.commands).toEqual(['symspec antonym add <verbA> <verbB>'])
   })
 
-  it('did-you-mean now ranks across all 80, not the 21 ERR_* codes', async () => {
+  it('did-you-mean now ranks across every family, not the 21 ERR_* codes', async () => {
     // The G1 miss this closes: a GTWR_* typo returned a list of ERR_* codes.
     const r = await Effect.runPromise(
       Effect.result(runOperation(explainOp, { code: 'GTWR_R7_VAGU' })),
@@ -235,19 +235,19 @@ describe('explain — AC-A-3: all 80 codes through the operation', () => {
       const env = toErrorEnvelope(r.failure as Parameters<typeof toErrorEnvelope>[0])
       expect(env.suggestions.join(' ')).toContain('GTWR_R7_VAGUE')
       expect(env.repair?.commands).toEqual(['symspec explain --code GTWR_R7_VAGUE'])
-      // And it says how many codes exist, so an agent knows the corpus size. 35 FND_*
-      // since G4: the donor's frozen 30 plus the 5 `FND_REACHABILITY_*`. Read from
+      // And it says how many codes exist, so an agent knows the corpus size. 36 FND_*:
+      // the donor's frozen 30 plus the 6 `FND_REACHABILITY_*`. Read from
       // `catalogCounts()` at runtime rather than hardcoded in the message, which is why
       // this number moves on its own when the vocabulary grows.
-      expect(env.suggestions.join(' ')).toContain('35 FND_*')
+      expect(env.suggestions.join(' ')).toContain('36 FND_*')
     }
   })
 
   /**
-   * THE FIVE REACHABILITY CODES, named individually (G5).
+   * THE REACHABILITY CODES, named individually (G5).
    *
-   * The 80/80 loop above covers them by construction, which is the right way to make growth
-   * automatic and the wrong way to be sure. These five are the newest family and the one an
+   * The all-codes loop above covers them by construction, which is the right way to make
+   * growth automatic and the wrong way to be sure. These are the newest family and the one an
    * agent is most likely to hold without a manifest — a `check` run over a state model hands
    * back `FND_REACHABILITY_VIOLATED` and the agent's next call is `explain`.
    *
@@ -255,15 +255,19 @@ describe('explain — AC-A-3: all 80 codes through the operation', () => {
    * what an agent does about a reachability finding is whether it gates the build, and the
    * ONE fact that decides how it fixes it is which knob the remedy names.
    */
-  it('explains all five FND_REACHABILITY_* codes with the right severity', async () => {
-    expect(REACHABILITY_FND_CODES).toHaveLength(5)
+  it('explains all six FND_REACHABILITY_* codes with the right severity', async () => {
+    expect(REACHABILITY_FND_CODES).toHaveLength(6)
     for (const code of REACHABILITY_FND_CODES) {
       const env = await Effect.runPromise(runOperation(explainOp, { code }))
       expect(env.data.code, code).toBe(code)
       expect(env.data.family, code).toBe('FND')
       expect(env.data.tier, code).toBe('formal')
-      // VIOLATED is the only one that can fail a build; the other four demote instead.
-      expect(env.data.severity, code).toBe(code === 'FND_REACHABILITY_VIOLATED' ? 'error' : 'info')
+      // VIOLATED and VACUOUS_INITIAL can fail a build; the other four demote instead. A
+      // vacuous initial state earns error severity because it MASKS proven violations —
+      // every constraint holds over an empty reachable set — rather than merely failing
+      // to prove one.
+      const gating = ['FND_REACHABILITY_VIOLATED', 'FND_REACHABILITY_VACUOUS_INITIAL']
+      expect(env.data.severity, code).toBe(gating.includes(code) ? 'error' : 'info')
       expect(env.data.meaning.length, code).toBeGreaterThan(80)
       expect(exitCodeForEnvelope(env), code).toBe(0)
     }

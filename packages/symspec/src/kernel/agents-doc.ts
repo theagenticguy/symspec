@@ -21,7 +21,7 @@
  * claim is read from a corpus:
  *
  * - operations, their summaries and their JSON-Schema inputs → the operations table;
- * - all 75 codes with severity, tier, and meaning → `./catalog.ts`;
+ * - every code in the three catalogs, with severity, tier, and meaning → `./catalog.ts`;
  * - exit codes → the manifest, which reads them from `./exit.ts`'s constants;
  * - the envelope contract → `./envelope.ts`'s `API_VERSION`;
  * - the honest-scope disclosure → `./scope.ts`, all seven claims (unlike the installed

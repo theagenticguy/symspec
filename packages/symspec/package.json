@@ -2,7 +2,7 @@
   "name": "symspec",
   "version": "1.0.0-alpha.0",
   "type": "module",
-  "description": "Prove your software requirements consistent, or get an honest work list. EARS authoring, INCOSE GtWR lint, Z3 SMT conflict proofs with unsat-core evidence, and unbounded state-model reachability — behind an agent-first CLI with typed JSON envelopes and 80 stable codes.",
+  "description": "Prove your software requirements consistent, or get an honest work list. EARS authoring, INCOSE GtWR lint, Z3 SMT conflict proofs with unsat-core evidence, and unbounded state-model reachability — behind an agent-first CLI with typed JSON envelopes and 81 stable codes.",
   "keywords": [
     "requirements",
     "requirements-engineering",

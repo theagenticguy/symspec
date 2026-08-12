@@ -1,5 +1,5 @@
 /**
- * The unified catalog: all 80 codes reachable, every derived field honest.
+ * The unified catalog: every code reachable, every derived field honest.
  *
  * ## What this file is actually guarding
  *
@@ -9,9 +9,9 @@
  * failure mode: a parser that silently matches nothing yields a plausible-looking
  * `null` severity or a missing example, and no test notices.
  *
- * So the assertions here are COUNTS and TOTALITY, not spot checks: all 30 `FND_*`
- * severities parse (not "some do"), the example extractor finds exactly the 11 codes
- * that carry one (not "at least one"), and every one of the 80 resolves through
+ * So the assertions here are COUNTS and TOTALITY, not spot checks: every `FND_*`
+ * severity parses (not "some do"), the example extractor finds exactly the 11 codes
+ * that carry one (not "at least one"), and every code resolves through
  * `lookupCode`. A regex that stops matching fails a count; a regex that starts
  * over-matching fails it too.
  */
@@ -32,16 +32,16 @@ import {
 import { descriptionOf, ERR_CLASSES, tagOf } from './errors.ts'
 
 // ---------------------------------------------------------------------------
-// Coverage: all 80, in family order
+// Coverage: all 81, in family order
 // ---------------------------------------------------------------------------
 
 describe('the unified catalog spans all three code families', () => {
-  it('holds exactly 21 ERR_* / 35 FND_* / 24 GTWR_* = 80', () => {
-    // 35 FND_*: the donor's frozen 30, plus G4's 5 `FND_REACHABILITY_*`. The two live in
+  it('holds exactly 21 ERR_* / 36 FND_* / 24 GTWR_* = 81', () => {
+    // 36 FND_*: the donor's frozen 30, plus 6 `FND_REACHABILITY_*`. The two live in
     // different files because `donor/formal/codes.ts` is byte-identity-guarded against the
     // live donor, so appending there would break the transplant-fidelity check. They
     // report the same `family`, because an agent switches on a code and not on provenance.
-    expect(catalogCounts()).toEqual({ ERR: 21, FND: 35, GTWR: 24, total: 80 })
+    expect(catalogCounts()).toEqual({ ERR: 21, FND: 36, GTWR: 24, total: 81 })
   })
 
   it('resolves EVERY code in every catalog', () => {
@@ -51,7 +51,7 @@ describe('the unified catalog spans all three code families', () => {
       ...REACHABILITY_FND_CODES,
       ...GTWR_CODES,
     ] as readonly string[]
-    expect(codes).toHaveLength(80)
+    expect(codes).toHaveLength(81)
     for (const code of codes) {
       const entry = lookupCode(code)
       expect(entry, `${code} must resolve`).toBeDefined()
@@ -64,14 +64,14 @@ describe('the unified catalog spans all three code families', () => {
   it('lists the families in order, each in its own append-only order', () => {
     const rows = allCodes()
     expect(rows.slice(0, 21).map((r) => r.family)).toEqual(Array(21).fill('ERR'))
-    // 35 FND rows: the donor's 30 then G4's 5, both reporting `family: 'FND'`.
-    expect(rows.slice(21, 56).map((r) => r.family)).toEqual(Array(35).fill('FND'))
-    expect(rows.slice(56).map((r) => r.family)).toEqual(Array(24).fill('GTWR'))
+    // 36 FND rows: the donor's 30 then the reachability 6, both reporting `family: 'FND'`.
+    expect(rows.slice(21, 57).map((r) => r.family)).toEqual(Array(36).fill('FND'))
+    expect(rows.slice(57).map((r) => r.family)).toEqual(Array(24).fill('GTWR'))
     // The per-family order is the shipped append-only order, unreordered — and WITHIN the
     // FND family, provenance order: the frozen transplanted list, then the greenfield's.
     expect(rows.slice(21, 51).map((r) => r.code)).toEqual([...FND_CODES])
-    expect(rows.slice(51, 56).map((r) => r.code)).toEqual([...REACHABILITY_FND_CODES])
-    expect(rows.slice(56).map((r) => r.code)).toEqual([...GTWR_CODES])
+    expect(rows.slice(51, 57).map((r) => r.code)).toEqual([...REACHABILITY_FND_CODES])
+    expect(rows.slice(57).map((r) => r.code)).toEqual([...GTWR_CODES])
   })
 
   it('publishes the description VERBATIM — the manifest`s own bytes', () => {
@@ -107,11 +107,11 @@ describe('severity is derived, and null where it genuinely is not per-code', () 
    * TOTALITY, not a sample. The `FND_*` severity comes from an em-dash-prefixed
    * corpus convention (`'error — …'`), and a parser that quietly stops matching
    * would report `null` for every code — which reads as "no severity" rather than
-   * as a bug. Asserting all 30 parse is what makes the derivation trustworthy.
+   * as a bug. Asserting every one parses is what makes the derivation trustworthy.
    */
-  it('parses a severity for ALL 35 FND_* codes', () => {
+  it('parses a severity for ALL 36 FND_* codes', () => {
     const fnd = allCodes().filter((r) => r.family === 'FND')
-    expect(fnd).toHaveLength(35)
+    expect(fnd).toHaveLength(36)
     for (const row of fnd) {
       expect(row.severity, `${row.code} severity must parse`).not.toBeNull()
       expect(['error', 'warn', 'info', 'warn/info']).toContain(row.severity)
@@ -143,12 +143,15 @@ describe('severity is derived, and null where it genuinely is not per-code', () 
       'FND_CERTIFY_FAILED',
       'FND_NUMERIC_CONTRADICTION',
       'FND_TEMPORAL_CONTRADICTION',
-      // G4. The ONLY error-severity code in the reachability family, and it earns that:
-      // the violation survived BOTH the strict and the framed run (AC-2-5), so it is a
-      // genuine defect rather than an artifact of assuming nothing about unwritten
-      // variables. The other four reachability codes are info — they DEMOTE rather than
-      // gate, because "I could not decide" must never fail a build the way a proof does.
+      // The two error-severity codes in the reachability family, and each earns it.
+      // VIOLATED: the violation survived BOTH the strict and the framed run (AC-2-5), so it
+      // is a genuine defect rather than an artifact of assuming nothing about unwritten
+      // variables. VACUOUS_INITIAL: an unsatisfiable initial state makes every constraint
+      // hold vacuously, which MASKS proven violations rather than merely failing to prove.
+      // The other four are info — they DEMOTE rather than gate, because "I could not
+      // decide" must never fail a build the way a proof does.
       'FND_REACHABILITY_VIOLATED',
+      'FND_REACHABILITY_VACUOUS_INITIAL',
     ])
   })
 
@@ -226,7 +229,7 @@ describe('tier names the pipeline stage that emits the code', () => {
 describe('worked examples are extracted where the corpus carries one', () => {
   /**
    * A COUNT, deliberately. The extractor handles two shapes (`(e.g. …)` and
-   * `such as …`), verified exhaustive against all 80 descriptions by probe. Pinning
+   * `such as …`), verified exhaustive against every description by probe. Pinning
    * the count means a regex that stops matching fails here, and so does one that
    * starts over-matching — neither of which a "some code has an example" assertion
    * would catch.
@@ -384,8 +387,8 @@ describe('nearestCodesAll ranks across all three families', () => {
     expect(nearestCodesAll('FND_', 5)).toHaveLength(5)
   })
 
-  it('draws from all 80 code strings', () => {
-    expect(allCodeStrings()).toHaveLength(80)
-    expect(new Set(allCodeStrings()).size, 'no duplicate codes across families').toBe(80)
+  it('draws from all 81 code strings', () => {
+    expect(allCodeStrings()).toHaveLength(81)
+    expect(new Set(allCodeStrings()).size, 'no duplicate codes across families').toBe(81)
   })
 })

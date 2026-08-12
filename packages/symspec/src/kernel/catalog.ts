@@ -1,5 +1,5 @@
 /**
- * THE UNIFIED CODE CATALOG — one lookup across all 80 stable codes (spec AC-A-3).
+ * THE UNIFIED CODE CATALOG — one lookup across every stable code (spec AC-A-3).
  *
  * ## The gap this closes
  *
@@ -98,7 +98,7 @@ export interface CodeEntry {
   /**
    * A worked micro-example, when the catalog text carries one. Absent (not an empty
    * string) otherwise, so a consumer can tell "no example exists" from "the example
-   * is blank". 11 of the 80 codes carry one; see {@link extractExample}.
+   * is blank". 11 codes carry one; see {@link extractExample}.
    */
   readonly example?: string
   /** Every runnable `symspec …` invocation the text names, in order. */

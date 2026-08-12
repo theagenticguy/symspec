@@ -20,7 +20,7 @@ symspec install                            # drop this guidance into your agent 
 ```
 
 `manifest` is the machine-readable version of this document. `explain` answers for a
-single code across all 80 of them (21 `ERR_*`, 35 `FND_*`, 24 `GTWR_*`) and returns
+single code across all 81 of them (21 `ERR_*`, 36 `FND_*`, 24 `GTWR_*`) and returns
 its family, severity, tier, meaning, remedy, and a worked example where the catalog carries
 one — so a fix loop never pays for the whole contract to learn what one code means.
 
@@ -747,6 +747,7 @@ an error-severity finding also excludes its requirement from the formal tier.
 | `FND_REACHABILITY_UNDER_HYPOTHESES` | info | formal | a declared constraint holds only WHEN the declared frame assumptions are granted: it is reachable-violating with nothing assumed, and unreachable once the variables declared `frame: stable` are held fixed except where a requirement writes them. That is a proof given a hypothesis THE DOCUMENT DOES NOT STATE, so it DEMOTES `verified` and names the exact variables relied upon together with the requirements that write them. Never rendered as proven-unconditionally. |
 | `FND_REACHABILITY_UNKNOWN` | info | formal | the solver did not decide whether a declared constraint can be violated, so nothing is claimed either way and `verified` is DEMOTED. The message states which of the two causes applies, because they need different remedies and the solver cannot be asked: a timed-out Spacer query reports its reason as the literal string "ok", so the distinction is derived out-of-band from measured elapsed time against the budget that was set. |
 | `FND_REACHABILITY_NOT_CHECKED` | info | formal | the unbounded reachability tier did NOT cover part or all of this document, and `verified` is DEMOTED accordingly. Emitted when no state model is committed, when no requirement carries a constraint to check, when a classified requirement could not be read, or when the model admits no transitions at all (in which case only the initial state exists and any invariant over it holds almost vacuously). This is a coverage DISCLOSURE, not a defect: silence over a question that was never asked reads exactly like a pass, which is the one thing this tool must never do. |
+| `FND_REACHABILITY_VACUOUS_INITIAL` | error | formal | the INITIAL STATE is UNSATISFIABLE: the model-wide `initial` predicate, the per-variable `initial` predicates, and the declared integer/enum ranges cannot all hold at once, so the model has NO initial state, the reachable-state set is EMPTY, and every constraint holds VACUOUSLY. Nothing is proven about anything and every constraint is DEMOTED. Error severity rather than a disclosure because a vacuous model does not merely fail to prove — it MASKS proven violations: measured, adding a contradictory initial predicate to a document with a genuine reachable violation turned an error-severity FND_REACHABILITY_VIOLATED into a confident "PROVED with nothing assumed" and flipped the exit code from 1 to 0. The independent certificate check cannot catch this, because an unsatisfiable Init makes `Inv := false` discharge all three obligations validly. |
 
 ## Lint rule codes (`GTWR_*`)
 

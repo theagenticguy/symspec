@@ -9,7 +9,7 @@
  *
  * - `manifest` — the self-description projection. Proves the table can describe
  *   itself, including its own row.
- * - `explain <code>` — the success AND failure paths, over all 80 codes in the
+ * - `explain <code>` — the success AND failure paths, over every code in the
  *   three catalogs (G3), with did-you-mean suggestions on an unknown code.
  * - `version` — the minimal op: no input fields at all, which is its own edge
  *   case for the flag-derivation and manifest projections.
@@ -193,8 +193,8 @@ const manifestEnvelope = () =>
  * a miss ranked did-you-mean over 21 of the then-75 candidates — so `explain GTWR_R7_VAGU`
  * answered with a list of `ERR_*` codes.
  *
- * Both halves now go through `../kernel/catalog.ts`: {@link lookupCode} over all 80,
- * {@link nearestCodesAll} over all 80. The payload gains `family`, `severity`,
+ * Both halves now go through `../kernel/catalog.ts`: {@link lookupCode} over the whole catalog,
+ * {@link nearestCodesAll} over the whole catalog. The payload gains `family`, `severity`,
  * `tier`, the runnable `commands` the text names, and a worked `example` where the
  * catalogs carry one — each read from the same description bytes the manifest
  * publishes, never a second corpus.

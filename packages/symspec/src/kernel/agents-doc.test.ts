@@ -10,7 +10,7 @@
  * in `scripts/`, outside the typechecker and outside the tests, so nothing could assert
  * what it SHOULD contain.
  *
- * So this file asserts the projection is COMPLETE (every operation, all 80 codes, every
+ * So this file asserts the projection is COMPLETE (every operation, every code, every
  * scope claim, every craft section, verbatim from their corpora), and the cross-boundary
  * check that the committed file matches is the shell gate in `pnpm check`. Neither alone is
  * enough; the pair is.
@@ -100,11 +100,11 @@ describe('every operation is projected, with the table`s own summary', () => {
   })
 })
 
-describe('all 80 codes are projected, in all three families', () => {
+describe('all 81 codes are projected, in all three families', () => {
   it('names every code from every catalog', () => {
     const rendered = doc()
     const codes = allCodes()
-    expect(codes).toHaveLength(80)
+    expect(codes).toHaveLength(81)
     for (const row of codes) {
       expect(rendered, `${row.code} is missing`).toContain(`\`${row.code}\``)
     }
