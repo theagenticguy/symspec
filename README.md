@@ -487,7 +487,7 @@ it as an op, so the deterministic solver always reads a committed table rather t
 
 ## Status
 
-`1.0.0` <!-- x-release-please-version -->
+`1.0.1` <!-- x-release-please-version -->
 
 The document format is **v3**. `symspec import` reads a v2 op stream in one shot, so an older
 document migrates without hand-editing. The CLI surface is built on `effect/unstable/cli` at an
