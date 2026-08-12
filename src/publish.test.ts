@@ -332,3 +332,77 @@ describe('the README is a PACKAGE readme, greenfield-first and honest', () => {
     expect(prose).toContain('codes and the envelope shape')
   })
 })
+
+// ---------------------------------------------------------------------------
+// The release config, which nothing else would catch
+// ---------------------------------------------------------------------------
+
+/**
+ * release-please bumps the version in FOUR files, and a misconfiguration here is silent.
+ *
+ * The generic updater is a per-line substring match for `x-release-please-version`. It has
+ * `createIfMissing: false` and no diagnostic for a file it matched nothing in — so an
+ * `extra-files` entry pointing at a file with no annotation, or an annotation on the wrong
+ * line, simply does not bump that file. Nothing fails. The result is a published version
+ * whose `--version`, README and AGENTS.md disagree with the registry, which is exactly the
+ * class of error a registry's immutability makes permanent.
+ *
+ * So both directions are asserted: every configured file carries an annotation, and every
+ * file carrying the version string is configured.
+ */
+describe('the release config bumps every place the version appears', () => {
+  const config = JSON.parse(read('release-please-config.json')) as {
+    'bootstrap-sha'?: string
+    packages: Record<string, { 'extra-files'?: readonly { type: string; path: string }[] }>
+  }
+  const releaseManifest = JSON.parse(read('.release-please-manifest.json')) as Record<
+    string,
+    string
+  >
+  const extraFiles = (config.packages['.']?.['extra-files'] ?? []).map((entry) => entry.path)
+
+  it('agrees with package.json about the current version', () => {
+    // The manifest is release-please's version-of-record — it backfills from this file even
+    // with no git tag, so a stale entry makes the NEXT release bump from the wrong base.
+    expect(releaseManifest['.']).toBe(manifest.version)
+  })
+
+  it('lists every file that carries the version, and no others', () => {
+    // `package.json` is handled natively by `release-type: node`, so it is correctly ABSENT
+    // from `extra-files` — listing it would be redundant, not harmful.
+    expect([...extraFiles].sort()).toEqual(['AGENTS.md', 'README.md', 'src/kernel/version.ts'])
+  })
+
+  it('finds the annotation ON THE SAME LINE as the version, in every configured file', () => {
+    for (const path of extraFiles) {
+      const annotated = read(path)
+        .split('\n')
+        .filter((line) => line.includes('x-release-please-version'))
+      expect(annotated, `${path} has no x-release-please-version annotation`).toHaveLength(1)
+      // The updater replaces the first semver-looking substring ON the matched line. An
+      // annotation one line off is a no-op, and the only symptom is a version that stops
+      // moving.
+      expect(annotated[0], `${path}: annotation is not on the version's own line`).toContain(
+        manifest.version,
+      )
+    }
+  })
+
+  it('pins a bootstrap-sha, so the first changelog is not the whole history', () => {
+    // Without it release-please walks up to `commit-search-depth` (500) and puts every
+    // conventional commit ever written into the first release's changelog.
+    expect(config['bootstrap-sha']).toMatch(/^[0-9a-f]{40}$/)
+  })
+
+  it('names the workflow the npm trusted publisher has to be configured against', () => {
+    // The publish job must live in the workflow named in `npm trust github … --file`, and
+    // that name is a bare filename rather than a path. If this file is ever renamed, the
+    // trusted publisher stops matching and the publish fails with an opaque 404.
+    const workflow = read('.github/workflows/release-please.yml')
+    expect(workflow).toContain('id-token: write')
+    expect(workflow).toContain('pnpm publish')
+    // Scoped to the publish job, never granted workflow-wide.
+    expect(workflow).toContain('permissions: {}')
+    expect(read('RELEASING.md')).toContain('--file release-please.yml')
+  })
+})

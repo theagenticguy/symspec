@@ -126,7 +126,7 @@ out. Every operation answers in a typed JSON envelope, every finding and error c
 stable code you can branch on, and this file plus \`symspec manifest\` are the complete
 surface.
 
-**Version:** \`${manifest.version}\` · **Envelope apiVersion:** \`${manifest.apiVersion}\`
+**Version:** \`${manifest.version}\` · **Envelope apiVersion:** \`${manifest.apiVersion}\` <!-- x-release-please-version -->
 
 ## Discover the surface
 

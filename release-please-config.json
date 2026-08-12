@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-component-in-tag": false,
+  "bootstrap-sha": "d15af29e72dcbf3d129405208cbd4177f697403b",
+  "packages": {
+    ".": {
+      "extra-files": [
+        { "type": "generic", "path": "src/kernel/version.ts" },
+        { "type": "generic", "path": "README.md" },
+        { "type": "generic", "path": "AGENTS.md" }
+      ]
+    }
+  }
+}

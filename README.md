@@ -284,14 +284,17 @@ it as an op, so the deterministic solver always reads a committed table rather t
 
 ## Status
 
-`1.0.0-alpha.0`. The document format is **v3** and there is no read-compatibility with the v2
-format; migration is a one-shot `reproduce | symspec import`. The CLI surface is built on
+`1.0.0-alpha.0` <!-- x-release-please-version -->
+
+The document format is **v3** and there is no read-compatibility with the v2 format;
+migration is a one-shot `reproduce | symspec import`. The CLI surface is built on
 `effect/unstable/cli` at an exact pin, so a beta bump is a deliberate, reviewed change rather
 than a floating range.
 
 Treat the **codes and the envelope shape** as the stable contract — those are what an agent
-branches on, and they are guarded by append-only snapshot tests. Treat flag names and payload
-additions as evolving until 1.0.0.
+branches on, and they are guarded by append-only snapshot tests. Flag names and payload
+additions can still gain fields in a minor release; nothing an agent branches on is removed
+without a major.
 
 ## License
 
