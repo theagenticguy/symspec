@@ -9,7 +9,7 @@ out. Every operation answers in a typed JSON envelope, every finding and error c
 stable code you can branch on, and this file plus `symspec manifest` are the complete
 surface.
 
-**Version:** `1.0.0-alpha.0` · **Envelope apiVersion:** `1` <!-- x-release-please-version -->
+**Version:** `1.0.0` · **Envelope apiVersion:** `1` <!-- x-release-please-version -->
 
 ## Discover the surface
 

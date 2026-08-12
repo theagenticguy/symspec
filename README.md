@@ -362,7 +362,7 @@ it as an op, so the deterministic solver always reads a committed table rather t
 
 ## Status
 
-`1.0.0-alpha.0` <!-- x-release-please-version -->
+`1.0.0` <!-- x-release-please-version -->
 
 The document format is **v3** and there is no read-compatibility with the v2 format;
 migration is a one-shot `reproduce | symspec import`. The CLI surface is built on
