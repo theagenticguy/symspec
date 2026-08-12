@@ -21,31 +21,62 @@
 # THIS IS THE DONOR-CLI PATH, not a hand-rolled emitter. The alternative — reading
 # the v2 JSON directly and synthesizing ops here — would make the round-trip test
 # circular: it would prove `import` agrees with this script's idea of an op stream
-# rather than with the donor's.
+# rather than with the donor's. Hand-editing a generated fixture has the same effect,
+# so a fixture that needs to change gets REGENERATED.
 #
 # One donor-CLI wrinkle worth recording: the document path must be POSITIONAL.
 # `symspec list --file <doc>` fails with ERR_USAGE (that subcommand takes the doc
 # as an argument), so `--file` never reaches the loader and no reproduce stream is
 # produced. Use `symspec list <doc>`.
 #
+# ## Where the donor comes from
+#
+# The donor is a COMMIT, not a directory: `DONOR_REF` names the revision whose tree
+# still carries it, and this script materializes that tree in a throwaway `git
+# worktree` and builds it there. The generated fixtures are committed, so the test
+# suite is hermetic and offline and never needs any of this — only REGENERATION does.
+#
+# Fetch the ref first if the clone is shallow; a missing object fails loudly below
+# rather than silently producing an empty fixture.
+#
 # Usage: ./scripts/generate-import-fixtures.sh
-# Requires: the donor bundle built at the repo root (`pnpm --filter . build`).
+#        DONOR_REF=<rev> ./scripts/generate-import-fixtures.sh
+# Requires: git, pnpm, and network access for the worktree's `pnpm install`.
 
 set -euo pipefail
 
+# The last revision whose tree carries the donor package.
+DONOR_REF="${DONOR_REF:-4370306b26bf847a64619cc0d14ff78cdd217d08}"
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 pkg="$(dirname "$here")"
-repo="$(cd "$pkg/../.." && pwd)"
-donor="$repo/dist/cli.mjs"
 fixtures="$pkg/src/operations/__fixtures__"
 
-if [[ ! -f "$donor" ]]; then
-  echo "The donor bundle is missing at $donor — run \`pnpm build\` at the repo root first." >&2
+work="$(mktemp -d)"
+# The worktree is registered in the repo's metadata, so it needs `git worktree remove`
+# and not just an `rm -rf`, or `git worktree list` keeps a dangling entry forever.
+cleanup() {
+  if [[ -d "$work/donor" ]]; then
+    git -C "$pkg" worktree remove --force "$work/donor" 2>/dev/null || true
+  fi
+  rm -rf "$work"
+}
+trap cleanup EXIT
+
+if ! git -C "$pkg" cat-file -e "$DONOR_REF^{commit}" 2>/dev/null; then
+  echo "DONOR_REF $DONOR_REF is not in this clone — \`git fetch --unshallow\` and retry." >&2
   exit 1
 fi
 
-work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+echo "Materializing the donor at $DONOR_REF..." >&2
+git -C "$pkg" worktree add --detach --quiet "$work/donor" "$DONOR_REF"
+(cd "$work/donor" && pnpm install --frozen-lockfile --silent && pnpm build >/dev/null)
+
+donor="$work/donor/dist/cli.mjs"
+if [[ ! -f "$donor" ]]; then
+  echo "The donor build at $DONOR_REF produced no $donor." >&2
+  exit 1
+fi
 
 for name in hex-bonk-agent-run-triggers hex-bonk-schedule-management; do
   src="$fixtures/$name.v2.json"

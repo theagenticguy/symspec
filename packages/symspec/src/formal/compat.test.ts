@@ -1,15 +1,18 @@
 /**
- * THE COMPAT BOUNDARY, tested field by field — because the differential oracle's
- * fixtures do not cover it.
+ * THE COMPAT BOUNDARY, tested field by field — because no differential can cover it.
  *
- * ## The coverage gap this file exists to close, and how it was found
+ * ## The coverage gap this file exists to close
  *
- * The oracle was sabotage-tested by breaking things and confirming it failed. It
- * caught a reworded finding message immediately. But one sabotage PASSED: hardcoding
- * `negated: false` in the projection — dropping the single most load-bearing field
- * the boundary carries — left all 22 oracle assertions green.
+ * A differential comparison feeds ONE input to two implementations and diffs the
+ * outputs. It is structurally blind to a bug in that shared input: both sides consume
+ * the same projection, so both are wrong in the same way and agree perfectly. This
+ * projection IS that shared input, which is why it needs direct assertions rather than
+ * a comparison.
  *
- * The reason, measured rather than guessed:
+ * Measured, not assumed: hardcoding `negated: false` here — dropping the single most
+ * load-bearing field the boundary carries — left all 22 assertions of a
+ * two-implementation comparison green, while a merely reworded finding message failed
+ * it immediately. The reason the fixtures could not see it:
  *
  * - the 12 adversarial eval-round documents contain ZERO requirements with
  *   `negated: true` (they express opposition through antonym verb pairs like
@@ -19,13 +22,8 @@
  *   particular documents — the negated requirements happen not to pair with a
  *   positive twin on the same atom.
  *
- * So both fixture sets were blind to it, and both sides of the oracle consumed the
- * same broken projection, which is the one failure mode a two-implementation
- * comparison structurally cannot catch: a bug in the SHARED input.
- *
  * `negated` is exactly the field where that matters. It is what puts `shall X` and
- * `shall not X` on ONE atom at OPPOSITE polarity. Measured on a minimal pair through
- * the donor:
+ * `shall not X` on ONE atom at OPPOSITE polarity. Measured on a minimal pair:
  *
  *   negated=true  → FND_CONTRADICTION (+ GTWR_R16_NEGATION)
  *   negated=false → FND_EXACT_DUPLICATE, and FND_NO_PAIRS_CHECKED
@@ -44,12 +42,12 @@
 
 import { Effect } from 'effect'
 import { describe, expect, it } from 'vitest'
-// The LIVE DONOR pipeline, so the observable consequences are the donor's, not a
-// re-derivation of what they ought to be.
-import { runCheck } from '../../../../src/pipeline/check.ts'
 import type { Requirement, RequirementsDocument } from '../core/document.ts'
 import { emptyDocument } from '../core/document.ts'
 import { renderSentence } from '../core/render.ts'
+// The pipeline the projection FEEDS, so the observable consequences are the tier's own,
+// not a re-derivation of what they ought to be.
+import { runCheck } from '../donor/pipeline/check.ts'
 import { toDonorDoc, toDonorRequirement } from './compat.ts'
 import { SolverService, solverServiceLayer } from './solver-service.ts'
 
@@ -108,7 +106,7 @@ const codesOf = async (document: RequirementsDocument): Promise<ReadonlySet<stri
 }
 
 // ---------------------------------------------------------------------------
-// `negated` — the field the oracle's fixtures could not see
+// `negated` — the field a whole-document comparison cannot see
 // ---------------------------------------------------------------------------
 
 describe('compat — the `negated` flag survives, and it is observable', () => {
@@ -243,16 +241,15 @@ describe('compat — every projected field the tier reads', () => {
     const document = docOf(req({ id: A, derives: [B] }), req({ id: B }))
     const projected = toDonorDoc(document)
     expect(projected.requirements[A]?.derives).toEqual([B])
-    // A SHARED array would let a mutation in one pipeline appear in the other, which
-    // would corrupt the differential oracle in the most confusing possible way.
+    // A SHARED array would let a future mutation inside the frozen tier reach back into
+    // the caller's v3 document — an aliasing bug in the most confusing possible place.
     expect(projected.requirements[A]?.derives).not.toBe(document.requirements[A]?.derives)
   })
 
   it('preserves ABSENCE as absence, not as an explicit undefined', () => {
-    // `{trigger: undefined}` and `{}` behave the same for the tier's
-    // `!== undefined` guards but serialize differently, and the oracle canonicalizes
-    // JSON — so absence has to stay absence or the two pipelines diverge on a field
-    // neither of them actually set.
+    // `{trigger: undefined}` and `{}` behave the same for the tier's `!== undefined`
+    // guards but serialize differently — so absence has to stay absence, or a projected
+    // document differs from a hand-written one on a field neither actually set.
     const projected = toDonorRequirement(req({ id: A, patternType: 'ubiquitous' }))
     expect('preCondition' in projected).toBe(false)
     expect('key' in projected).toBe(false)

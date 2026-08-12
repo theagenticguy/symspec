@@ -107,13 +107,12 @@ export { EMBED_MODEL } from '../donor/formal/embed.ts'
  * - It is NOT a fallback. Without the env var a missing model still fails closed.
  *   A stub that silently substituted for an absent model would restore exactly the
  *   gameable-by-omission hole the fail-closed rule exists to close.
- * - It is DETERMINISTIC, which is what lets the differential oracle run the semantic
- *   tier on BOTH sides and diff the findings. A random stub would make the tier
- *   uncomparable and the parity claim untestable.
- * - It is carried over from the donor verbatim in behavior (same FNV-1a seed, same
- *   xorshift, same 16 dimensions, same L2 normalization), because the oracle compares
- *   the donor running this stub against the greenfield running it. A different stub on
- *   one side would manufacture a divergence that says nothing about the transplant.
+ * - It is DETERMINISTIC. The semantic tier is on by default, so without a stub every
+ *   test that runs `check` either downloads 110 MB or asserts against a moving target.
+ *   A random stub would make the tier's findings unpinnable and the propose-only claim
+ *   untestable.
+ * - Its behavior is fixed (FNV-1a seed, xorshift, 16 dimensions, L2 normalization), so a
+ *   recorded cosine stays valid across runs and machines.
  */
 export const stubEmbedder = (): Embedder => {
   const DIM = 16

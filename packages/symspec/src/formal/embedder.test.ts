@@ -14,8 +14,8 @@
  *    may push `verified` toward abstention, and they can NEVER promote it. Asserted
  *    against the real transplanted tier with a hand-authored vector table, because
  *    that is the only way to control a cosine precisely.
- * 4. **The stub is deterministic and NOT a fallback.** Determinism is what lets the
- *    differential oracle run the tier on both sides; not-a-fallback is what keeps the
+ * 4. **The stub is deterministic and NOT a fallback.** Determinism is what makes the
+ *    tier's findings pinnable without the 110 MB model; not-a-fallback is what keeps the
  *    fail-closed rule from having a hole in it.
  */
 
@@ -411,8 +411,8 @@ describe('PROPOSE-ONLY — the tier suggests ops, it never decides', () => {
 
 describe('the stub embedder', () => {
   it('is DETERMINISTIC — the same text always yields the same vector', async () => {
-    // The property the differential oracle rests on: both sides compute identical
-    // vectors for identical text, so any divergence is a real divergence.
+    // The property every pinned cosine in this file rests on: identical text yields
+    // identical vectors, so a changed assertion means changed behavior and not a reroll.
     const a = await stubEmbedder()(['issue a session token', 'revoke the token'])
     const b = await stubEmbedder()(['issue a session token', 'revoke the token'])
     expect([...(a[0] ?? [])]).toEqual([...(b[0] ?? [])])

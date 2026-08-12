@@ -11,13 +11,12 @@
  *
  * Two places the conversion could go, and only one is defensible:
  *
- * - INSIDE the tier — translate at each of the ~40 files' call sites. That means
- *   40 files diverge from the donor, the `donor-fidelity.test.ts` verbatim guard
- *   loses its teeth, and the differential oracle degrades from "two pipelines, one
- *   document" to "two pipelines, two documents that are supposed to be equivalent"
- *   — which is precisely the comparison the oracle exists to avoid making by hand.
- * - AT THE BOUNDARY — one function, here. The tier stays byte-identical, and the
- *   oracle hands ONE object to both pipelines.
+ * - INSIDE the tier — translate at each of the ~40 files' call sites. That edits 40
+ *   files of FROZEN vendored code, turning a tree nobody touches into a tree with 40
+ *   hand-made exceptions. Every future question about the tier then starts with "is
+ *   this the tier's behavior or ours?".
+ * - AT THE BOUNDARY — one function, here. The tier stays untouched, and there is
+ *   exactly one place where a v3 document becomes the v2 view it reads.
  *
  * So: here.
  *
@@ -68,9 +67,10 @@ import type { Requirement as DonorRequirement } from '../donor/core/schema.ts'
  * v3 type is exact-optional (`exactOptionalPropertyTypes`), so an absent key is
  * genuinely absent, and preserving that distinction across the boundary matters:
  * the tier tests `trigger !== undefined`, and `{trigger: undefined}` vs `{}`
- * behaves the same for that test but differently under `JSON.stringify` — which
- * the differential oracle canonicalizes. Keeping absence as absence means the two
- * pipelines serialize identically.
+ * behaves the same for that test but differently under `JSON.stringify`. Keeping
+ * absence as absence means a projected document serializes to the same bytes a
+ * hand-written v2 document would, so anything that canonicalizes JSON — a fixture,
+ * a snapshot, an envelope diff — sees no spurious change.
  */
 export const toDonorRequirement = (r: DocumentRequirement): DonorRequirement => ({
   id: r.id,
@@ -84,10 +84,10 @@ export const toDonorRequirement = (r: DocumentRequirement): DonorRequirement => 
   sentence: r.sentence,
   priority: r.priority,
   status: r.status,
-  // Edge arrays are `readonly` in v3 and mutable in the donor type. Copied rather
-  // than cast: the tier does not mutate them, but a shared array between the two
-  // pipelines would make an accidental mutation in one visible in the other, which
-  // would corrupt the oracle in the most confusing possible way.
+  // Edge arrays are `readonly` in v3 and mutable in the tier's type. Copied rather than
+  // cast: the tier does not mutate them today, but sharing the array would make a future
+  // mutation inside frozen code reach back into the caller's document — an aliasing bug
+  // in the most confusing possible place.
   derives: [...r.derives],
   satisfies: [...r.satisfies],
   verifies: [...r.verifies],

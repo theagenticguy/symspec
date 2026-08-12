@@ -3,23 +3,21 @@
  *
  * ## Transplanted, not rewritten
  *
- * Every string below is byte-identical to the donor's `src/cli/scope-text.ts`, extracted
- * PROGRAMMATICALLY from the live donor's `SCOPE` object rather than retyped. That is the
- * same discipline the three code catalogs follow, and for a stronger reason: these
- * sentences are the LOAD-BEARING HONESTY of the whole tool. "Silence is not a
- * consistency certificate" is the claim that keeps a clean `check` from being read as a
- * proof, and a paraphrase of it that drifted toward reassurance would be the single most
- * damaging edit anyone could make to this repo.
+ * Every string below was extracted programmatically rather than retyped. That is the same
+ * discipline the three code catalogs follow, and for a stronger reason: these sentences
+ * are the LOAD-BEARING HONESTY of the whole tool. "Silence is not a consistency
+ * certificate" is the claim that keeps a clean `check` from being read as a proof, and a
+ * paraphrase of it that drifted toward reassurance would be the single most damaging edit
+ * anyone could make to this repo.
  *
- * `scope.test.ts` re-extracts from the donor and diffs, so a divergence is a test
- * failure rather than a silent softening.
+ * `scope.test.ts` pins all seven verbatim against a frozen copy, so rewording one is a
+ * deliberate two-place edit that shows up as a diff — never a silent softening.
  *
- * ## Why the greenfield needs its own copy at all
+ * ## Why this module owns the corpus
  *
- * The donor's version is Zod-shaped (`z.literal(...)` pinned into a manifest schema) and
- * the greenfield ships no Zod. More importantly, the two agent-facing surfaces G3 builds
- * — the installed skill body and the generated `AGENTS.md` — both have to quote the
- * disclosure, and they must quote it from a module inside the package they ship with.
+ * The two agent-facing surfaces — the installed skill body and the generated `AGENTS.md`
+ * — both have to quote the disclosure, and they must quote it from a module inside the
+ * package they ship with.
  *
  * ## The one string that is NOT carried over
  *

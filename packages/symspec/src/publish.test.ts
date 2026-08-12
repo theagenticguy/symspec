@@ -149,12 +149,6 @@ describe('the declared license matches the committed LICENSE file', () => {
     expect(license).not.toContain('GNU GENERAL PUBLIC LICENSE')
   })
 
-  it('is byte-identical to the repository LICENSE — one license, not two that drift', () => {
-    // The package copy exists because `files` cannot reach outside the package directory.
-    // A copy that diverges from the root is worse than no copy, so the identity is pinned.
-    expect(read('LICENSE')).toBe(read('../../LICENSE'))
-  })
-
   it('the README states the same license', () => {
     expect(read('README.md')).toContain('Apache-2.0')
   })

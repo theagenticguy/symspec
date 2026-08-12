@@ -1,19 +1,18 @@
 /**
- * THE REACHABILITY FINDING CODES — greenfield-owned, appended to the 75.
+ * THE REACHABILITY FINDING CODES — greenfield-owned.
  *
  * ## Why these are not in `donor/formal/codes.ts`
  *
- * Because that file is asserted BYTE-IDENTICAL to the live donor
- * (`donor-fidelity.test.ts` reads both and diffs them), and the donor is frozen as the
- * differential oracle. Appending a code there would break the fidelity guard, which is
- * a worse trade than owning the new family here: the guard is what makes "the
- * transplant did not drift" checkable at all.
+ * Because `src/donor/**` is FROZEN. It is the vendored tier `operations/check.ts` runs on
+ * top of, so an edit there changes shipped behavior in code this package does not own and
+ * does not review as its own. Owning a new family here costs one union in
+ * `kernel/catalog.ts`; appending to the frozen tree costs the freeze.
  *
- * So the split is by PROVENANCE rather than by kind. The donor's 30 `FND_*` codes are
- * transplanted and frozen; these five are v5's own, and `kernel/catalog.ts` unions them
- * so `explain` and the manifest see one flat vocabulary. An agent cannot tell the
- * difference and should not need to — the codes are the API, and where the bytes live is
- * an implementation detail of keeping the oracle honest.
+ * So the split is by PROVENANCE rather than by kind. The transplanted 30 `FND_*` codes
+ * stay where they are; these are v5's own, and `kernel/catalog.ts` unions them so
+ * `explain` and the manifest see one flat vocabulary. An agent cannot tell the difference
+ * and should not need to — the codes are the API, and where the bytes live is an
+ * implementation detail of keeping the vendored tier untouched.
  *
  * ## Append-only, and the ordering rule
  *

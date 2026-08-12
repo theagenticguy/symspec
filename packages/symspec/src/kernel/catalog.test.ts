@@ -37,10 +37,10 @@ import { descriptionOf, ERR_CLASSES, tagOf } from './errors.ts'
 
 describe('the unified catalog spans all three code families', () => {
   it('holds exactly 21 ERR_* / 36 FND_* / 24 GTWR_* = 81', () => {
-    // 36 FND_*: the donor's frozen 30, plus 6 `FND_REACHABILITY_*`. The two live in
-    // different files because `donor/formal/codes.ts` is byte-identity-guarded against the
-    // live donor, so appending there would break the transplant-fidelity check. They
-    // report the same `family`, because an agent switches on a code and not on provenance.
+    // 36 FND_*: the transplanted 30, plus 6 `FND_REACHABILITY_*`. The two live in
+    // different files because `src/donor/**` is FROZEN — appending a code there would edit
+    // vendored code this package does not own. They report the same `family`, because an
+    // agent switches on a code and not on provenance.
     expect(catalogCounts()).toEqual({ ERR: 21, FND: 36, GTWR: 24, total: 81 })
   })
 

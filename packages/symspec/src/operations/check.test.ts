@@ -6,11 +6,9 @@
  *
  * The document store is in-memory (so a test asserts against a document it built,
  * with no filesystem), but the SolverService Layer is the shipped one and Z3 really
- * boots. Stubbing the solver would make these tests assert the shape of a mock;
- * the whole point of `check` is what the solver concludes, and the differential
- * oracle in `../formal/differential.test.ts` compares those conclusions against the
- * donor. Here the concern is the SHELL: does an option reach the tier, does a
- * repair get attached, does the exit contract hold.
+ * boots. Stubbing the solver would make these tests assert the shape of a mock, and the
+ * whole point of `check` is what the solver concludes. Here the concern is the SHELL: does
+ * an option reach the tier, does a repair get attached, does the exit contract hold.
  *
  * ## The exit-code gap this file exists to keep closed
  *
@@ -751,10 +749,9 @@ describe('check — the solver Layer', () => {
  * 1. When a state model IS committed, the tier runs and its verdicts reach `findings[]`,
  *    `coverage.demotions[]`, `counts`, `verified`, and the exit code.
  * 2. When one is NOT committed, NOTHING changes — no key, no finding, no demotion. That
- *    is what keeps the differential oracle a strict byte comparison rather than one that
- *    excludes a new field, and it is asserted here as well as there because the oracle's
- *    fixtures could all grow a state model one day without anyone noticing this property
- *    had been the reason they were safe.
+ *    is what makes the tier a pure addition, and it is asserted DIRECTLY rather than left
+ *    implicit in the other fixtures: those could all grow a state model one day without
+ *    anyone noticing this property had been the reason they were safe.
  */
 describe('the reachability tier runs ONLY when a state model is committed (G4)', () => {
   /** A UUID-shaped id, so the document schema accepts it. */
@@ -831,7 +828,7 @@ describe('the reachability tier runs ONLY when a state model is committed (G4)',
       docOf(req({ id: rid(1), sentence: 'The system shall operate.' })),
     )
     // ABSENT, not empty — the key must not exist at all, which is what leaves the payload
-    // byte-identical to a G3 run and keeps the differential oracle strict.
+    // byte-identical to a run from before this tier existed.
     expect('reachability' in payload).toBe(false)
     expect(payload.findings.some((f) => f.code.startsWith('FND_REACHABILITY'))).toBe(false)
     expect(
@@ -963,10 +960,9 @@ describe('the reachability tier runs ONLY when a state model is committed (G4)',
  * Three claims, and the ORDER they are asserted in is the order they would break in:
  *
  * 1. **Absent reproduces the shared behavior byte for byte.** This is what keeps the flag
- *    a pure addition: the differential oracle's 53 cases and the worked fixture were all
- *    pinned against `--timeout-ms` governing both, and none of them passes the new flag.
- *    A resolver that defaulted to a constant instead of inheriting would move fixture
- *    output on documents nobody edited.
+ *    a pure addition: every existing fixture was pinned against `--timeout-ms` governing
+ *    both, and none of them passes the new flag. A resolver that defaulted to a constant
+ *    instead of inheriting would move fixture output on documents nobody edited.
  * 2. **Present overrides ONLY this tier.** The reason the split exists: raising a
  *    reachability bound 20x to decide an UNKNOWN must not hand seven per-pair
  *    propositional solvers 20x the rope.

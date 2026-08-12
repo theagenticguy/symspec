@@ -3,15 +3,13 @@
  *
  * ## Three claims, and they are separable
  *
- * 1. **A DIFFERENTIAL against the donor's ladder.** The transplanted ladder and the
- *    live donor's are run over one corpus and their outcomes diffed field by field.
- *    This is the same discipline as the formal tier's oracle, applied to the tier
- *    whose two files were EDITED (`result.ts`, `batch.ts`) — which is exactly where
- *    a transplant's drift would live, since `tier1`/`tier2`/`tier3` are
- *    byte-identical and already covered by the fidelity guard.
+ * 1. **Branch COVERAGE of the ladder**, over a corpus chosen so every outcome, every
+ *    error code, and every EARS pattern is reached. Coverage is asserted rather than
+ *    assumed, because a corpus that stopped reaching a branch would still pass every
+ *    test that reads it.
  * 2. **The AC-A-4 one-name property**, asserted directly rather than by inspection:
  *    a suggestion that names a backticked field must name a field that EXISTS on the
- *    object carrying it. That is the donor defect, stated as a test.
+ *    object carrying it.
  * 3. **Tier-2 gating**, which is a performance contract with a correctness tell: a
  *    clean sentence must never load the ~4.5 MB wink model. Asserted by injecting a
  *    loader and checking it was NOT called — the only way to see it, since a loaded
@@ -20,10 +18,6 @@
 
 import { Effect, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
-// The LIVE DONOR's ladder, imported across the package boundary the same way the
-// formal oracle imports its pipeline.
-import { parseBatch as donorParseBatch } from '../../../../src/parse/batch.ts'
-import { parseLine as donorParseLine } from '../../../../src/parse/result.ts'
 import { decodeOp } from '../core/ops.ts'
 import { parseBatch } from '../donor/parse/batch.ts'
 import { parseLine } from '../donor/parse/result.ts'
@@ -37,11 +31,11 @@ import { StreamSource } from './stream.ts'
 // ---------------------------------------------------------------------------
 
 /**
- * The differential corpus: one line per ladder behavior worth pinning.
+ * The corpus: one line per ladder behavior worth pinning.
  *
- * Chosen to cover every OUTCOME and every code, because the diff is only as strong
- * as the paths it reaches — the fixture-coverage rule from the oracle blind-spot
- * lesson ("for every field the boundary carries, which fixture would FAIL if it were
+ * Chosen to cover every OUTCOME and every code, because a suite is only as strong as
+ * the paths it reaches — the fixture-coverage rule from the oracle blind-spot lesson
+ * ("for every field the boundary carries, which fixture would FAIL if it were
  * dropped?") applied to the ladder's own branches.
  */
 const CORPUS = [
@@ -73,39 +67,15 @@ const CORPUS = [
 ] as const
 
 // ---------------------------------------------------------------------------
-// 1. The differential
+// 1. Branch coverage of the ladder
 // ---------------------------------------------------------------------------
 
-/**
- * Project a result onto everything BOTH ladders carry.
- *
- * `proposedOp`/`proposedOps` are deliberately EXCLUDED here and asserted separately
- * below: they are the v5 addition (the donor's success path had no op at all, and its
- * error path used a different name for a different shape), so including them would
- * fail every case for a reason that is not drift. Everything else — outcome, pattern,
- * every slot, polarity, confidence, tier, notes, code, the full error text, every
- * suggestion, and the partial skeleton — IS compared.
- */
-const comparable = (result: unknown): unknown => {
-  const r = result as Record<string, unknown>
-  const { proposedOp: _op, proposedOps: _ops, proposedSplits: _splits, ...rest } = r
-  return rest
-}
-
-describe('DIFFERENTIAL — the transplanted ladder matches the live donor', () => {
-  it.each(
-    CORPUS.map((line) => [line || '<empty>', line] as const),
-  )('%s parses identically', async (_label, line) => {
-    const mine = await parseLine(line)
-    const theirs = await donorParseLine(line)
-    // `toEqual` on the projections, so a NEW field on one side surfaces as a diff
-    // rather than being silently outside the comparison.
-    expect(comparable(mine)).toEqual(comparable(theirs))
-  })
-
-  it('agrees on the whole BATCH, including the line policy and the summary', async () => {
-    // The batch text exercises what the per-line cases cannot: blank-line and
-    // comment-line DROPPING, list-marker stripping, and the resulting summary.
+describe('the ladder reaches every branch the corpus exists to exercise', () => {
+  it('drops blank and comment lines, strips list markers, and summarizes the batch', async () => {
+    // The batch path exercises what per-line cases cannot: blank-line and comment-line
+    // DROPPING, list-marker stripping, and the resulting summary. Six of the nine lines
+    // below carry content; the bare `-` and the whitespace-only line are dropped by the
+    // line policy rather than parsed and rejected, which is the distinction being pinned.
     const text = [
       '# Requirements',
       '',
@@ -118,16 +88,32 @@ describe('DIFFERENTIAL — the transplanted ladder matches the live donor', () =
       'The record shall be persisted',
     ].join('\n')
 
-    const mine = await parseBatch(text)
-    const theirs = await donorParseBatch(text)
+    const batch = await parseBatch(text)
 
-    expect(mine.summary).toEqual(theirs.summary)
-    expect(mine.results).toHaveLength(theirs.results.length)
-    expect(mine.results.map(comparable)).toEqual(theirs.results.map(comparable))
+    // The `#` heading, the blank line, the bare `-`, and the whitespace-only line are
+    // DROPPED — they never become results and never move a counter.
+    expect(batch.results).toHaveLength(5)
+    expect(batch.summary).toEqual({ ok: 3, skipped: 1, error: 1 })
+
+    // List markers are stripped before parsing, so a marked line parses as a requirement
+    // rather than failing on its leading punctuation.
+    const first = batch.results[0]
+    expect(first?.outcome).toBe('ok')
+    if (first?.outcome === 'ok') {
+      expect(first.pattern).toBe('ubiquitous')
+      expect(first.slots.systemName).toBe('api')
+    }
+
+    // The distinction the policy exists to make, and the one that is easy to collapse: a
+    // no-modal BULLET is `skipped` (content the author wrote that is not a requirement),
+    // not dropped (structure). Collapsing the two hides "you wrote 12 bullets and 3 of
+    // them are not requirements" behind a silent omission.
+    expect(batch.results[1]?.outcome).toBe('skipped')
   })
 
-  it('is NON-VACUOUS: the corpus reaches every outcome and every parse code', async () => {
-    // A differential that agrees because both sides did nothing is not a differential.
+  it('reaches every outcome and every parse code', async () => {
+    // Asserted rather than assumed: a corpus that quietly stopped reaching a branch would
+    // still pass every test that reads it, and the missing branch is the finding.
     const results = await Promise.all(CORPUS.map((line) => parseLine(line)))
     const outcomes = new Set(results.map((r) => r.outcome))
     expect([...outcomes].sort()).toEqual(['error', 'ok', 'skipped'])
@@ -149,9 +135,9 @@ describe('DIFFERENTIAL — the transplanted ladder matches the live donor', () =
 
 describe('AC-A-4 — one `proposedOps` name, and the suggestion names the real field', () => {
   it('the COMPOUND suggestion names a field the result ACTUALLY HAS', async () => {
-    // THE DONOR DEFECT, as a test. Its tier3 suggestion said "`proposedOps` carries
-    // the ready-to-apply `add` ops" while the object it returned carried
-    // `proposedSplits`, so an agent that followed the instruction found nothing.
+    // The property an agent depends on: a suggestion that names a backticked field must
+    // name a field the object carrying it actually has, or following the instruction finds
+    // nothing. `proposedSplits` is deliberately absent — there is ONE name for this shape.
     const result = await parseLine('The auth service shall issue a token and log the attempt')
     expect(result.outcome).toBe('error')
     if (result.outcome !== 'error') return
@@ -168,21 +154,6 @@ describe('AC-A-4 — one `proposedOps` name, and the suggestion names the real f
     // And it is the one name, not the donor's second one.
     expect(named).toContain('proposedOps')
     expect('proposedSplits' in result).toBe(false)
-  })
-
-  it('the DONOR would FAIL that assertion — the defect is real, not hypothetical', async () => {
-    // The negative control. Without it, the test above could be passing because the
-    // donor was already correct and there was nothing to fix.
-    const theirs = await donorParseLine('The auth service shall issue a token and log the attempt')
-    expect(theirs.outcome).toBe('error')
-    if (theirs.outcome !== 'error') return
-    const named = theirs.suggestions
-      .flatMap((s) => [...s.matchAll(/`(proposed[A-Za-z]*)`/g)])
-      .map((m) => m[1])
-    expect(named).toContain('proposedOps')
-    // ...and the donor's object does NOT have it. This is the bug, pinned.
-    expect('proposedOps' in theirs).toBe(false)
-    expect('proposedSplits' in theirs).toBe(true)
   })
 
   it('every proposed op DECODES as a real DocumentOp', async () => {

@@ -3,14 +3,11 @@
  *
  * ## What this operation is, structurally
  *
- * A thin Effect shell over the TRANSPLANTED donor pipeline
- * (`../donor/pipeline/check.ts`, byte-identical to the donor's), plus two
- * v5 additions the donor's report shape did not carry. The pipeline itself is
- * untouched on purpose: the differential oracle (`../formal/differential.test.ts`)
- * runs the donor's `runCheck` and this operation over the same documents and
- * requires byte-identical `findings` / `demotions` / `verified`. Any behavioral
- * edit inside the tier would be a wave-gate failure, so this file adds only at the
- * boundary.
+ * A thin Effect shell over the vendored pipeline (`../donor/pipeline/check.ts`), plus two
+ * v5 additions its report shape does not carry. The pipeline itself is untouched on
+ * purpose: `src/donor/**` is FROZEN, so every behavioral claim this tool makes about a
+ * proof comes from code no one here has edited. That is the whole reason the boundary
+ * exists — this file adds only at the seam, and never inside.
  *
  * The shell's four jobs:
  *
@@ -19,16 +16,16 @@
  * 2. Run `runCheck` THROUGH the `SolverService` Layer, so every solver call rides
  *    the Layer-owned WASM instance and the process can exit cleanly.
  * 3. Add the v5 fields: `repair` on every demotion (AC-A-1), `data.progress`
- *    (AC-A-2), and `data.budgetHint` (AC-A-8, G3) — all ADDITIVE, which is what lets
- *    the differential oracle exclude exactly them and stay a strict comparison of
- *    everything else.
+ *    (AC-A-2), and `data.budgetHint` (AC-A-8, G3) — all ADDITIVE, so the tier's own
+ *    `findings` / `demotions` / `verified` pass through unmodified and a reader can tell
+ *    which parts of the envelope the tier decided from which parts this shell added.
  * 4. Validate the option surface up front, with the donor's exact usage errors.
  *
  * ## Why the whole run is ONE Effect.promise and not per-tier Effects
  *
  * `runCheck` is a plain `async` function that internally calls seven solver tiers.
- * Effect-izing its interior would mean editing the transplanted file — the one
- * thing the oracle forbids. So the whole run is wrapped once, and the interruption
+ * Effect-izing its interior would mean editing the frozen tier — the one thing this
+ * boundary exists to avoid. So the whole run is wrapped once, and the interruption
  * discipline is satisfied differently but soundly:
  *
  * - the Layer OWNS the module, so the process can always be brought to a clean
@@ -107,9 +104,9 @@ export const MAX_TEMPORAL_BOUND = 200
  * A `false` here would mean the process outlives the check — a server, a watch
  * mode, a batch runner — and then an interrupted `runCheck` would leave the WASM
  * module wedged for every subsequent request. The fix at that point is to route
- * each tier through `SolverService.solve`, which requires Effect-izing the
- * transplanted pipeline and therefore retiring the byte-identity oracle. Recorded
- * as a value so that trade is a deliberate decision rather than a surprise.
+ * each tier through `SolverService.solve`, which requires Effect-izing the FROZEN tier
+ * and therefore giving up the freeze. Recorded as a value so that trade is a deliberate
+ * decision rather than a surprise.
  */
 export const CHECK_IS_TERMINAL = true
 
@@ -146,9 +143,8 @@ export const REACHABILITY_TIMEOUT_IS_CANCELLABILITY = true
  * Resolve the reachability tier's per-query bound.
  *
  * 0 is the INHERIT sentinel, not an "unbounded" one, and inheriting `--timeout-ms` is what
- * makes the flag a pure addition: every existing fixture, the differential oracle's 53
- * cases, and the worked fixture all pass `--reachability-timeout-ms` absent, so they get
- * byte-identical output to the shared-knob behavior they were pinned against.
+ * makes the flag a pure addition: every existing fixture passes `--reachability-timeout-ms`
+ * absent, so each one keeps the output it was pinned against instead of needing a re-pin.
  *
  * Zero-is-inherit rather than a nullable field for the reason `check --fail-on-unmatched`
  * documents at length: a negative sentinel is UNREACHABLE from a shell (the CLI reads a
@@ -247,10 +243,9 @@ export interface ReachabilitySummary {
  *
  * Every donor field keeps its name and meaning — `findings`, `excluded`,
  * `pairsChecked`, `waived`, `counts`, `residualRisk`, `coverage`, `verified`,
- * `strictGate`. That is agent API, not legacy, and the differential oracle asserts
- * it byte-for-byte. `progress` and the `repair` inside `coverage.demotions[]` are
- * ADDITIVE, which is why the oracle can exclude exactly those two and still be a
- * strict comparison of everything else.
+ * `strictGate`. That is agent API, not legacy. `progress` and the `repair` inside
+ * `coverage.demotions[]` are ADDITIVE, so a consumer reading only the tier's fields sees
+ * exactly what the tier decided, and the two v5 fields are separable from it by name.
  */
 export interface CheckPayload extends Omit<CheckReport, 'coverage'> {
   readonly coverage: Omit<CheckReport['coverage'], 'demotions'> & {
@@ -262,10 +257,10 @@ export interface CheckPayload extends Omit<CheckReport, 'coverage'> {
    * The unbounded reachability tier's own summary (G4) — present ONLY when a state model
    * is committed.
    *
-   * ABSENT, not empty, on a document with no state model, and that absence is what keeps
-   * the differential oracle strict: a document without a state model produces a payload
-   * with no `reachability` key at all, so the diff against the donor is unchanged rather
-   * than excluding-a-field. The tier's own "I did not run" disclosure travels as a
+   * ABSENT, not empty, on a document with no state model. That absence is what makes the
+   * tier a pure addition: such a document produces a payload with no `reachability` key at
+   * all, so an envelope pinned before this tier existed still matches byte-for-byte
+   * instead of needing the field excluded. The tier's own "I did not run" disclosure travels as a
    * FINDING (`FND_REACHABILITY_NOT_CHECKED`) rather than as this field, because a
    * disclosure an agent has to know to look for is not a disclosure.
    *
@@ -807,9 +802,8 @@ export const checkOp = defineOperation({
       // The gate is `stateModel.variables.length > 0`, and it is what keeps this a PURE
       // ADDITION: a document with no state model takes the `undefined` branch, so its
       // payload has no `reachability` key, no reachability findings, and no reachability
-      // demotions — byte-identical to G3. The differential oracle's fixtures are all
-      // state-model-free, so it stays a strict comparison rather than one that excludes a
-      // new field.
+      // demotions — byte-identical to a run from before this tier existed, so no
+      // state-model-free fixture had to be re-pinned.
       //
       // Deliberately AFTER `runCheck` and outside the `--solver-budget-ms` measurement:
       // the budget bounds the transplanted tiers, and folding a new tier into the number
@@ -863,9 +857,9 @@ export const checkOp = defineOperation({
             requirementIds: [...f.requirementIds],
             message: f.message,
             ...(f.evidence !== undefined
-              ? // The donor's `Evidence` shape is an atom table plus an unsat core, which a
+              ? // The tier's `Evidence` shape is an atom table plus an unsat core, which a
                 // reachability invariant is not. Cast at this ONE boundary rather than
-                // widening the transplanted type, so `donor-fidelity` stays byte-exact.
+                // widening a type inside the frozen tree.
                 { evidence: f.evidence as unknown as NonNullable<CheckFinding['evidence']> }
               : {}),
           }),
