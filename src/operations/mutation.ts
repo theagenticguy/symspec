@@ -50,6 +50,11 @@ import { type DocumentOp, decodeOp, RELATION_EDGE_OP } from '../core/ops.ts'
 import { DOC_PATH_CONVENTION, DocPath, DocStore } from '../core/store.ts'
 import { buildAntonymIndexWithDoc } from '../donor/formal/antonyms.ts'
 import { normalize } from '../donor/formal/atomize.ts'
+// STATIC. A dynamic import here bought nothing: `operations/parse.ts` imports
+// `donor/parse/batch.ts` statically and that imports `result.ts` statically, so the parse
+// ladder is in the main chunk on every run regardless. The lazy form only added an await
+// and made the build report an ineffective dynamic import.
+import { parseLine } from '../donor/parse/result.ts'
 import { ok } from '../kernel/envelope.ts'
 import {
   ErrDuplicateId,
@@ -399,7 +404,6 @@ export const addOp = defineOperation({
       // `proposedOp` is consumed directly — no field-by-field transcription, which is
       // where the donor lost the `negated` flag unless `cli/add.ts` remembered it.
       if (input.fromParse !== null) {
-        const { parseLine } = yield* Effect.promise(() => import('../donor/parse/result.ts'))
         const parsed = yield* Effect.promise(() => parseLine(input.fromParse as string))
 
         if (parsed.outcome === 'skipped') {
