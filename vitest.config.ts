@@ -4,31 +4,35 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    // The semantic tier is core: every CLI `check` loads the embedding model.
-    // Tests run against the deterministic hash stub (see formal/embed.ts) so
-    // spawned-CLI tests don't need the ~110 MB model; child processes inherit
-    // this env. Unit tests that need real similarity semantics keep injecting
-    // fake embedders directly.
+    include: ['src/**/*.test.ts'],
+    // The semantic tier runs on every `check`, and its model is a ~110 MB
+    // sha256-pinned download. `SYMSPEC_EMBED_STUB=1` selects the DETERMINISTIC hash
+    // embedder so the suite — and every SPAWNED CLI test, which inherits this env —
+    // exercises the always-on tier without the model.
+    //
+    // Carried over from the donor's config for the same reason, and worth restating:
+    // the stub is NOT a fallback. Without this variable a missing model still fails
+    // closed with ERR_EMBED_MODEL_MISSING, which `formal/embedder.test.ts` asserts by
+    // deleting the variable for the duration of one case. Tests that need real
+    // similarity SEMANTICS inject a hand-authored vector table instead, since the
+    // stub's cosines are meaningless by design.
     env: { SYMSPEC_EMBED_STUB: '1' },
-    // Vitest's bare 5000ms default has no headroom for this suite. Several tests
-    // spawn the CLI as `npx tsx` CHILD PROCESSES (each ~0.6-1.1s of Node+tsx boot)
-    // and several drive real Z3-WASM solves; the slowest legitimately sit at
-    // 2.4-3.7s in isolation. Because vitest runs test FILES in parallel, a busy
-    // machine (a loaded CI runner, or a dev box running other work) pushes those
-    // past 5000ms and the suite fails on scheduling latency rather than on any
-    // behavioral regression — a flaky gate, which is worse than a slow one since
-    // it trains people to re-run instead of read. 20s restores a ~5x margin over
-    // the slowest real test while still catching a genuine hang.
-    testTimeout: 20_000,
-    // Same reasoning for `beforeAll`/`afterAll`: the CLI-spawning suites do their
-    // fixture setup (init + several `add`s, each its own subprocess) in hooks.
-    hookTimeout: 20_000,
-    include: ['src/**/*.test.ts', 'adversarial/**/*.test.ts'],
-    coverage: {
-      provider: 'v8',
-      reporter: ['text', 'lcov', 'json'],
-      include: ['src/**/*.ts'],
-      exclude: ['src/**/*.test.ts', 'src/**/__tests__/**'],
-    },
+    // Several drift tests spawn the built bundle as a CHILD PROCESS (that is the
+    // point — the drift they guard is between the SHIPPED manifest and the
+    // SHIPPED help, not between two in-process function calls). Each spawn is a
+    // full node boot of a 2.2 MB bundle (~110ms quiet, ~330ms on a loaded box), so
+    // the bare 5000ms default has no headroom on a shared machine.
+    //
+    // The budget is sized against a MEASUREMENT, and it is restated when the
+    // measurement moves: slowest test 8.1s on an 8-core devbox, quiet. 45s keeps the
+    // ~5x margin that makes this a hang detector rather than a load detector — a
+    // 2-core CI runner is comfortably slower than quiet-devbox numbers, and a test
+    // that fails only under contention gets muted rather than fixed.
+    //
+    // Any loop over an independent SET of spawns runs concurrently (see
+    // `runJsonAsync` and the cached `commandHelp` map in `cli.test.ts`). That is the
+    // real fix; the timeout is only the backstop.
+    testTimeout: 45_000,
+    hookTimeout: 45_000,
   },
 })

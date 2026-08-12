@@ -7,27 +7,12 @@ pre-commit:
       stage_fixed: true
 
 pre-push:
-  parallel: true
   jobs:
-    - name: typecheck
-      run: ./node_modules/.bin/tsc --noEmit
-
-    - name: test
-      run: ./node_modules/.bin/vitest run
-
-    - name: biome-ci
-      run: ./node_modules/.bin/biome ci .
-
-    - name: knip
-      run: ./node_modules/.bin/knip --no-progress
-
-    - name: agents-md-drift
-      run: pnpm run check:agents
-
-    # AC-2-8 committed feasibility gate: the bounded temporal tier must still
-    # refute the conflicting fixture, stay silent on the satisfiable one, and
-    # land inside `LATENCY_BUDGET_MS` (exit 1 infeasible / 2 crash). Also in
-    # `pnpm check`, so GitHub CI runs it too — this job only shortens the
-    # feedback loop for anyone with the hook installed.
-    - name: temporal-feasibility-gate
-      run: pnpm run gate:temporal
+    # One job, not five. `check` is `biome ci` + `tsc --noEmit` + the AGENTS.md drift
+    # gate + the reachability feasibility gate + `build` + `vitest run` + `knip`, in
+    # that order — and the order is the point: the CLI suite spawns `dist/cli.mjs`, so
+    # a bare `vitest run` tests whatever the last build left behind. Listing the steps
+    # separately here is how they drift out of that order, and it is also how the hook
+    # and CI end up gating different things.
+    - name: check
+      run: pnpm check

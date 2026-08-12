@@ -1,0 +1,79 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+# Least privilege at the top, granted per job below. `id-token: write` in particular must
+# never reach the release-please job — only the step that publishes needs an OIDC token.
+permissions: {}
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      # @v5, not the @v4 the action's own README still shows: v4 runs on the deprecated
+      # node20 runtime. The version lives in FOUR files (package.json, src/kernel/version.ts,
+      # README.md, and the generated AGENTS.md) and `extra-files` in
+      # release-please-config.json keeps them in step — every one of them is asserted to
+      # agree, so a partial bump reds the release PR's own CI.
+      - uses: googleapis/release-please-action@v5
+        id: release
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The OIDC token npm exchanges for a short-lived publish credential. This is the
+      # whole reason there is no NPM_TOKEN secret anywhere in this repo.
+      id-token: write
+    steps:
+      # The TAG, not the branch: `main` has already moved on by the time this runs, and the
+      # bytes that get published have to be the bytes that were released.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      # No `version:` — action-setup ERRORS when the workflow pins a version while
+      # package.json's `packageManager` also pins one. That field is the single source of
+      # truth, and it must be >= 11.1.3: earlier pnpm sends the literal
+      # `${NODE_AUTH_TOKEN}` that setup-node writes as a bearer token and 404s before OIDC
+      # can engage (pnpm#11513).
+      - uses: pnpm/action-setup@v6
+
+      # `registry-url` is load-bearing, not decorative: it is what writes the .npmrc that
+      # scopes the registry, and OIDC never engages without it.
+      #
+      # NODE_AUTH_TOKEN is deliberately NOT set — not even to an empty string. npm falls
+      # back to OIDC only when no static credential resolves, and an empty string is still
+      # a credential.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: pnpm install --frozen-lockfile
+
+      # The full gate again, on the tag. `prepack` builds during publish, so a tsdown
+      # failure would otherwise surface MID-PUBLISH; this makes it fail before anything
+      # touches the registry.
+      - run: pnpm check
+
+      # `--no-git-checks` because this is a detached checkout of a tag, and pnpm's default
+      # branch check rejects anything that is not the publish branch.
+      #
+      # `--tag latest` explicitly rather than relying on `publishConfig`: pnpm 11's native
+      # publish has open regressions ignoring publishConfig.access (#11728) and
+      # publishConfig.registry (#11419), so the flag is the signal that is known to be read.
+      #
+      # No `--provenance`: trusted publishing generates the attestation automatically.
+      - run: pnpm publish --no-git-checks --tag latest

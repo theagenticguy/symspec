@@ -6,28 +6,34 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      # No `version:` here — pnpm/action-setup@v4 ERRORS when the workflow pins a
+      # No `version:` here — pnpm/action-setup ERRORS when the workflow pins a
       # version while package.json's `packageManager` field also pins one. The
-      # packageManager pin (pnpm@11.1.1) is the single source of truth.
-      - uses: pnpm/action-setup@v4
+      # packageManager pin is the single source of truth.
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
 
+      # `prepare: tsdown` runs here, so `dist/` exists before anything else does.
       - run: pnpm install --frozen-lockfile
 
-      # `pnpm check` = biome ci + tsc --noEmit + check:agents (AGENTS.md drift)
-      # + gate:temporal (AC-2-8 bounded-LTL feasibility/polarity) + vitest run
-      # + knip. The two tsx-driven gates were pre-push-only before AC-2-8, which
-      # meant a contributor without the hook installed — and every CI path —
-      # never ran them. Keeping them inside `pnpm check` is what makes this one
-      # `run:` the whole merge gate; do not split them back out.
+      # `pnpm check` = biome ci + tsc --noEmit + check:agents (AGENTS.md drift) +
+      # gate:reachability (the unbounded tier's feasibility + latency budget) +
+      # build + vitest run + knip.
+      #
+      # ONE `run:` on purpose. Splitting the steps out is how the hook, this
+      # workflow, and `mise run check` drift into gating different things — and the
+      # ORDER matters: the CLI suite spawns `dist/cli.mjs`, so `build` has to precede
+      # `vitest` or the tests exercise whatever the last build left behind.
       - run: pnpm check

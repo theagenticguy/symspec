@@ -1,48 +1,57 @@
 /**
- * Pure EARS sentence renderer (AC-1-3).
+ * The pure EARS sentence renderer.
  *
- * The EARS domain model is 5 pattern types (`ubiquitous`, `event-driven`,
- * `state-driven`, `optional-feature`, `unwanted-behavior`) built from the 5
- * slots `patternType, preCondition, trigger, systemName, systemResponse`. The
- * canonical `sentence` field is ALWAYS rendered from those slots by
- * {@link renderSentence} — it is never authored directly. Callers (the
- * Change-record mutation path in `changes.ts`) re-run this renderer whenever an
- * EARS slot changes and skip it for metadata-only edits (AC-1-6's five-way
- * re-render gate). The combined "While P, when T, …" case renders when an
- * event-driven requirement also carries a precondition.
+ * ## Ported verbatim (behavior), retyped (surface)
  *
- * Pure: no I/O, no randomness, no mutation of its argument. Depends only on
- * the `Requirement`/EARS types in `schema.ts`, never the other direction —
- * this keeps the renderer safely importable from anywhere (CLI, parse tier,
- * tests) without pulling in Zod, storage, or the Change API.
+ * The five EARS templates and the `negated` polarity rule are the donor's
+ * `src/core/render.ts` byte-for-byte in their OUTPUT: the same clause order, the
+ * same punctuation, the same `While <pre>, when <trigger>, …` combination case.
+ * The document format changed in v5; the sentences it renders did not, which is
+ * what lets the donor's fixtures and the import round-trip compare rendered text
+ * across the two implementations.
+ *
+ * ## Why `sentence` is stored at all
+ *
+ * It is a DENORMALIZED view, never authored directly: reviewers scan a document
+ * as prose, and a stored sentence makes `git diff` on a requirements file
+ * readable without a tool. Every write path re-renders it from the slots, so the
+ * slots stay the single source of truth and the stored text cannot drift — the
+ * one exception being a hand-edited file, which `import` and the store disclose
+ * rather than silently rewrite.
+ *
+ * Pure: no I/O, no clock, no mutation of its argument.
  */
 
-import type { Requirement } from './schema.js'
+import type { EarsPattern } from './document.ts'
+
+/** The slot subset {@link renderSentence} reads. Deliberately narrower than a
+ * full requirement so the parse tier (G2) can render a partial before a
+ * requirement exists. */
+export interface SentenceSlots {
+  readonly patternType: EarsPattern
+  readonly preCondition?: string | undefined
+  readonly trigger?: string | undefined
+  readonly systemName: string
+  readonly systemResponse: string
+  readonly negated?: boolean | undefined
+}
 
 /**
- * Render an EARS sentence from its structured slots. Follows Mavin's
- * templates; pre-condition + trigger combine via "While <pre>, when
- * <trigger>, ...".
+ * Render the canonical EARS sentence from its structured slots.
  *
- * Response polarity: when `negated` is true (AC-2-4, the parse-time / create
- * `--negated` flag), the modal renders `shall not <systemResponse>`. The
- * `systemResponse` slot itself stays POSITIVE — negation is never baked into
- * the stored text — so `shall X` and `shall not X` differ only by this flag.
- * A plain `ReqView`/partial slot object without `negated` renders positively.
+ * Response polarity: `negated: true` renders `shall not <systemResponse>` while
+ * leaving `systemResponse` itself POSITIVE. That is what lets `shall X` and
+ * `shall not X` share one atom at opposite polarity so the formal tier (G2) sees
+ * them as contradictory rather than as two different strings.
  */
-export function renderSentence(
-  r: Pick<
-    Requirement,
-    'patternType' | 'preCondition' | 'trigger' | 'systemName' | 'systemResponse'
-  > & { negated?: boolean },
-): string {
+export const renderSentence = (r: SentenceSlots): string => {
   const shall = r.negated === true ? 'shall not' : 'shall'
   const resp = `the ${r.systemName} ${shall} ${r.systemResponse}`
   switch (r.patternType) {
     case 'ubiquitous':
       return `The ${r.systemName} ${shall} ${r.systemResponse}.`
     case 'event-driven':
-      return r.preCondition
+      return r.preCondition !== undefined && r.preCondition !== ''
         ? `While ${r.preCondition}, when ${r.trigger ?? ''}, ${resp}.`
         : `When ${r.trigger ?? ''}, ${resp}.`
     case 'state-driven':

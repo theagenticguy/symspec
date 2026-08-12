@@ -1,0 +1,39 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "project": ["src/**/*.ts", "scripts/**/*.ts"],
+  // `src/main.ts` is NOT listed: the `bin` field already makes it an entry, and knip
+  // reports the duplicate as a configuration hint.
+  "entry": ["scripts/*.ts"],
+
+  // MANDATORY, not convenience. `src/donor/**` is the vendored tier `check` runs on,
+  // and frozen code has unused exports BY DESIGN — `toEncodable`, `encodeIncluded`,
+  // `certifiedToFndCode` and friends exist because the tier they came from used them.
+  // Letting knip prune them is exactly the drift the freeze exists to prevent, and the
+  // prune would look like a tidy-up in review.
+  "ignore": ["src/donor/**"],
+
+  // Loaded through a variable dynamic import inside the tier, which no static analysis
+  // resolves. Declared because the tier needs them at runtime.
+  "ignoreDependencies": ["wink-nlp", "wink-eng-lite-web-model"],
+
+  // `check:agents` shells out to `diff` to compare the generated AGENTS.md.
+  "ignoreBinaries": ["diff"],
+
+  "rules": {
+    "dependencies": "error",
+    "devDependencies": "error",
+    "unlisted": "error",
+    "binaries": "error",
+    "unresolved": "error",
+    "files": "warn",
+
+    // OFF, deliberately. This package publishes its type vocabulary and its error
+    // classes as a readable surface — `ErrParseNoModal`, `StateOp`, `FindingSeverity`
+    // are named so a reader can follow the contract, not because something imports
+    // each one. Reporting 62 of those on every run trains the reader to skim past the
+    // rules above, which are the ones that catch a real problem.
+    "exports": "off",
+    "types": "off",
+    "duplicates": "warn"
+  }
+}

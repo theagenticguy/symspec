@@ -1,27 +1,21 @@
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
-  entry: {
-    // `index` is the importable library entry (AC-6-5, AC-7-2): the CLI is a
-    // thin formatter over the exact functions re-exported from `src/index.ts`.
-    // `dts: true` below emits `dist/index.d.ts` alongside it so consumers get
-    // full type information, not just the runtime JS.
-    index: 'src/index.ts',
-    cli: 'src/cli/index.ts',
-  },
-  format: 'esm',
+  entry: ['src/main.ts'],
+  format: ['esm'],
+  outDir: 'dist',
   platform: 'node',
   target: 'node24',
-  outDir: 'dist',
-  sourcemap: true,
-  dts: true,
-  clean: true,
+  dts: false,
+  sourcemap: false,
+  minify: false,
   treeshake: true,
+  clean: true,
   shims: false,
-  // tsdown externalizes everything in `dependencies` by default. Override:
-  // pull commander/zod into the bundle (they're pure JS and tree-shake
-  // cleanly).
-  deps: {
-    alwaysBundle: ['commander', 'zod'],
-  },
+  // tsdown externalizes `dependencies` by default, which would leave bare
+  // `import ... from "effect"` at the top of the bundle — not a single file at
+  // all (S2 finding 3). Inline the whole Effect surface so `dist/cli.mjs` runs
+  // under plain `node` with nothing resolved at runtime.
+  noExternal: [/^effect(\/|$)/, /^@effect\//],
+  outputOptions: { entryFileNames: 'cli.mjs' },
 })
