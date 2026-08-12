@@ -362,31 +362,43 @@ export interface CodeRow {
  *
  * ## All THREE code catalogs, not one
  *
- * The spec's standing constraint is that all 75 stable codes (21 `ERR_*` / 24
- * `GTWR_*` / 30 `FND_*`) survive with meanings intact, and that "codes are the API
- * agents switch on". G1 published only `errorCodes`, which was honest for a build
- * whose operations could not yet emit a finding — `check` did not exist. Once it
- * did, an agent reading the manifest to learn what `FND_CONTRADICTION` means found
- * nothing, and the codes it actually has to branch on were the two catalogs the
- * manifest omitted.
+ * The standing constraint is that every stable code survives with its meaning intact, and
+ * that "codes are the API agents switch on". Publishing only `errorCodes` is honest for a
+ * build whose operations cannot emit a finding; the moment one can, an agent reading the
+ * manifest to learn what `FND_CONTRADICTION` means finds nothing, and the codes it actually
+ * branches on are the ones the manifest omits. So `findingCodes` and `lintCodes` are here
+ * too, each read from its own description corpus — one projection each, no hand table.
  *
- * So `findingCodes` (FND_*) and `lintCodes` (GTWR_*) join it here, read from the
- * transplanted catalogs' own description corpora — one projection each, no hand
- * table. `manifest.test.ts` asserts the total is 75 and that each catalog's order is
- * its append-only order.
+ * ## And the honest-scope corpus, for the same reason
+ *
+ * `scope` is the boundary of what a verdict MEANS, and it belongs in the machine-readable
+ * contract rather than only in prose. An agent is told to read the manifest to learn the
+ * surface; if the disclosure that a clean `check` means "no conflict was proven" rather than
+ * "this spec is consistent" lives only in a README, the agent that follows instructions is
+ * exactly the one that never reads it.
+ *
+ * Published as the NAMED claims, not a joined paragraph, so an agent can branch on the one
+ * that bears on what it is about to conclude.
  */
 export interface Manifest {
   readonly apiVersion: number
   readonly version: string
   readonly operations: readonly ManifestOperation[]
   readonly exitCodes: readonly { readonly code: number; readonly meaning: string }[]
-  /** The 21 `ERR_*` operational-failure codes. An error envelope's `code`. */
+  /** The `ERR_*` operational-failure codes. An error envelope's `code`. */
   readonly errorCodes: readonly CodeRow[]
-  /** The 30 `FND_*` finding codes. A `check` finding's `code`. */
+  /** The `FND_*` finding codes. A `check` finding's `code`. */
   readonly findingCodes: readonly CodeRow[]
-  /** The 24 `GTWR_*` lint rule codes. A lint-tier finding's `code`, and what a
+  /** The `GTWR_*` lint rule codes. A lint-tier finding's `code`, and what a
    * `waive` op names. */
   readonly lintCodes: readonly CodeRow[]
+  /**
+   * What each tier's verdict MEANS, and what it does not — verbatim, claim by claim.
+   *
+   * Read this before trusting a `check` result. `silence` is the one that changes what an
+   * agent may conclude from a clean run.
+   */
+  readonly scope: Readonly<Record<string, string>>
 }
 
 /**
@@ -405,6 +417,7 @@ export const buildManifest = (args: {
   readonly errorCodes: readonly CodeRow[]
   readonly findingCodes: readonly CodeRow[]
   readonly lintCodes: readonly CodeRow[]
+  readonly scope: Readonly<Record<string, string>>
 }): Manifest => ({
   apiVersion: args.apiVersion,
   version: args.version,
@@ -418,6 +431,7 @@ export const buildManifest = (args: {
   errorCodes: args.errorCodes,
   findingCodes: args.findingCodes,
   lintCodes: args.lintCodes,
+  scope: args.scope,
 })
 
 // ---------------------------------------------------------------------------

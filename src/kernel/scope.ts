@@ -1,17 +1,24 @@
 /**
  * THE HONEST-SCOPE CORPUS — what symspec guarantees, and what it does not.
  *
- * ## Transplanted, not rewritten
+ * ## Why every word is pinned
  *
- * Every string below was extracted programmatically rather than retyped. That is the same
- * discipline the three code catalogs follow, and for a stronger reason: these sentences
- * are the LOAD-BEARING HONESTY of the whole tool. "Silence is not a consistency
- * certificate" is the claim that keeps a clean `check` from being read as a proof, and a
- * paraphrase of it that drifted toward reassurance would be the single most damaging edit
- * anyone could make to this repo.
+ * These sentences are the LOAD-BEARING HONESTY of the whole tool. "Silence is not a
+ * consistency certificate" is the claim that keeps a clean `check` from being read as a
+ * proof, and a paraphrase of it that drifted toward reassurance would be the single most
+ * damaging edit anyone could make to this repo.
  *
- * `scope.test.ts` pins all seven verbatim against a frozen copy, so rewording one is a
+ * `scope.test.ts` pins every claim verbatim against a frozen copy, so rewording one is a
  * deliberate two-place edit that shows up as a diff — never a silent softening.
+ *
+ * ## One claim per TIER that can be believed
+ *
+ * A tier that reaches a verdict owes the reader its boundary. The pairwise formal tier and
+ * the unbounded reachability tier make DIFFERENT claims — the first about requirements as
+ * atomized, the second about a state model a human declared — and the second is the
+ * stronger claim, which is exactly why its limits have to be stated here rather than left
+ * to whoever reads the `FND_REACHABILITY_*` descriptions. A tier whose guarantee is
+ * documented only in its own finding codes is a guarantee an agent learns AFTER trusting it.
  *
  * ## Why this module owns the corpus
  *
@@ -19,24 +26,23 @@
  * — both have to quote the disclosure, and they must quote it from a module inside the
  * package they ship with.
  *
- * ## The one string that is NOT carried over
+ * ## No pre-joined blob
  *
- * The donor's `SCOPE.text` (all seven claims joined into one paragraph) is deliberately
- * absent. It existed because the donor's manifest published a single `scope.text` field,
- * and a joined blob is worse than the parts for both consumers here: an agent switching
- * on a specific claim wants the named field, and a rendered surface wants the claims as
- * separate quoted paragraphs. {@link scopeParagraphs} produces the latter on demand, so
- * nothing needs a pre-joined constant that could fall out of sync with its own parts.
+ * There is deliberately no single string holding every claim at once. A joined paragraph is
+ * worse than the parts for every consumer: an agent switching on a specific claim wants the
+ * named field, and a rendered surface wants the claims as separate quoted paragraphs.
+ * {@link scopeParagraphs} produces the latter on demand, so nothing needs a constant that
+ * could fall out of sync with its own parts.
  */
 
 /**
- * The seven honest-scope claims, each a named field so an agent can branch on the one
- * it cares about rather than grepping a paragraph.
+ * The honest-scope claims, each a named field so an agent can branch on the one it cares
+ * about rather than grepping a paragraph.
  *
- * Order is the donor's, which is also the order they are worth reading: what the tier
- * proves, what its silence does NOT mean, the one false-positive risk, the three
- * not-decided boundaries, and finally the demotion-only rule that ties `verified` to all
- * of it.
+ * The order is the order they are worth reading: what the pairwise formal tier proves, what
+ * its silence does NOT mean, the one false-positive risk, the not-decided boundaries, what
+ * the unbounded reachability tier proves and about WHAT, and finally the demotion-only rule
+ * that ties `verified` to all of it.
  */
 export const SCOPE = {
   soundness:
@@ -51,6 +57,8 @@ export const SCOPE = {
     'Semantic similarity is a propose-only assist: the always-on embedding tier suggests glossary merges and opposition candidates for paraphrased or polar-opposite responses but never emits a conflict verdict, so `check` remains reproducible given the document, its glossary, and the pinned embedding model. A missing model fails the run closed (ERR_EMBED_MODEL_MISSING) rather than silently skipping the tier; pre-warm with `symspec download-model`.',
   numericChecked:
     'Numeric conflicts are checked over linear integer/real arithmetic (LIA/LRA): requirements placing jointly unsatisfiable bounds on the same per-system quantity (unit-normalized) are reported as FND_NUMERIC_CONTRADICTION. Nonlinear-integer arithmetic remains out of scope (undecidable).',
+  reachabilityModelScoped:
+    'The unbounded reachability tier proves a declared constraint over EVERY reachable state with no bound on path length (Z3 Spacer), every proof is independently re-verified by three plain-SMT obligations so a claim never rests on trusting the solver, and a violation carries the counterexample trace naming which requirements fired, in order. But the claim is about the STATE MODEL you declared, not about the requirement text: the `classify` expressions ARE the model, so a mis-declared effect yields a sound proof of the wrong thing. It runs only when a state model is committed (otherwise FND_REACHABILITY_NOT_CHECKED discloses that it did not run), its common success is FND_REACHABILITY_UNDER_HYPOTHESES — proved only once variables no requirement writes are held fixed, a hypothesis the document does not state, which demotes verified — and an unsatisfiable initial state makes every constraint hold vacuously, reported at error severity because it MASKS violations rather than merely failing to prove one.',
   coverageDemotion:
     '`data.verified` is a whole-document claim: it is true only when every requirement shares vocabulary with a peer (participates in a cross-requirement comparison), every opposition candidate has been triaged (committed via `antonym add`/`glossary add` or waived), and a decide-tier comparison actually ran. Propose-only findings and coverage statistics can only demote verified, never promote it. Each demotion is listed in `data.coverage.demotions` with the concrete command that discharges it, so an agent can iterate: `check --strict` (exit 3 on demotion) -> apply the listed ops or rewrite the named requirements -> re-check -> exit 0.',
 } as const
@@ -63,6 +71,7 @@ export const SCOPE_KEYS = [
   'contextualAmbiguityNotChecked',
   'semanticProposeOnly',
   'numericChecked',
+  'reachabilityModelScoped',
   'coverageDemotion',
 ] as const satisfies readonly (keyof typeof SCOPE)[]
 
