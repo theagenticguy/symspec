@@ -380,6 +380,8 @@ describe('no source string hand-types a count of the tool`s own surface', () => 
     expect(HAND_TYPED_COUNT.test('22 operations, all projections of one table')).toBe(true)
     expect(HAND_TYPED_COUNT.test('Omit for the measured default of 0.72.')).toBe(false)
     expect(HAND_TYPED_COUNT.test('exits 3 when the gate trips')).toBe(false)
-    expect(HAND_TYPED_COUNT.test('`${catalogCounts().total} codes`')).toBe(false)
+    // An INTERPOLATED count must not match: it is the fix, not the defect. Built by
+    // concatenation so the placeholder is not a template literal in this file.
+    expect(HAND_TYPED_COUNT.test(`\`\${'$'}{catalogCounts().total} codes\``)).toBe(false)
   })
 })
