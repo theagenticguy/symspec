@@ -57,6 +57,21 @@ const FILES = walk('src')
   .filter((f) => !GRAMMAR_NOT_COMMANDS.has(f))
   .sort()
 
+/**
+ * Each file read ONCE, shared by both sweeps below.
+ *
+ * They used to read every file per `it.each` case, so a ~130-file tree cost ~260 synchronous
+ * reads spread across ~260 test cases. `vitest.config.ts` is explicit that the 45s budget is a
+ * HANG detector rather than a load detector and that reducing contention is the real fix, not
+ * raising the timeout — and this suite is the one that added the contention. Per-file cases are
+ * kept, because a failure that names its file is worth more than a single opaque one.
+ */
+const SOURCES: ReadonlyMap<string, string> = new Map(
+  FILES.map((relative) => [relative, readFileSync(join(REPO_ROOT, relative), 'utf8')]),
+)
+
+const sourceOf = (relative: string): string => SOURCES.get(relative) ?? ''
+
 /** Every operation name the CLI actually registers. */
 const OPERATIONS = new Set(allOperations().map((op) => op.name))
 
@@ -305,7 +320,7 @@ describe('no source file spells a command the CLI cannot run', () => {
   })
 
   it.each(FILES)('%s', (relative) => {
-    const source = readFileSync(join(REPO_ROOT, relative), 'utf8')
+    const source = sourceOf(relative)
     const offenders: string[] = []
     for (const match of source.matchAll(/`(symspec [a-z][^`$]*?)`/g)) {
       // A trailing backslash is the source's ESCAPED closing backtick inside a template
@@ -362,7 +377,7 @@ describe('no source string hand-types a count of the tool`s own surface', () => 
 
   it.each(FILES)('%s', (relative) => {
     const offenders: string[] = []
-    for (const [i, line] of readFileSync(join(REPO_ROOT, relative), 'utf8').split('\n').entries()) {
+    for (const [i, line] of sourceOf(relative).split('\n').entries()) {
       if (isComment(line)) continue
       const hit = HAND_TYPED_COUNT.exec(line)
       if (hit !== null) offenders.push(`${relative}:${i + 1} "${hit[0]}"`)
