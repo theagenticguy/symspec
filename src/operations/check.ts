@@ -472,7 +472,7 @@ const CheckInput = Schema.Struct({
         '(FND_SIMILAR_SEMANTIC) and opposition candidates (FND_OPPOSITION_CANDIDATE) for pairs that',
         'did not already unify. ON by default.',
         'PROPOSE-ONLY, and that is doctrine rather than caution: a cosine never decides a conflict.',
-        'The only durable output is a SUGGESTED `glossary add` / `antonym add` op you commit after',
+        'The only durable output is a SUGGESTED `symspec glossary` / `symspec antonym` op you commit after',
         'review, and the deterministic solver then reads the COMMITTED table — which is what keeps',
         '`check` byte-reproducible given (document + tables + pinned model).',
         'These findings are info severity and can DEMOTE `data.verified` toward abstention (an',
@@ -927,6 +927,27 @@ export const checkOp = defineOperation({
         // demotion can therefore only push it toward false — the demotion-only doctrine,
         // which holds because nothing here ever REMOVES a demotion.
         verified: allDemotions.length === 0,
+        // And `strictGate` is recomputed from the SAME merged set, because it is a
+        // projection of `verified` and the two must not disagree in one envelope.
+        //
+        // The tier computes its gate before this boundary splices in the reachability
+        // demotions, so a run demoted ONLY by reachability published `verified: false`
+        // beside `strictGate: 'pass'` and exited 0 — while `--strict`'s own flag text
+        // promises exit 3 exactly when `verified` is false. `kernel/exit.ts` reads the
+        // field, not the boolean, so the gate is where the promise has to be kept.
+        //
+        // The `--fail-on-unmatched` half is deliberately NOT re-derived: it keys on
+        // `unmatchedAtoms`, which nothing here changes, so the tier's answer is already
+        // correct and recomputing it would mean duplicating a threshold comparison.
+        // Reading it back off the tier's own verdict keeps one owner per trigger.
+        ...(shaped.strictGate !== undefined
+          ? {
+              strictGate:
+                shaped.strictGate === 'fail' || (input.strict === true && allDemotions.length > 0)
+                  ? ('fail' as const)
+                  : ('pass' as const),
+            }
+          : {}),
         progress: {
           ...progressOf(full),
           demotions: allDemotions.length,

@@ -205,7 +205,15 @@ const splitSuggestions = (
   }
 }
 
-/** Assemble the shared projections of one description into a row's tail. */
+/**
+ * Assemble the shared projections of one description into a row's tail.
+ *
+ * `meaning`, `suggestions` and `example` stay VERBATIM. Only `commands` is normalized to
+ * the runnable form (see {@link extractCommands}), and the asymmetry is deliberate:
+ * `description` is byte-pinned to the vendored corpus by `catalog.test.ts`, so rewriting the
+ * prose here would leave `meaning` disagreeing with the `description` beside it in the same
+ * `explain` output. Prose quotes the corpus; `commands` is the field an agent runs.
+ */
 const projectionsOf = (
   description: string,
 ): Pick<CodeEntry, 'meaning' | 'suggestions' | 'commands'> & { readonly example?: string } => {

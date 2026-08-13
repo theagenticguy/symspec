@@ -26,6 +26,28 @@ catalog. `AGENTS.md` is generated, and `check:agents` fails on drift.
 
 Every failure is a blocker.
 
+### A gate never observed to fail is not known to be a gate
+
+Break the thing a new assertion guards, watch it go red, then put the sabotage in the
+commit message. `src/publish.test.ts:444` records a check that passed against a
+deliberately broken table; `scripts/reachability-feasibility.ts:8-18` records the
+donor gate that was well-built and wired to nothing — "a gate nobody runs is
+documentation with a non-zero exit code."
+
+A sabotage that does NOT break the test is worth recording too: it either proves the
+assertion is robust for a reason worth naming, or it shows the test is asserting
+something other than what its name says.
+
+### A derivable number in prose is a bug
+
+Counts and names come from the table or catalog that owns them, interpolated — never
+typed out. `explain`, the installed skill body, and `waive`'s own `--help` each said
+"75 codes" against a real 81, at three different times.
+
+The test needs a NEGATIVE guard: assert the stale literal is ABSENT. Asserting the
+correct number passes just as happily for a hardcoded copy, which is how the second and
+third instances survived a fix to the first.
+
 ## `src/donor/**` is FROZEN — never edit it
 
 That subtree is the vendored tier this tool's `check` actually runs on:

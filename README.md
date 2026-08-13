@@ -310,9 +310,10 @@ mechanical fix exists, read `action`".
 { "demotions": 3, "openFindings": 1, "atomsUncompared": 2 }
 ```
 
-All three at zero is exactly the fixed point: no demotions means `verified` is true, no error
-findings means exit 0, no uncompared atoms means the formal tier saw the whole document. **If
-none of the three moved after a repair batch, the batch did nothing.**
+All three at zero is exactly the fixed point: no demotions means `verified` is true — coverage
+was complete, which is a different claim from the spec being right — no error findings means
+exit 0, and no uncompared atoms means the formal tier saw the whole document. **If none of the
+three moved after a repair batch, the batch did nothing.**
 
 **`data.budgetHint`** — appears only when a run has something *measured* to say about its own
 `--solver-budget-ms`, extrapolated from the work this run completed and the time it took on
@@ -525,10 +526,15 @@ If you read one thing here, read the second claim.
 > initial state makes every constraint hold vacuously — reported at error severity because it
 > **masks** violations rather than merely failing to prove one.
 
-> `data.verified` is a **whole-document** claim: true only when every requirement shares
-> vocabulary with a peer, every opposition candidate has been triaged, and a decide-tier
-> comparison actually ran. Propose-only findings and coverage statistics can only **demote**
-> `verified`, never promote it.
+> `data.verified` is a **coverage** claim about the whole document, not a verdict on it: true
+> only when every requirement that *could* be cross-compared was, every opposition candidate
+> has been triaged, and a decide-tier comparison actually ran. It therefore does **not**
+> account for proven findings — a document with a proven contradiction reports
+> `verified: true` and exits 1, because "I compared enough to certify" and "the spec is
+> correct" are different claims and the exit codes keep them apart. A document with fewer than
+> two requirements is **vacuously verified**, disclosed through `coverage.pairsCheckedNote`
+> rather than as a demotion nothing could discharge. Propose-only findings and coverage
+> statistics can only **demote** `verified`, never promote it.
 
 **The practical consequence, stated once more because it is the thing most easily misread:** a
 clean `check` means *"no conflict was proven"*, never *"this spec is consistent"*.

@@ -1165,3 +1165,65 @@ describe('no command in a check envelope spells a nested subcommand', () => {
     )
   })
 })
+
+// ---------------------------------------------------------------------------
+// `--strict` honours its own flag text
+// ---------------------------------------------------------------------------
+
+/**
+ * The gate's promise, checked against the gate.
+ *
+ * `--strict`'s own description says it will "fail with exit 3 when data.verified is false".
+ * That is a claim about the MERGED verdict, but `strictGate` is computed inside the
+ * vendored tier from the tier's own `verified`, before the boundary splices in the
+ * reachability demotions. So a run whose only demotions come from reachability published
+ * `verified: false` beside `strictGate: 'pass'` and exited 0 — the flag silently not doing
+ * the one thing it exists to do.
+ *
+ * This is the shape that had no test: every other `--strict` case reaches a demotion the
+ * vendored tier already knows about, so the boundary's omission is invisible to them.
+ */
+describe('--strict fails on a demotion the BOUNDARY added, not just the tier', () => {
+  /** A document whose ONLY demotion is `reachability-not-checked`. */
+  const reachabilityOnlyDoc = (): RequirementsDocument => ({
+    ...docOf(
+      req({
+        id: 'dddddddd-0000-4000-8000-000000000001',
+        sentence: 'The system shall operate.',
+      }),
+    ),
+    stateModel: { variables: [{ name: 'granted', type: 'int', frame: 'volatile' }] },
+  })
+
+  it('the fixture really does demote, and ONLY from the boundary', async () => {
+    // Guards the test below from passing vacuously: if the fixture stopped demoting, or
+    // started demoting for a reason the tier itself raises, it would no longer exercise
+    // the seam.
+    const payload = await expectOk(reachabilityOnlyDoc())
+    expect(payload.verified).toBe(false)
+    expect(payload.coverage.demotions.map((d) => String(d.reason))).toEqual([
+      'reachability-not-checked',
+    ])
+  })
+
+  it('trips the gate, so the exit code is 3 rather than 0', async () => {
+    const payload = await expectOk(reachabilityOnlyDoc(), { strict: true })
+    // The flag's literal promise: verified false under --strict means the gate failed.
+    expect(payload.verified).toBe(false)
+    expect(payload.strictGate).toBe('fail')
+    // And the exit mapping reads that field, so this is the process contract too.
+    expect(exitCodeForEnvelope({ apiVersion: 1, type: 'check', data: payload })).toBe(
+      EXIT_INCONCLUSIVE,
+    )
+  })
+
+  it('still lets a PROVEN defect outrank the gate', async () => {
+    // Tightening the gate must not disturb the 1-vs-3 ordering: an error finding is a
+    // different answer from "I could not verify", and exit 1 keeps precedence.
+    const payload = await expectOk(contradictoryDoc(), { strict: true })
+    expect(payload.counts.error).toBeGreaterThan(0)
+    expect(exitCodeForEnvelope({ apiVersion: 1, type: 'check', data: payload })).toBe(
+      EXIT_FINDINGS_FAILURE,
+    )
+  })
+})
