@@ -16,6 +16,7 @@
 
 import { Effect, Schema } from 'effect'
 import { describe, expect, it } from 'vitest'
+import { normalize } from '../donor/formal/atomize.ts'
 import {
   DOC_VERSION,
   emptyDocument,
@@ -419,6 +420,107 @@ describe('edges and delete', () => {
 // ---------------------------------------------------------------------------
 
 describe('the side tables', () => {
+  /**
+   * The two glossary shapes that resolve by TABLE ORDER, refused at write time.
+   *
+   * `glossaryIndex` is a flat `normalize(alias) -> normalize(canonical)` map built by walking
+   * the groups, and lookup is one hop. So an alias in two groups is last-write-wins, and a
+   * canonical that is itself an alias never resolves. Neither errors downstream — both just
+   * quietly do something other than what the author asked. `applyOp` refuses them here for the
+   * same reason it validates an antonym pair here: the check path stays free of
+   * "this table was incoherent" branches.
+   *
+   * These matter more now that `propose-glossary` emits a whole PLAN of aliases at once.
+   */
+  it('REFUSES an alias that already belongs to another canonical', () => {
+    const base = ok(emptyDocument(), {
+      op: 'glossary',
+      canonical: 'issue a token',
+      alias: 'grant a token',
+    }).document
+    const result = applyOp(
+      base,
+      op({ op: 'glossary', canonical: 'mint a credential', alias: 'grant a token' }),
+      TS,
+    )
+    expect(isOpFailure(result)).toBe(true)
+    if (!isOpFailure(result)) return
+    expect(result.code).toBe('ERR_USAGE')
+    // Names BOTH canonicals, so an author does not have to go find the other one.
+    expect(result.error).toContain('issue a token')
+    expect(result.error).toContain('mint a credential')
+    // And the op that frees it, runnable.
+    expect(result.suggestions.join(' ')).toContain('--remove')
+  })
+
+  it('REFUSES a canonical that is already an alias — one-hop resolution', () => {
+    const base = ok(emptyDocument(), {
+      op: 'glossary',
+      canonical: 'issue a token',
+      alias: 'grant a token',
+    }).document
+    const result = applyOp(
+      base,
+      op({ op: 'glossary', canonical: 'grant a token', alias: 'mint a token' }),
+      TS,
+    )
+    expect(isOpFailure(result)).toBe(true)
+    if (!isOpFailure(result)) return
+    expect(result.error).toContain('cannot also be a canonical')
+    expect(result.suggestions.join(' ')).toContain('one hop')
+  })
+
+  it('REFUSES an alias of itself', () => {
+    const result = applyOp(
+      emptyDocument(),
+      op({ op: 'glossary', canonical: 'issue a token', alias: 'issue a token' }),
+      TS,
+    )
+    expect(isOpFailure(result)).toBe(true)
+  })
+
+  /**
+   * Case-only spellings are ONE group, and `--remove` reaches it.
+   *
+   * Exact-string matching made `"Issue a token"` and `"issue a token"` two groups that
+   * `glossaryIndex` then collapsed onto one key — the same defect arriving by a different
+   * door. The removal half has to match the same way, or the refusal above would point at an
+   * `--remove` that no-ops and leave the author stuck with a row they cannot free.
+   */
+  it('treats case-only variants as ONE group, in both directions', () => {
+    // `normalizeHead` INJECTED, the way `operations/mutation.ts` wires it. Without it the
+    // fallback is a bare trim, so the collision checks are case-sensitive — which is the
+    // documented default for a caller with no atomizer, and not what the CLI does.
+    const withNorm = (doc: RequirementsDocument, raw: unknown): OpSuccess => {
+      const result = applyOp(doc, op(raw), TS, { normalizeHead: normalize })
+      if (isOpFailure(result)) throw new Error(`expected success, got ${result.code}`)
+      return result
+    }
+    const first = withNorm(emptyDocument(), {
+      op: 'glossary',
+      canonical: 'issue a token',
+      alias: 'grant a token',
+    }).document
+    const second = withNorm(first, {
+      op: 'glossary',
+      canonical: 'Issue a token',
+      alias: 'mint a token',
+    })
+    expect(second.document.glossary).toHaveLength(1)
+    // The AUTHOR'S original spelling survives — committing an alias must not silently edit a
+    // row the author did not name.
+    expect(second.document.glossary[0]?.canonical).toBe('issue a token')
+    expect(second.document.glossary[0]?.aliases).toEqual(['grant a token', 'mint a token'])
+
+    const removed = withNorm(second.document, {
+      op: 'unglossary',
+      canonical: 'ISSUE A TOKEN',
+      alias: 'Grant A Token',
+    })
+    expect(removed.noop).toBe(false)
+    expect(removed.document.glossary[0]?.aliases).toEqual(['mint a token'])
+  })
+
   it('glossary add merges into an existing canonical, and is idempotent', () => {
     const first = ok(emptyDocument(), {
       op: 'glossary',

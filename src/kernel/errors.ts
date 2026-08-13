@@ -17,7 +17,7 @@
  * Every `description` below is byte-identical to the donor's
  * `src/core/codes.ts` `ErrCodeMeta` `.describe()` text — extracted
  * programmatically, not retyped, because these strings are the agent-facing
- * meaning of the code vocabulary and the spec keeps all 75 codes' "meanings
+ * meaning of the code vocabulary and the spec keeps every code's "meanings
  * intact". Each carries its own `Suggestion:` clause, which is why
  * {@link explainCode} can split one string into a description and a suggestion
  * without a second corpus.

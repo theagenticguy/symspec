@@ -486,10 +486,30 @@ const applyRemoveEdge = (
 // The side tables
 // ---------------------------------------------------------------------------
 
+/**
+ * Commit one synonym alias — refusing the two shapes that resolve by table ORDER.
+ *
+ * `glossaryIndex` (the atomizer's reader) is a flat `normalize(alias) -> normalize(canonical)`
+ * map built by iterating the groups, so a phrase appearing twice is silently last-write-wins,
+ * and lookup is ONE HOP, so a canonical that is itself an alias never resolves. Neither shape
+ * errors anywhere downstream; both just quietly do something other than what the author asked
+ * for. So both are refused HERE, at write time, which is the same discipline
+ * {@link MutateOptions.validateAntonyms} applies for the same reason — the check path stays
+ * free of "this table was incoherent" branches.
+ *
+ * Matching is done in NORMALIZED space because that is the space the index keys. Exact-string
+ * matching let `"Issue a token"` and `"issue a token"` become two groups that
+ * `glossaryIndex` then collapses onto one key, which is the same defect arriving by a
+ * different door. The stored spelling of an existing canonical is preserved rather than
+ * rewritten: an author's capitalization is theirs, and rewriting it would make committing an
+ * alias silently edit a row the author did not name.
+ */
 const applyGlossary = (
   document: RequirementsDocument,
   op: Extract<DocumentOp, { op: 'glossary' }>,
+  options: MutateOptions,
 ): OpSuccess | OpFailure => {
+  const norm = options.normalizeHead ?? ((s: string) => s.trim())
   const canonical = op.canonical.trim()
   const alias = op.alias.trim()
   if (canonical.length === 0 || alias.length === 0) {
@@ -497,36 +517,90 @@ const applyGlossary = (
       'Both fields name a RESPONSE phrasing, e.g. canonical "issue a session token", alias "issue a login credential".',
     ])
   }
+  const canonicalKey = norm(canonical)
+  const aliasKey = norm(alias)
+  if (canonicalKey === aliasKey) {
+    return fail('ERR_USAGE', `"${canonical}" cannot be an alias of itself.`, [
+      'A glossary entry unifies two DIFFERENT phrasings; these normalize to the same key.',
+    ])
+  }
 
-  const entry = document.glossary.find((e) => e.canonical === canonical)
-  // IDEMPOTENT: this exact alias already sits under this canonical.
-  if (entry?.aliases.includes(alias) === true) {
+  const entry = document.glossary.find((e) => norm(e.canonical) === canonicalKey)
+  // IDEMPOTENT: this alias already sits under this canonical.
+  if (entry?.aliases.some((a) => norm(a) === aliasKey) === true) {
     return { document, noop: true }
   }
+
+  // The alias already belongs to a DIFFERENT group. Accepting would put one key in two
+  // groups, and the winner would be whichever group `glossaryIndex` visits last.
+  const otherOwner = document.glossary.find(
+    (e) => norm(e.canonical) !== canonicalKey && e.aliases.some((a) => norm(a) === aliasKey),
+  )
+  if (otherOwner !== undefined) {
+    return fail(
+      'ERR_USAGE',
+      `"${alias}" is already an alias of "${otherOwner.canonical}", so it cannot also be an alias of "${canonical}".`,
+      [
+        `Free it first: \`symspec glossary "${otherOwner.canonical}" "${alias}" --remove\`.`,
+        `Or point this entry at "${otherOwner.canonical}" instead, if that is the reading you meant.`,
+      ],
+    )
+  }
+
+  // The canonical is itself an alias. Alias resolution is ONE HOP, so the chain would never
+  // resolve and the merge would silently not happen.
+  const canonicalIsAlias = document.glossary.find(
+    (e) => norm(e.canonical) !== canonicalKey && e.aliases.some((a) => norm(a) === canonicalKey),
+  )
+  if (canonicalIsAlias !== undefined) {
+    return fail(
+      'ERR_USAGE',
+      `"${canonical}" is already an alias of "${canonicalIsAlias.canonical}", so it cannot also be a canonical.`,
+      [
+        'Alias resolution is one hop, so this chain would never resolve.',
+        `Use "${canonicalIsAlias.canonical}" as the canonical: \`symspec glossary "${canonicalIsAlias.canonical}" "${alias}"\`.`,
+      ],
+    )
+  }
+
   const glossary: GlossaryEntry[] =
     entry === undefined
       ? [...document.glossary, { canonical, aliases: [alias] }]
       : document.glossary.map((e) =>
-          e.canonical === canonical ? { canonical, aliases: [...e.aliases, alias] } : e,
+          // The EXISTING canonical spelling is kept, not `canonical`.
+          norm(e.canonical) === canonicalKey
+            ? { canonical: e.canonical, aliases: [...e.aliases, alias] }
+            : e,
         )
   return { document: { ...document, glossary }, noop: false }
 }
 
+/**
+ * Remove one alias. Matched in NORMALIZED space, symmetrically with {@link applyGlossary}.
+ *
+ * The symmetry is load-bearing rather than tidy: an entry committed as `"Issue a token"` must
+ * be removable by naming `"issue a token"`, or the refusal `applyGlossary` now raises would
+ * point at an `--remove` that no-ops, leaving an author stuck with a row they cannot free.
+ */
 const applyUnglossary = (
   document: RequirementsDocument,
   op: Extract<DocumentOp, { op: 'unglossary' }>,
+  options: MutateOptions,
 ): OpSuccess | OpFailure => {
-  const canonical = op.canonical.trim()
-  const alias = op.alias.trim()
-  const entry = document.glossary.find((e) => e.canonical === canonical)
-  if (entry === undefined || !entry.aliases.includes(alias)) {
+  const norm = options.normalizeHead ?? ((s: string) => s.trim())
+  const canonicalKey = norm(op.canonical.trim())
+  const aliasKey = norm(op.alias.trim())
+  const entry = document.glossary.find((e) => norm(e.canonical) === canonicalKey)
+  if (entry === undefined || !entry.aliases.some((a) => norm(a) === aliasKey)) {
     return { document, noop: true }
   }
   // An emptied group is DROPPED entirely — a canonical with no aliases unifies
   // nothing, so keeping it would be a row that looks like a decision and is not.
   const glossary = document.glossary
     .map((e) =>
-      e.canonical === canonical ? { canonical, aliases: e.aliases.filter((a) => a !== alias) } : e,
+      norm(e.canonical) === canonicalKey
+        ? { canonical: e.canonical, aliases: e.aliases.filter((a) => norm(a) !== aliasKey) }
+        : e,
     )
     .filter((e) => e.aliases.length > 0)
   return { document: { ...document, glossary }, noop: false }
@@ -558,9 +632,15 @@ export interface MutateOptions {
    * the operation layer always supplies it).
    */
   readonly validateAntonyms?: (pairs: readonly AntonymPair[]) => string | undefined
-  /** Normalize a response verb-head to the atomizer's key. Omitted ⇒ a trim, which
-   * stores the head as written. The operation layer supplies the real `normalize`
-   * so a committed pair matches what the atomizer looks up. */
+  /**
+   * Normalize a phrase to the atomizer's key — a verb head for `antonym`, a whole response
+   * phrasing for `glossary`. It is the same `normalize` in both cases, because
+   * `glossaryIndex` and the antonym index key the same way.
+   *
+   * Omitted ⇒ a trim, which stores the text as written and makes the glossary's
+   * collision checks case-sensitive. The operation layer supplies the real `normalize`, so a
+   * committed record matches what the atomizer looks up.
+   */
   readonly normalizeHead?: (text: string) => string
 }
 
@@ -1182,9 +1262,9 @@ export const applyOp = (
     case 'remove-edge':
       return applyRemoveEdge(document, op, timestamp)
     case 'glossary':
-      return applyGlossary(document, op)
+      return applyGlossary(document, op, options)
     case 'unglossary':
-      return applyUnglossary(document, op)
+      return applyUnglossary(document, op, options)
     case 'antonym':
       return applyAntonym(document, op, options)
     case 'unantonym':

@@ -485,6 +485,73 @@ reading the source.
 
 ---
 
+## Designing the vocabulary in one pass
+
+Aligning vocabulary is the highest-leverage habit here, and doing it one pair at a time is
+tedious. `symspec propose-glossary` reads the whole document and proposes the partition —
+which phrasings name one thing — instead of a suggestion per pair. It writes nothing.
+
+Every number below is measured on this build, over five requirements across two systems:
+
+```console
+$ symspec propose-glossary --field data.summary,data.corpus
+{"data":{"summary":"1 class(es) proposing 1 alias(es), and 1 class(es) withheld for review.
+ Compared 4 same-system pair(s) across 5 distinct response phrasing(s) at threshold 0.72.",
+ "corpus":{"requirements":5,"systems":2,"responseNodes":5,"embedded":5,
+           "pairsCompared":4,"alreadyUnified":0}}}                              # exit 0
+```
+
+`pairsCompared` is the proof it looked — an empty plan with a positive count means *your
+vocabulary is already coherent*, which is a different answer from *the tier did not run*.
+
+**What it proposes**, as ops `apply` consumes directly:
+
+```console
+$ symspec propose-glossary --field data.classes.0
+{"canonical":"issue a login credential","aliases":["issue a session token"],
+ "minCosine":0.749,"transitive":false}
+```
+
+**What it refuses to propose**, and this is the part worth reading:
+
+```console
+$ symspec propose-glossary --field data.unresolved.0
+{"reason":"opposition-candidate","pairs":[{"signal":"same-object-different-verb",
+ "verbs":["close","seal"],"cosine":0.809}]}
+```
+
+`close the vault` and `seal the vault` sit at cosine **0.809** — comfortably above the 0.72
+threshold, so similarity alone would have merged them. It withholds the class anyway, because
+similarity cannot tell a paraphrase from an opposite: antonyms embed *close*. Merging them
+would turn a provable contradiction into a proven-consistent claim, which is worse than
+missing it, because the tool would have caused it. So the decision to withhold is made by a
+deterministic signal — the committed antonym table, `de-`/`un-`/`dis-` morphology, or the
+same-object-different-verb shape — and cosine only ever proposes the edge.
+
+One ambiguous pair withholds the **whole** class, since the clustering is transitive: if `a`
+paraphrases `b` and `b` opposes `c`, then merging `a` with `c` is the same mistake one step
+removed. The entry hands back both readings with the consequence of each, and never picks.
+
+Apply the confident half and the gradient moves:
+
+```console
+$ symspec check --field data.progress.atomsUncompared
+{"data":{"progress":{"atomsUncompared":7}}}
+
+$ symspec propose-glossary --field data.opsJsonl > plan.jsonl   # then edit the JSON out
+$ symspec apply --ops plan.jsonl --field data.summary
+{"data":{"summary":{"total":1,"ok":1,"failed":0,"noop":0}}}                      # exit 0
+
+$ symspec check --field data.progress.atomsUncompared
+{"data":{"progress":{"atomsUncompared":5}}}
+```
+
+Re-run it and it proposes nothing further — the committed table folds those phrasings onto one
+atom, so they are no longer candidates. The vault class correctly persists, because it is still
+waiting on a decision only you can make.
+
+---
+
 ## Honest scope — read this before trusting a verdict
 
 Every tier that reaches a verdict states its own boundary. These are the tool's own words —

@@ -118,7 +118,7 @@ export interface CodeEntry {
  * one genuine `'warn/info — …'`.
  *
  * An em dash, not a hyphen — the corpus uses U+2014, and a hyphen-only pattern
- * matches nothing (probed against all 30 codes: every one parses, which is what
+ * matches nothing (probed against every FND_* description: all parse, which is what
  * makes this safe to rely on rather than a best effort).
  */
 const FND_SEVERITY_PREFIX = /^(error|warn|info|warn\/info)\s+—\s+/

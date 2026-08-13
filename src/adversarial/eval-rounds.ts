@@ -33,10 +33,10 @@
  *
  * ## Shape
  *
- * `AdversarialCase` is inlined here rather than imported. The tier-escalating generator that
- * defined it is not part of this package, so the type travels with the only thing that still
- * uses it. The `tier` field is retained because the fixtures carry meaningful difficulty
- * labels; nothing here generates a case.
+ * `AdversarialCase` comes from `./generate.ts`, which owns it: these rounds and the generated
+ * ladder are scored by the same harness, so they are the same shape by construction rather
+ * than by coincidence. Nothing here generates a case — the `tier` field carries the recorded
+ * difficulty of a round a red team actually won.
  *
  * The documents are v2-shaped, which is what the eval authored and what
  * `donor/core/schema.ts` still describes. `../formal/adversarial.test.ts` projects them onto
@@ -45,27 +45,7 @@
 
 import { renderSentence } from '../donor/core/render.ts'
 import { type Requirement, type RequirementsDoc, SCHEMA_VERSION } from '../donor/core/schema.ts'
-
-/** The defect class a round is seeded with — the ground-truth label. */
-export type DefectKind = 'contradiction' | 'numeric' | 'temporal' | 'ambiguity' | 'missing-link'
-
-/** One labelled adversarial fixture. */
-export interface AdversarialCase {
-  /** Stable case id, e.g. `eval-privchain-r1`. */
-  readonly id: string
-  /** The defect class the detector is expected to catch. */
-  readonly kind: DefectKind
-  /** Difficulty tier (1 = blatant … 4 = subtle). */
-  readonly tier: number
-  /** The FND_* codes any of which counts as a correct detection. */
-  readonly expectedCodes: readonly string[]
-  /** The requirement ids that SHOULD appear in the finding (localization target). */
-  readonly culpritIds: readonly string[]
-  /** The document to hand to `check`. */
-  readonly doc: RequirementsDoc
-  /** Human note describing what was planted. */
-  readonly note: string
-}
+import type { AdversarialCase } from './generate.ts'
 
 /**
  * An empty v2 document.

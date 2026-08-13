@@ -21,7 +21,7 @@
  * the failure mode here is a NEW message nobody thought to exercise.
  */
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { CheckFinding, CoverageDemotion } from '../donor/pipeline/check.ts'
@@ -31,6 +31,31 @@ import { allOperations } from '../operations/index.ts'
 import { type RepairContext, repairForDemotion } from './repair.ts'
 
 const REPO_ROOT = new URL('../..', import.meta.url).pathname
+
+const walk = (dir: string): string[] =>
+  readdirSync(join(REPO_ROOT, dir), { withFileTypes: true }).flatMap((entry) => {
+    const rel = `${dir}/${entry.name}`
+    if (entry.isDirectory()) return walk(rel)
+    return entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts') ? [rel] : []
+  })
+
+/**
+ * The ONE legitimate exception, named rather than tolerated.
+ *
+ * `operations/import.ts` documents `symspec glossary add <canonical> <alias>` and its two
+ * siblings because that is `import`'s own v2 op-stream SIDE-TABLE GRAMMAR — a format it
+ * parses off a stream, not a command it tells anyone to run. It is the reason the nested-verb
+ * spelling exists at all, and the reason the normalizer is an allowlist rather than a
+ * blanket strip.
+ *
+ * Exempting a file is a decision, so it is spelled here with the reason. Widening this list
+ * without one is how a sweep becomes decoration.
+ */
+const GRAMMAR_NOT_COMMANDS = new Set(['src/operations/import.ts'])
+
+const FILES = walk('src')
+  .filter((f) => !GRAMMAR_NOT_COMMANDS.has(f))
+  .sort()
 
 /** Every operation name the CLI actually registers. */
 const OPERATIONS = new Set(allOperations().map((op) => op.name))
@@ -247,19 +272,37 @@ describe('every catalog `commands` entry is a real invocation', () => {
   })
 })
 
+/**
+ * The whole-tree sweep, over a DERIVED file list.
+ *
+ * The list used to be hand-maintained, which made it a gate that silently under-covers: two
+ * files added last commit had to be remembered into it, and a file nobody remembers is a file
+ * the sweep does not check. `scripts/reachability-feasibility.ts` records the same species —
+ * a well-built gate wired to nothing — so the list is now every `.ts` under `src/`, walked.
+ *
+ * Test files are excluded on purpose: a test may legitimately spell a broken command in order
+ * to assert that it IS broken, which is exactly what the cases above this do.
+ */
 describe('no source file spells a command the CLI cannot run', () => {
-  const FILES = [
-    'src/donor/formal/quantity-alias.ts',
-    'src/donor/formal/semantic.ts',
-    'src/donor/pipeline/check.ts',
-    'src/kernel/craft.ts',
-    'src/kernel/scope.ts',
-    'src/formal/repair.ts',
-    'src/formal/glossary-plan.ts',
-    'src/operations/propose-glossary.ts',
-    'src/operations/check.ts',
-    'src/operations/mutation.ts',
-  ]
+  it('sweeps a NON-EMPTY, plausibly complete file set', () => {
+    // Guards the derivation itself: a broken walk would make every case below vacuous.
+    expect(FILES.length).toBeGreaterThan(50)
+    // The exemption must still be a REAL file, or it is silently exempting nothing while the
+    // actual file drifts back into scope under a new name.
+    for (const exempt of GRAMMAR_NOT_COMMANDS) {
+      expect(walk('src'), `${exempt} is exempted but does not exist`).toContain(exempt)
+    }
+    // The files that carry the known offenders must be in it, or the sweep proves nothing.
+    for (const known of [
+      'src/donor/formal/quantity-alias.ts',
+      'src/donor/formal/semantic.ts',
+      'src/kernel/scope.ts',
+      'src/formal/repair.ts',
+      'src/operations/propose-glossary.ts',
+    ]) {
+      expect(FILES, `${known} is outside the sweep`).toContain(known)
+    }
+  })
 
   it.each(FILES)('%s', (relative) => {
     const source = readFileSync(join(REPO_ROOT, relative), 'utf8')
@@ -275,5 +318,68 @@ describe('no source file spells a command the CLI cannot run', () => {
       if (reason !== undefined) offenders.push(reason)
     }
     expect([...new Set(offenders)]).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// No SOURCE string hand-types a count of the tool's own surface
+// ---------------------------------------------------------------------------
+
+/**
+ * The derivable-number defect, gated as a CLASS rather than instance by instance.
+ *
+ * "Run `symspec manifest` for all 75 codes" shipped in `waive --help` against a real 81, and it
+ * was the THIRD instance — `explain` and the installed skill body had each needed the same fix,
+ * each with a comment explaining why. A fourth then turned up in `install/skill-body.ts`.
+ * Fixing instances invites the next one; this fires on the append.
+ *
+ * ## Why SOURCE and not the manifest
+ *
+ * The first version of this swept the rendered manifest, and it could not work: an interpolated
+ * `${catalogCounts().total} codes` renders as "81 codes", byte-identical to a hardcoded literal.
+ * The distinction only exists before evaluation. So this reads the source, where an
+ * interpolation is visibly `${...}` and a hardcoded count is visibly a digit.
+ *
+ * Comment lines are skipped. The prose in this tree legitimately cites historical counts to
+ * explain why an interpolation exists, and a gate that forbade that would be arguing with the
+ * explanation of itself.
+ */
+describe('no source string hand-types a count of the tool`s own surface', () => {
+  /**
+   * A count of something this tool enumerates, written as a literal.
+   *
+   * Deliberately narrow: two-or-three digits followed by a noun whose population GROWS. A
+   * threshold (`0.72`), a byte size, an exit code and an INCOSE rule number are all legitimate
+   * literals, and a broader pattern would be noise that gets ignored.
+   */
+  const HAND_TYPED_COUNT =
+    /\b\d{2,3}\s+(?:stable\s+)?(?:codes|operations|commands|INCOSE\s+rules|GtWR\s+rules)\b/i
+
+  const isComment = (line: string): boolean => {
+    const t = line.trim()
+    return t.startsWith('*') || t.startsWith('//') || t.startsWith('/*')
+  }
+
+  it.each(FILES)('%s', (relative) => {
+    const offenders: string[] = []
+    for (const [i, line] of readFileSync(join(REPO_ROOT, relative), 'utf8').split('\n').entries()) {
+      if (isComment(line)) continue
+      const hit = HAND_TYPED_COUNT.exec(line)
+      if (hit !== null) offenders.push(`${relative}:${i + 1} "${hit[0]}"`)
+    }
+    expect(
+      offenders,
+      'interpolate from the table or catalog that owns the count — see CLAUDE.md',
+    ).toEqual([])
+  })
+
+  it('the pattern really FIRES, and spares the literals that are legitimate', () => {
+    // Pinned against examples, so a regex edit that silently stopped matching is a failure here
+    // rather than a green sweep over nothing.
+    expect(HAND_TYPED_COUNT.test('for all 75 codes with their meanings')).toBe(true)
+    expect(HAND_TYPED_COUNT.test('22 operations, all projections of one table')).toBe(true)
+    expect(HAND_TYPED_COUNT.test('Omit for the measured default of 0.72.')).toBe(false)
+    expect(HAND_TYPED_COUNT.test('exits 3 when the gate trips')).toBe(false)
+    expect(HAND_TYPED_COUNT.test('`${catalogCounts().total} codes`')).toBe(false)
   })
 })

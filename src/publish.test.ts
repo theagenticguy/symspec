@@ -397,6 +397,23 @@ describe('the README is a PACKAGE readme, greenfield-first and honest', () => {
     expect(study).toMatch(/symspec glossary \\?"[^"\\]+\\?" \\?"[^"\\]+\\?"/)
   })
 
+  it('shows the WHOLE-DOCUMENT vocabulary pass, including what it refuses', () => {
+    expect(readme).toContain('## Designing the vocabulary in one pass')
+    const section = readme.slice(
+      readme.indexOf('## Designing the vocabulary in one pass'),
+      readme.indexOf('## Honest scope'),
+    )
+    expect(section).toContain('symspec propose-glossary')
+    // The load-bearing half. A section that only showed the merges it proposes would sell the
+    // convenience and skip the reason to trust it: the refusal happens ABOVE the similarity
+    // threshold, which is the one fact that shows cosine is not deciding.
+    expect(section).toContain('opposition-candidate')
+    expect(section).toContain('0.809')
+    expect(section).toContain('above the 0.72')
+    // And the non-vacuity signal, so "nothing to merge" is distinguishable from "did not look".
+    expect(section).toContain('pairsCompared')
+  })
+
   it('names the gates that make the no-drift claim checkable', () => {
     expect(readme).toContain('### Check these claims yourself')
     for (const gate of [
