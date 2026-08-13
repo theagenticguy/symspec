@@ -42,7 +42,7 @@ import { allOperations } from '../operations/index.ts'
  * them.
  *
  * A SUBSET, and deliberately so: the body lists the loop, not the surface. `symspec
- * manifest` is one command away and carries all 17 with their full schemas, so
+ * manifest` is one command away and carries every one with its full schema, so
  * enumerating every one here would be the duplication the thin-pointer rule exists to
  * prevent.
  *
@@ -58,6 +58,7 @@ const CORE_LOOP = [
   'apply',
   'check',
   'explain',
+  'propose-glossary',
   'glossary',
   'antonym',
   'waive',

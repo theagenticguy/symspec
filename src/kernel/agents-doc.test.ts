@@ -75,13 +75,13 @@ describe('the generated doc is byte-stable', () => {
 // ---------------------------------------------------------------------------
 
 describe('every operation is projected, with the table`s own summary', () => {
-  it('lists all 22 operations', () => {
+  it('lists all 23 operations', () => {
     const rendered = doc()
     const operations = allOperations()
     // Pinned as a NUMBER rather than derived from `allOperations()` so growing the
     // agent-facing surface is a visible edit in review — the count is the point, not a
     // restatement of the array's length.
-    expect(operations.length).toBe(22)
+    expect(operations.length).toBe(23)
     for (const op of operations) {
       expect(rendered, `${op.name} is missing from AGENTS.md`).toContain(`\`symspec ${op.name}\``)
     }

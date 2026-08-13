@@ -83,6 +83,7 @@ import {
   waiveOp,
 } from './mutation.ts'
 import { parseOp } from './parse.ts'
+import { proposeGlossaryOp } from './propose-glossary.ts'
 
 export { checkOp } from './check.ts'
 export { initOp, listOp, showOp } from './document.ts'
@@ -103,6 +104,7 @@ export {
   waiveOp,
 } from './mutation.ts'
 export { parseOp } from './parse.ts'
+export { proposeGlossaryOp } from './propose-glossary.ts'
 export { StreamSource, streamSourceLayer } from './stream.ts'
 
 /**
@@ -294,6 +296,9 @@ export const OPERATIONS = [
   linkOp,
   deleteOp,
   waiveOp,
+  // The PROPOSE half, immediately before the two DECIDE commands it feeds: it is what
+  // makes `glossary`/`antonym` usable at document scale rather than one pair at a time.
+  proposeGlossaryOp,
   glossaryOp,
   antonymOp,
   // G4 REACHABILITY AUTHORING, listed after the side tables and before `apply`

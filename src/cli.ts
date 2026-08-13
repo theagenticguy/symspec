@@ -45,6 +45,7 @@ import {
   listOp,
   manifestOp,
   parseOp,
+  proposeGlossaryOp,
   showOp,
   stateInitialOp,
   stateOp,
@@ -488,6 +489,28 @@ const checkCommand = Command.make(
     }),
 ).pipe(Command.withDescription(checkOp.summary))
 
+/**
+ * `propose-glossary` — read-only, so it takes the document positional and one knob.
+ *
+ * Two flags fewer than it looks like it needs: no `--semantic` (the embedder IS the
+ * operation, so there is nothing to switch off) and no `--dry-run` (it never writes, so
+ * "preview" and "run" are the same thing).
+ */
+const proposeGlossaryCommand = Command.make(
+  'propose-glossary',
+  {
+    file: pathArgument(proposeGlossaryOp, 'file'),
+    // OPTIONAL for the reason `check`'s is: omitting it means "use the measured default",
+    // which is a different statement from any number.
+    semanticThreshold: Flag.optional(floatFlag(proposeGlossaryOp, 'semanticThreshold')),
+  },
+  (config) =>
+    emit(proposeGlossaryOp, {
+      file: Option.getOrNull(config.file),
+      semanticThreshold: Option.getOrNull(config.semanticThreshold),
+    }),
+).pipe(Command.withDescription(proposeGlossaryOp.summary))
+
 // ---------------------------------------------------------------------------
 // The MUTATION commands
 // ---------------------------------------------------------------------------
@@ -830,6 +853,7 @@ const rootWithSubcommands = root.pipe(
     linkCommand,
     deleteCommand,
     waiveCommand,
+    proposeGlossaryCommand,
     glossaryCommand,
     antonymCommand,
     stateCommand,

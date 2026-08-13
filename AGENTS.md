@@ -80,6 +80,7 @@ Failure:
 | `symspec link` | Add or remove one typed edge between two requirements |
 | `symspec delete` | Delete one requirement, leaving any inbound edges as dangling references |
 | `symspec waive` | Commit or remove a reviewed finding waiver, optionally scoped to one requirement |
+| `symspec propose-glossary` | Propose a whole-document glossary in one pass — the PROPOSE half of the semantic tier, at document scale |
 | `symspec glossary` | Commit or remove a synonym alias — the DECIDE half of the semantic tier |
 | `symspec antonym` | Commit or remove a polar-opposite verb pair — the opposition twin of the glossary |
 | `symspec state` | Declare or undeclare one state variable — the document-scoped half of the state model |

@@ -528,6 +528,11 @@ describe('the README agrees with the tool about its own surface', () => {
 
   it('states the operation count the table actually holds', () => {
     expect(readme).toContain(`${manifestNow.operations.length} operations`)
+    // NEGATIVE GUARD. `toContain` on the correct number passes just as happily for a
+    // hardcoded copy that happens to be right today, which is how three separate places
+    // kept claiming 75 codes against a real 81. Asserting the PREDECESSOR is absent is
+    // what makes the next append fail here instead of shipping.
+    expect(readme).not.toContain(`${manifestNow.operations.length - 1} operations`)
   })
 
   it('states the total code count across the three catalogs', () => {

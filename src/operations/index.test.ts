@@ -50,6 +50,8 @@ describe('the table', () => {
       'link',
       'delete',
       'waive',
+      // The PROPOSE half sits before the two DECIDE commands it feeds.
+      'propose-glossary',
       'glossary',
       'antonym',
       // G4 REACHABILITY AUTHORING, after the side tables and before `apply` because

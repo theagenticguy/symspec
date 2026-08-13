@@ -255,6 +255,8 @@ describe('no source file spells a command the CLI cannot run', () => {
     'src/kernel/craft.ts',
     'src/kernel/scope.ts',
     'src/formal/repair.ts',
+    'src/formal/glossary-plan.ts',
+    'src/operations/propose-glossary.ts',
     'src/operations/check.ts',
     'src/operations/mutation.ts',
   ]

@@ -553,14 +553,14 @@ invariant — auditable evidence, not a certificate.
 
 ## What is in the box
 
-22 operations, all projections of one operations table, so `--help`, `symspec manifest`, and
+23 operations, all projections of one operations table, so `--help`, `symspec manifest`, and
 the generated `AGENTS.md` cannot disagree with the tool:
 
 | Group | Operations |
 |---|---|
 | Documents | `init`, `import`, `list`, `show` |
 | Authoring | `parse`, `add`, `update`, `link`, `delete`, `apply` |
-| Vocabulary | `glossary`, `antonym`, `waive` |
+| Vocabulary | `propose-glossary`, `glossary`, `antonym`, `waive` |
 | State model | `state`, `state-initial`, `classify` |
 | Analysis | `check` |
 | Agent surface | `manifest`, `explain`, `version`, `install`, `download-model` |
