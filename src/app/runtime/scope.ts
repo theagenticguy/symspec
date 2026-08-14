@@ -80,7 +80,7 @@ export const SCOPE_KEYS = [
  * as consecutive blockquotes.
  *
  * A FUNCTION returning an array rather than a pre-joined constant, so the rendered
- * surfaces cannot drift from the named fields the way the donor's `SCOPE.text` could.
+ * surfaces cannot drift from the named fields the way v4's `SCOPE.text` could.
  */
 export const scopeParagraphs = (): readonly string[] => SCOPE_KEYS.map((key) => SCOPE[key])
 

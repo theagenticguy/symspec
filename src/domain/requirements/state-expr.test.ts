@@ -6,7 +6,7 @@
  * Not "the parser parses". The load-bearing claim is narrower and much more
  * consequential: **no expression carrying an undeclared reference can survive
  * validation**, because the failure mode downstream is not a wrong answer, it is an
- * unkillable WASM hang (donor findings V14/V21, reproduced on both z3 4.16.0 and
+ * unkillable WASM hang (v4 findings V14/V21, reproduced on both z3 4.16.0 and
  * 5.0.0). `interruptibleSolve` is the escape from that hang; this module is the reason
  * the escape should never be needed.
  *
@@ -103,7 +103,7 @@ describe('undeclared references are refused at AUTHORING time (V14/V21)', () => 
   /**
    * THE headline guard of this module.
    *
-   * The donor measured what happens when something undeclared reaches the Fixedpoint:
+   * v4 measured what happens when something undeclared reaches the Fixedpoint:
    * a query that runs past 45s with no JS-side recovery, on both 4.16.0 and 5.0.0. The
    * mitigation is that the encoder is never handed one — and that is only true if
    * validation refuses every route in.

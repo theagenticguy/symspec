@@ -1,7 +1,7 @@
 /**
  * Envelope contract tests — the wire shape an agent parses.
  *
- * These assert the SHAPE, not the implementation: the donor's
+ * These assert the SHAPE, not the implementation: v4's
  * `{apiVersion,type,data}` / `{apiVersion,type:'error',error,code,suggestions,
  * partial?,repair?}` is preserved API, so a test here failing means an agent in
  * the field breaks.
@@ -64,7 +64,7 @@ describe('failure() — error envelope', () => {
     ])
   })
 
-  it('names the message field `error` (donor wire field), never `message`', () => {
+  it('names the message field `error` (v4 wire field), never `message`', () => {
     const env = failure({ error: 'the message', code: 'ERR_IO' })
     expect(env.error).toBe('the message')
     expect(env).not.toHaveProperty('message')

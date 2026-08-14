@@ -6,7 +6,7 @@
  * The `check:agents` shell gate answers only "is the committed file what the generator
  * produces". That is necessary and not sufficient: a generator that dropped every code
  * table would pass its own diff gate forever, because the committed file would be
- * regenerated to match. The donor's arrangement had exactly that hole — the generator lived
+ * regenerated to match. v4's arrangement had exactly that hole — the generator lived
  * in `scripts/`, outside the typechecker and outside the tests, so nothing could assert
  * what it SHOULD contain.
  *
@@ -89,7 +89,7 @@ describe('every operation is projected, with the table`s own summary', () => {
 
   it('quotes each summary VERBATIM, never paraphrased', () => {
     // The single-source claim at the seam where it would break. A paraphrase here is how
-    // the donor ended up documenting `apply --file` for a command registered as `--doc`.
+    // v4 ended up documenting `apply --file` for a command registered as `--doc`.
     const rendered = doc()
     for (const op of allOperations()) {
       expect(rendered, `${op.name}'s summary was paraphrased`).toContain(
@@ -218,7 +218,7 @@ describe('the scope and craft corpora are projected whole', () => {
    * makes adding a section automatic. That is not sufficient for the longest section in the
    * corpus: a renderer regression that emitted the heading and dropped the body would pass
    * the loop, and the byte-diff gate would happily regenerate the committed file to match.
-   * Same hole the donor's single-gate arrangement had, one level down.
+   * Same hole v4's single-gate arrangement had, one level down.
    *
    * So the sub-headings AND the transcript's measured verdicts are pinned here, because
    * those are the parts an author acts on.

@@ -23,7 +23,7 @@
  * ## Evidence names REQUIREMENTS, not internal rule names
  *
  * Every trace step and every hypothesis is rendered with the requirement's own stable
- * key where it has one (donor V29's groundwork). A trace that read
+ * key where it has one (v4 V29's groundwork). A trace that read
  * `sys__lock__resp__grant` would be technically complete and practically useless; one
  * that reads `init -> TX-A1 -> TX-A1 -> TX-C1` is a sentence about the author's own
  * document.
@@ -37,10 +37,10 @@ import type { ReachabilityFndCode } from './reachability-codes.ts'
 /**
  * One finding this module produces.
  *
- * Structurally the donor's `CheckFinding` minus the `tier` field, which the caller
+ * Structurally v4's `CheckFinding` minus the `tier` field, which the caller
  * stamps: `check` owns the `CheckTier` union and this module must not widen it. The
- * `evidence` is deliberately a plain open record rather than the donor's `Evidence`
- * type — the donor's shape is an atom table plus an unsat core, and a reachability
+ * `evidence` is deliberately a plain open record rather than v4's `Evidence`
+ * type — v4's shape is an atom table plus an unsat core, and a reachability
  * invariant or trace is neither, so reusing it would mean either lying about the field's
  * meaning or editing a transplanted file.
  */
@@ -55,7 +55,7 @@ export interface ReachabilityFinding {
   readonly repair?: Repair
 }
 
-/** One demotion this module produces — the donor's `CoverageDemotion` shape plus the
+/** One demotion this module produces — v4's `CoverageDemotion` shape plus the
  * v5 `repair`, so `check` can splice these into `coverage.demotions[]` directly. */
 export interface ReachabilityDemotion {
   readonly reason: string
@@ -75,7 +75,7 @@ export interface ReachabilityProjection {
  *
  * Enumerated so `check`'s repair mapping can be exhaustive over them by test, the same
  * discipline `FOLD_ERROR_CODES` uses for the mutation fold. Prefixed `reachability-` so
- * they cannot collide with the donor's eight, which is a real risk: the donor's union is
+ * they cannot collide with v4's eight, which is a real risk: v4's union is
  * a string literal type and a duplicate reason would silently merge two different
  * remedies under one name.
  */
@@ -107,7 +107,7 @@ const renderTrace = (result: ConstraintResult): string => {
  * Built from the report rather than hardcoded, because the missing thing differs: a
  * document with no variables needs `state`, a document with variables but no constraints
  * needs `classify`. Naming the wrong one would send an agent to the wrong command with
- * full confidence — the failure mode the donor's `<blocking-code>` placeholder had.
+ * full confidence — the failure mode v4's `<blocking-code>` placeholder had.
  */
 const notCheckedRepair = (report: ReachabilityReport, docPath: string): Repair => {
   if (report.variables === 0) {

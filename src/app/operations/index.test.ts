@@ -59,7 +59,7 @@ describe('the table', () => {
       // that is the order an agent uses them: declare the state variables, set the
       // model-wide initial predicate, classify the responses that touch them.
       // Three operations rather than one because they are scoped differently — two
-      // document-scoped, one requirement-scoped (the donor's "two tables, not one").
+      // document-scoped, one requirement-scoped (v4's "two tables, not one").
       'state',
       'state-initial',
       'classify',

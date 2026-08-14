@@ -37,7 +37,7 @@
  * - BREAKING THE LINK (replacing `Command.withDescription(versionOp.summary)`
  *   with a hand-typed string) fails three of these tests immediately. That is the
  *   regression that actually matters: someone "helpfully" restating a summary in
- *   the CLI layer is how the donor's triple-wiring drifted in the first place.
+ *   the CLI layer is how v4's triple-wiring drifted in the first place.
  *
  * So the guard is aimed at the PROVENANCE of the text, not its content. It fails
  * when a projection stops deriving and starts restating.
@@ -968,7 +968,7 @@ describe('check — exit codes and envelope integrity from the real process', ()
   })
 
   it('--dense output survives a PIPE at full size (no 64KB truncation)', () => {
-    // The donor's measured defect: `process.stdout.write` + `process.exit` truncates
+    // v4's measured defect: `process.stdout.write` + `process.exit` truncates
     // at one pipe buffer (65536 bytes), producing invalid JSON on exactly the
     // documents big enough to matter. `check` is the command that produces those
     // payloads, so it is the one worth pinning.
@@ -1139,7 +1139,7 @@ describe('install through the real process', () => {
   }
 
   it('V11 fix #3: bare `install` in a marker-less repo WRITES a file and says it fell back', () => {
-    // The donor exited 0 here having written nothing. At the process boundary that is
+    // v4 exited 0 here having written nothing. At the process boundary that is
     // indistinguishable from success, which is why this assertion checks the FILE.
     const { cwd, env } = workspace()
     const { envelope, code } = runIn(env, 'install')
@@ -1173,7 +1173,7 @@ describe('install through the real process', () => {
     const written = readFileSync(join(cwd, '.kiro', 'steering', 'symspec.md'), 'utf8')
     expect(written).toContain('inclusion: fileMatch')
     expect(written).toContain('.{md,json}')
-    // The donor's JSON-only pattern, gone from the artifact rather than only from a constant.
+    // v4's JSON-only pattern, gone from the artifact rather than only from a constant.
     expect(written).not.toContain('.requirements}.json"')
   })
 

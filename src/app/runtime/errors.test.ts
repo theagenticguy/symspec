@@ -66,7 +66,7 @@ const ERR_CODES_SNAPSHOT = [
 ] as const
 
 describe('append-only ERR_* catalog', () => {
-  it('holds all 21 donor codes', () => {
+  it('holds all 21 v4 codes', () => {
     expect(ERR_CODES).toHaveLength(21)
     expect(ERR_CODES_SNAPSHOT).toHaveLength(21)
   })
@@ -163,9 +163,9 @@ describe('descriptions are single-sourced and verbatim', () => {
     }
   })
 
-  it('preserves the donor text verbatim for a sampled spread of codes', () => {
+  it('preserves v4 text verbatim for a sampled spread of codes', () => {
     // Spot-checks across the catalog's groups. The full 21-code equality was
-    // verified against the donor's live `ErrCodeMeta` at transplant time; these
+    // verified against v4's live `ErrCodeMeta` at transplant time; these
     // pin the exact strings so an edit here is deliberate.
     expect(descriptionOf(ErrUsage)).toBe(
       'Invalid or missing CLI arguments. Suggestion: consult the command usage string.',
@@ -181,7 +181,7 @@ describe('descriptions are single-sourced and verbatim', () => {
     )
   })
 
-  it('keeps the donor v2 clean-slate scope: no migration residue', () => {
+  it('keeps v4 v2 clean-slate scope: no migration residue', () => {
     for (const cls of ERR_CLASSES) {
       expect(descriptionOf(cls)).not.toMatch(/migrate|legacy|automerge/i)
     }

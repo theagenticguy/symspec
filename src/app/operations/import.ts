@@ -1,30 +1,30 @@
 /**
- * `import` — consume a donor reproduce-op stream into a v3 document.
+ * `import` — consume a v4 reproduce-op stream into a v3 document.
  *
  * ## This IS the v2 migration story, in one command
  *
  * v3 has no read-compatibility with v2 by design. The migration is not a
- * converter but a REPLAY: the donor already emits, on its `ERR_SCHEMA_VERSION`
+ * converter but a REPLAY: v4 already emits, on its `ERR_SCHEMA_VERSION`
  * path, the exact op stream that rebuilds a document — one `add` record per
  * requirement in dependency order, then the edge ops, then shell commands for the
  * three side tables its `apply` had no op for, then an explicit statement of what
  * does NOT reproduce. `import` is the consumer of that stream, so the whole
- * migration is `<donor emits> | symspec import`.
+ * migration is `<v4 reproduce output> | symspec import`.
  *
- * Nothing is guessed. The donor's stream is derivable precisely because the
+ * Nothing is guessed. v4's stream is derivable precisely because the
  * document it came from already parsed, and everything the stream cannot carry is
  * DISCLOSED rather than silently approximated.
  *
  * ## One stream, three record kinds
  *
- * The donor's own machine contract, honored verbatim (it is stated inside the
+ * v4's own machine contract, honored verbatim (it is stated inside the
  * payload, so an agent can follow it without reading either source):
  *
  * - a line starting with `{` is one JSONL OP RECORD;
  * - a line starting with `symspec ` is a SHELL COMMAND for a side table;
  * - anything else is prose.
  *
- * v5 adds one spelling on top: a `#gap ` line carries a donor gap forward, so a
+ * v5 adds one spelling on top: a `#gap ` line carries a v4 gap forward, so a
  * single file round-trips the disclosures too instead of stranding them in a
  * transcript. Blank lines and any other prose are skipped, because a real stream
  * harvested from `suggestions[]` has step headers in it and failing on prose would
@@ -32,7 +32,7 @@
  *
  * ## The side tables travel as COMMANDS, and are EXECUTED not just recorded
  *
- * The donor could not express glossary/antonym/waiver rows as `apply` ops, so it
+ * v4 could not express glossary/antonym/waiver rows as `apply` ops, so it
  * emitted them as `symspec glossary add …` / `antonym add …` / `waive add …`
  * command lines. Discarding them would silently drop three tables — the hex-bonk
  * `agent-run-triggers` document alone carries 8 reasoned waivers, and losing them
@@ -40,12 +40,12 @@
  * PARSES and EXECUTES those command lines into the document it is building.
  *
  * That is deliberately a narrow, closed parser over three known command shapes,
- * not a shell. It recognizes exactly what the donor emits and reports anything
+ * not a shell. It recognizes exactly what v4 emits and reports anything
  * else as unrecognized rather than attempting it.
  *
  * ## Forward references by key, and why order still does not matter
  *
- * The donor emits edge ops AFTER every `add`, so a naive in-order fold works. But
+ * v4 emits edge ops AFTER every `add`, so a naive in-order fold works. But
  * a hand-written or reordered stream should not silently lose edges, so `import`
  * folds in TWO PASSES: every `add` first, then every edge and command. An edge
  * therefore resolves against the COMPLETE requirement set, and a `to` written as a
@@ -64,7 +64,7 @@
  * written: v3 requires edge targets to be UUIDs, and fabricating one would put a
  * dangling reference in the file while claiming a successful import. Such an edge
  * is dropped and reported in `unresolved[]` with the ref that failed. That mirrors
- * the donor's own treatment of dangling edges in its reproduce plan — disclose,
+ * v4's own treatment of dangling edges in its reproduce plan — disclose,
  * do not paper over.
  */
 
@@ -99,9 +99,9 @@ import { defineOperation } from '../runtime/operation.ts'
 
 /** The four edge-creating op verbs → the schema relation each adds.
  *
- * The INVERSE of the donor's `RELATION_REPRODUCE_OP`. Typed as a total
+ * The INVERSE of v4's `RELATION_REPRODUCE_OP`. Typed as a total
  * `Record<…, Relation>` so adding a relation to `RELATIONS` fails to compile until
- * this table is extended — the same construction the donor used to keep its two
+ * this table is extended — the same construction v4 used to keep its two
  * tables from drifting, and `import.test.ts` asserts they are exact inverses. */
 export const EDGE_OP_RELATION: Record<'derive' | 'satisfy' | 'verify' | 'refine', Relation> = {
   derive: 'derives',
@@ -116,11 +116,11 @@ export const EDGE_OPS = Object.keys(EDGE_OP_RELATION) as readonly (keyof typeof 
 /**
  * One `{"op":"add", …}` record.
  *
- * Mirrors the donor's `ReproduceAddOp` field for field, plus `responseKind` — the
- * v3 field the donor cannot emit but a hand-written or v5-generated stream can, so
+ * Mirrors v4's `ReproduceAddOp` field for field, plus `responseKind` — the
+ * v3 field v4 cannot emit but a hand-written or v5-generated stream can, so
  * an import is not artificially limited to what v2 could express.
  *
- * `id` is OPTIONAL: the donor always carries the original UUID (which is what
+ * `id` is OPTIONAL: v4 always carries the original UUID (which is what
  * keeps a UUID-scoped waiver and every reproduced edge resolving), but a
  * hand-written stream authoring NEW requirements should not have to mint UUIDs.
  * When absent one is derived deterministically — see {@link derivedId}.
@@ -154,7 +154,7 @@ const EdgeOp = Schema.Struct({
   to: Schema.String,
 })
 
-/** A structured side-table record — the alternative to the donor's command lines,
+/** A structured side-table record — the alternative to v4's command lines,
  * for a producer that would rather emit JSON than shell. Same effect either way. */
 const GlossaryOp = Schema.Struct({
   op: Schema.Literal('glossary'),
@@ -203,10 +203,10 @@ interface StreamProblem {
  * Classify each line of the stream.
  *
  * Prose is SKIPPED rather than rejected, because a real stream harvested from a
- * donor `suggestions[]` array is interleaved with step headers ("Step 2 — write
+ * v4 `suggestions[]` array is interleaved with step headers ("Step 2 — write
  * the following 47 op record(s)…"). Failing on prose would make the one-pipe
  * migration impossible; silently skipping an op record would be much worse, which
- * is why the `{`-prefix rule is the donor's own published contract rather than a
+ * is why the `{`-prefix rule is v4's own published contract rather than a
  * heuristic.
  *
  * A line that STARTS with `{` but is not valid JSON is a genuine problem and is
@@ -241,7 +241,7 @@ const isProblem = (value: ParsedLine | StreamProblem): value is StreamProblem =>
 /**
  * Split a command line into shell-ish tokens, honoring single quotes.
  *
- * A NARROW tokenizer, matching exactly what the donor's `quoteArg` produces:
+ * A NARROW tokenizer, matching exactly what v4's `quoteArg` produces:
  * bare tokens when unambiguous, single-quoted otherwise, with an embedded quote
  * written `'\''`. It is not a shell and must not become one — the values here are
  * arbitrary human prose (a waiver reason is a whole sentence), and the only thing
@@ -256,7 +256,7 @@ export const tokenizeCommand = (line: string): readonly string[] => {
     const ch = line[i]
     if (inQuote) {
       if (ch === "'") {
-        // The donor writes an embedded quote as '\'' — closing the quote, emitting
+        // v4 writes an embedded quote as '\'' — closing the quote, emitting
         // an escaped quote, reopening. Detect that exact sequence and fold it back
         // into one literal quote character.
         if (line.slice(i, i + 4) === `'\\''`) {
@@ -306,7 +306,7 @@ const takeFlag = (
 }
 
 /**
- * Parse one donor side-table command into the op record it is equivalent to.
+ * Parse one v4 side-table command into the op record it is equivalent to.
  *
  * The three recognized shapes, exactly as `reproduce.ts` emits them:
  *
@@ -358,7 +358,7 @@ export const parseSideTableCommand = (line: string): ImportOp | undefined => {
 /**
  * A deterministic UUID for an `add` op that carries none.
  *
- * v5 (like the donor) refuses to mint a RANDOM id during an import, because a
+ * v5 (like v4) refuses to mint a RANDOM id during an import, because a
  * random id makes the same input produce a different document on every run — which
  * would break the determinism claim the whole tool rests on, and make an import
  * impossible to diff. Instead the id is DERIVED from the record's identifying
@@ -432,7 +432,7 @@ const applyAdd = (state: FoldState, op: AddOpRecord, timestamp: string): void =>
     systemResponse: op.systemResponse,
     negated,
     ...(op.responseKind !== undefined ? { responseKind: op.responseKind } : {}),
-    // `sentence` is RE-RENDERED, never carried on the op — the donor deliberately
+    // `sentence` is RE-RENDERED, never carried on the op — v4 deliberately
     // omits it because it is a denormalized view of the slots, so it comes back
     // for free and cannot arrive inconsistent with the slots it describes.
     sentence: renderSentence({
@@ -496,7 +496,7 @@ const applyEdge = (state: FoldState, op: typeof EdgeOp.Type): void => {
 }
 
 /** Apply a glossary record, merging aliases into an existing canonical entry
- * rather than creating a second entry for the same phrase — the donor emits one
+ * rather than creating a second entry for the same phrase — v4 emits one
  * command PER ALIAS, so a naive append would produce N single-alias entries where
  * the source document had one N-alias entry. */
 const applyGlossary = (state: FoldState, op: typeof GlossaryOp.Type): void => {
@@ -578,7 +578,7 @@ export interface ImportResult {
  * reproducible and testable.
  *
  * TWO PASSES: every `add` first, then every edge and side-table record. That is
- * what makes a forward key reference resolve regardless of line order — the donor
+ * what makes a forward key reference resolve regardless of line order — v4
  * already emits dependency-ordered streams, but a hand-written one should not
  * silently lose edges for putting them first.
  */
@@ -711,7 +711,7 @@ export const foldImportStream = (
  * ## It reports, it does not judge
  *
  * The payload carries what was imported AND everything that was not: `gaps[]`
- * passed through from the donor verbatim, `unresolved[]` for edges dropped and
+ * passed through from v4 verbatim, `unresolved[]` for edges dropped and
  * waiver scopes widened, `duplicates[]` for records that would have overwritten,
  * and `problems[]` for lines it could not read. Every one of those is a fact the
  * caller needs and none of them is a failure — an import that got 82 of 82
@@ -733,7 +733,7 @@ export const importOp = defineOperation({
             'Path to the op-stream file to read. When omitted, the stream is read from STDIN.',
             'The stream is the one the v4 CLI emits on its ERR_SCHEMA_VERSION path: one JSONL',
             '`{"op":…}` record per line, optional `symspec glossary/antonym/waive add` command lines,',
-            'and optional `#gap <text>` lines carrying the donor`s disclosures forward.',
+            'and optional `#gap <text>` lines carrying the v4 disclosures forward.',
             'Example: --file ./ops.jsonl',
           ].join('\n'),
         }),
@@ -826,7 +826,7 @@ export const importOp = defineOperation({
           commandsRead: result.commandsRead,
           linesSkipped: result.linesSkipped,
         },
-        // Passed through VERBATIM from the donor. These are the things the op
+        // Passed through VERBATIM from v4. These are the things the op
         // stream provably does not carry, and restating them in v5's own words
         // would risk softening a disclosure someone wrote precisely.
         gaps: result.gaps,

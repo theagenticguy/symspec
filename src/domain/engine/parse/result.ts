@@ -1,22 +1,22 @@
 /**
  * `ParseResult` — the per-line discriminated union the parse ladder emits, with
- * the donor's `proposedSplits`/`proposedOps` SPLIT resolved (spec AC-A-4).
+ * v4's `proposedSplits`/`proposedOps` SPLIT resolved (spec AC-A-4).
  *
  * ## Why this file is EDITED rather than copied verbatim
  *
  * One of the transplant's materially-edited files, for two reasons that both come
  * down to a name.
  *
- * The mechanical reason: the donor original is Zod (nine exported schemas, all
- * consumed only by the donor's own tests) plus hand-written interfaces. The
+ * The mechanical reason: v4 original is Zod (nine exported schemas, all
+ * consumed only by v4's own tests) plus hand-written interfaces. The
  * greenfield is Effect Schema native and the spec explicitly does not port Zod, so
  * the schemas go and the interfaces stay. Nothing else in the ladder imports them —
  * measured: `ParseSlotsSchema`, `ParseResultSchema`, and friends have exactly zero
- * non-test consumers in the donor.
+ * non-test consumers in v4.
  *
  * ## THE NAME FIX (spec AC-A-4) — one `proposedOps` everywhere
  *
- * The donor carried the SAME data under TWO names across a layer boundary:
+ * v4 carried the SAME data under TWO names across a layer boundary:
  *
  * - `parse/tier2.ts` produced `ProposedSplit[]` (generic slot shape, no CLI
  *   vocabulary) and `parse/tier3.ts` + `parse/result.ts` forwarded it as
@@ -25,14 +25,14 @@
  *   as `proposedOps` on the error envelope.
  *
  * The rename was deliberate layering — "src/parse/ stays CLI-agnostic" — and it
- * produced a real defect the donor's own AC-3-9 recorded: tier3's suggestion text
+ * produced a real defect v4's own AC-3-9 recorded: tier3's suggestion text
  * says "`proposedOps` carries the ready-to-apply `add` ops", but the object tier3
  * returns has no `proposedOps` field. It has `proposedSplits`. So an agent that
  * read the suggestion and looked for the field it named found nothing, on the one
  * error code whose whole point is being machine-actionable.
  *
  * v5 fixes it by construction, and the fix is the opposite of a rename: the layering
- * premise was wrong. `src/parse/` avoided "CLI vocabulary" because in the donor an
+ * premise was wrong. `src/parse/` avoided "CLI vocabulary" because in v4 an
  * `add` op WAS CLI vocabulary — `apply`'s JSONL shape lived in `cli/apply.ts`. In
  * v5 the op vocabulary is `core/ops.ts`, a CORE module the CLI is merely one
  * projection of. So the parse ladder emitting `AddOp` records is not a layer
@@ -44,7 +44,7 @@
  * exists. `parse.test.ts` asserts that correspondence directly — a suggestion
  * mentioning a backticked field name must name a field the result actually has.
  *
- * ## Everything else is the donor's, unchanged
+ * ## Everything else is v4's, unchanged
  *
  * The three outcomes and the rules that assign them are verbatim in substance:
  *
@@ -97,7 +97,7 @@ export interface ParseOkResult {
   /**
    * The ready-to-apply `add` op this parse became — the SUCCESS half of AC-A-4.
    *
-   * The donor emitted ops only on the COMPOUND failure path, so an agent that
+   * v4 emitted ops only on the COMPOUND failure path, so an agent that
    * parsed a line successfully still had to assemble the op itself from `slots`
    * plus the top-level `negated` flag (and `cli/add.ts` was the only code that knew
    * to thread that flag, which is exactly the kind of knowledge that gets lost).
@@ -136,7 +136,7 @@ export interface ParseErrorResult {
    * For `ERR_PARSE_COMPOUND` only: the confidently-split single requirements, AS
    * READY-TO-APPLY `add` OPS.
    *
-   * ONE NAME (spec AC-A-4). The donor called this `proposedSplits` here and
+   * ONE NAME (spec AC-A-4). v4 called this `proposedSplits` here and
    * `proposedOps` on the envelope, and tier3's own suggestion text named the latter
    * — so the field the suggestion told an agent to read did not exist on the object
    * the agent had. Absent (not `undefined`) when the split was not confident or the
@@ -219,7 +219,7 @@ export const fromTier3 = (
     ...(env.partial !== undefined ? { partial: env.partial } : {}),
     suggestions: env.suggestions,
     // ONE NAME. The tier3 envelope's internal field is still `proposedSplits`
-    // (that file is byte-identical to the donor's); the rename happens exactly
+    // (that file is byte-identical to v4's); the rename happens exactly
     // here, once, on the way into the union agents read.
     ...(ops !== undefined && ops.length > 0 ? { proposedOps: ops } : {}),
   }
@@ -229,7 +229,7 @@ export const fromTier3 = (
  * Resolve a completed `Tier2Outcome` into the final per-line `ParseResult`. Pure and
  * deterministic in its inputs.
  *
- * Resolution order, verbatim from the donor:
+ * Resolution order, verbatim from v4:
  *   1. a `compound-conjunction` trigger forces `ERR_PARSE_COMPOUND` even over a
  *      nominal Tier-1/Tier-2 success (the recovered slots surface in `partial`);
  *   2. otherwise prefer the Tier-2 repair when it succeeded, then a usable Tier-1
@@ -257,7 +257,7 @@ export const resolveParseResult = (text: string, outcome: Tier2Outcome): ParseRe
  * length` from inside `wink-eng-lite-web-model`. `runTier2` calls the loader per
  * line, so ANY caller that parses more than ~20 escalating lines in one process dies
  * — with a dependency-internal `RangeError`, not a parse error, so the whole run
- * aborts instead of reporting per-line results. Verified against the live donor:
+ * aborts instead of reporting per-line results. Verified against the live v4 CLI:
  * 30 escalating lines through its own `parseBatch` never completes.
  *
  * `parseBatch` memoizes per BATCH (see `./batch.ts`), which is the more precise

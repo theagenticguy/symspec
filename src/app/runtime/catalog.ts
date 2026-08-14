@@ -40,7 +40,7 @@
  * and that is preserved verbatim as `'warn/info'` rather than collapsed to a guess.
  *
  * `GTWR_*` severity is deliberately `null`, and that is the load-bearing honesty in
- * this module. `donor/lint/codes.ts` documents why: severity is decided PER FINDING
+ * this module. `engine/lint/codes.ts` documents why: severity is decided PER FINDING
  * at emission time, because the legitimate-exception rules (R26/R32/R35/R16)
  * downgrade contextually — `GTWR_R26_ABSOLUTE` is `error` on a bare absolute and
  * `warn` when a conditional clause qualifies it. A per-code severity table for
@@ -69,7 +69,7 @@ export type CodeFamily = 'ERR' | 'FND' | 'GTWR'
  * One unified catalog row — everything `explain` reports about one code.
  *
  * `meaning` / `suggestions` / `example` are all PROJECTIONS of `description`, split
- * at the markers the donor corpora already carry. No second corpus exists, so a
+ * at the markers v4 corpora already carry. No second corpus exists, so a
  * description edit changes every field here at once and none of them can drift from
  * the manifest's published text.
  */
@@ -135,7 +135,7 @@ const SYMSPEC_COMMAND = /`(symspec [^`]+)`/g
 /**
  * A parenthesized `(e.g. …)` illustration, or a `such as "x" / "y"` enumeration.
  *
- * These are the two shapes the donor corpora actually use, verified by probing all
+ * These are the two shapes v4 corpora actually use, verified by probing all
  * 80 descriptions: 11 carry one (3 `FND_*` with `e.g.`, 1 `GTWR_*` with `e.g.`, 7
  * `GTWR_*` with `such as`) and the rest carry none. A third shape does not exist,
  * so this is exhaustive rather than a sample — and a future description that
@@ -150,7 +150,7 @@ const SYMSPEC_COMMAND = /`(symspec [^`]+)`/g
  * a period. The extractor found 10 of 11 and nothing threw. This is the same species
  * as the `lexicon-entries-need-per-entry-reachability-tests` lesson (a trailing `\b`
  * after an entry ending in `.` can never match, which killed R9's canonical INCOSE
- * exemplar in the donor), and it landed on the SAME rule.
+ * exemplar in v4), and it landed on the SAME rule.
  *
  * The fix anchors on the description's TAIL instead: every `GTWR_*` description ends
  * with its `(R<n>).` citation, so the example is everything between `such as` and
@@ -238,7 +238,7 @@ const projectionsOf = (
 
 /**
  * Which `CheckTier` emits each `FND_*` code, read off the pipeline's own emission
- * sites (`donor/pipeline/check.ts`).
+ * sites (`engine/pipeline/check.ts`).
  *
  * Hand-mapped and `satisfies`-bound rather than derived, because the pipeline
  * assigns `tier` as a literal at each `findings.push` site and there is no runtime
@@ -385,7 +385,7 @@ const gtwrRows = (): readonly CodeEntry[] =>
  * families.
  *
  * That shared parsing is why `reachability-codes.ts` writes its descriptions in the
- * donor's format (severity prefix with an em dash, trailing `Suggestion:`): one parser
+ * v4's format (severity prefix with an em dash, trailing `Suggestion:`): one parser
  * over one convention, rather than a second corpus with its own reader that could
  * disagree about what a description means.
  */

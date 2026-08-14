@@ -199,7 +199,7 @@ const demotedDocument = (): RequirementsDocument => ({
 const repairOps = (payload: CheckPayload): readonly DocumentOp[] =>
   payload.coverage.demotions.flatMap((d) => (d.repair?.ops ?? []) as readonly DocumentOp[])
 
-/** The reasons whose repairs carried at least one op. Typed as the donor's own reason
+/** The reasons whose repairs carried at least one op. Typed as v4's own reason
  * union, so a reason that stops existing is a compile error rather than a silently
  * unmatched string. */
 const dischargeableReasons = (

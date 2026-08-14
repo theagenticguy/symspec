@@ -8,7 +8,7 @@
  * suppress output, and — structurally, not just by convention — cannot change the
  * exit code. `exitCodeForEnvelope` takes the ENVELOPE, and it is called on the
  * envelope BEFORE any of this runs, so a formatting flag has no channel through
- * which to reach it. That is the donor's `--dense` / `--field` contract preserved
+ * which to reach it. That is v4's `--dense` / `--field` contract preserved
  * exactly, and it is why `symspec check --pretty` and `symspec check` fail a CI
  * job identically.
  *
@@ -191,7 +191,7 @@ export const ELIDED_KEY = 'evidence'
  *
  * Eliding `evidence` IS deliberately lossy — shedding those bytes is the entire
  * point — so a dense envelope is a valid SMALLER envelope, not a byte-equal one.
- * That is the same boundary the donor drew, stated here rather than discovered.
+ * That is the same boundary v4 drew, stated here rather than discovered.
  *
  * ## Field NAMES are never abbreviated
  *
@@ -201,7 +201,7 @@ export const ELIDED_KEY = 'evidence'
  *
  * ## What is deliberately NOT implemented yet
  *
- * The donor also dropped keys equal to their SCHEMA DEFAULT, which it could do
+ * v4 also dropped keys equal to their SCHEMA DEFAULT, which it could do
  * because every payload had a Zod schema to consult. G1's operations do not
  * declare OUTPUT schemas (only input ones), so there is no default table to read
  * and guessing one would be exactly the kind of hand-maintained parallel corpus

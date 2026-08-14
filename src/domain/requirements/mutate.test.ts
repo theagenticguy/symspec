@@ -8,8 +8,8 @@
  *    reachability half is the lesson from `lexicon-entries-need-per-entry-
  *    reachability-tests`: a listed-but-unreachable entry is dead code that
  *    advertises a capability, and only a per-entry assertion finds it.
- * 2. **The fold's semantics are the donor's.** Idempotence where the donor was
- *    idempotent, no-ops where the donor no-op'd, the five-way re-render gate, the
+ * 2. **The fold's semantics are v4's.** Idempotence where v4 was
+ *    idempotent, no-ops where v4 no-op'd, the five-way re-render gate, the
  *    pattern-aware clear guard, and — the one with teeth — resolution against the
  *    RUNNING document so an intra-batch key resolves.
  */
@@ -253,7 +253,7 @@ describe('update', () => {
   })
 
   it('stores the literal string "null" as TEXT, not as a clear', () => {
-    // The donor needed a `--clear` flag precisely because argv cannot distinguish
+    // v4 needed a `--clear` flag precisely because argv cannot distinguish
     // these. JSON can, so the op does.
     const { doc, id } = withOne()
     const result = ok(doc, { op: 'update', ref: 'G1', attr: 'verificationNote', value: 'null' })
@@ -532,7 +532,7 @@ describe('the side tables', () => {
     ])
 
     // A SECOND alias merges into the same entry rather than creating a second one —
-    // the donor emits one command per alias, so a naive append would produce N
+    // v4 emits one command per alias, so a naive append would produce N
     // single-alias entries where the source had one N-alias entry.
     const second = ok(first.document, {
       op: 'glossary',
@@ -658,7 +658,7 @@ describe('the side tables', () => {
 
 describe('foldOps', () => {
   it('resolves a key minted EARLIER IN THE SAME BATCH', () => {
-    // The invariant that removed the donor's label→UUID sidecar file. Resolution is
+    // The invariant that removed v4's label→UUID sidecar file. Resolution is
     // against the RUNNING document, so `G1` exists by the time the edge op runs.
     const ops = [
       { op: 'add', key: 'G1', patternType: 'ubiquitous', systemName: 's', systemResponse: 'do a' },
@@ -826,7 +826,7 @@ describe('the state-model ops (G4)', () => {
     const variable = result.document.stateModel.variables[0]
     expect(variable?.name).toBe('lock_held')
     // THE soundness default. `stable` would make the tool prove a false answer and
-    // hand back an inductive invariant certifying it (donor V16, measured). A missing
+    // hand back an inductive invariant certifying it (v4 V16, measured). A missing
     // declaration may only ever WEAKEN a claim.
     expect(variable?.frame).toBe('volatile')
   })

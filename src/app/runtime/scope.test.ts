@@ -88,7 +88,7 @@ describe('the scope corpus is pinned, claim by claim', () => {
   })
 
   it('does NOT ship a pre-joined blob', () => {
-    // The donor's `SCOPE.text` is deliberately absent: a joined paragraph can fall out
+    // v4's `SCOPE.text` is deliberately absent: a joined paragraph can fall out
     // of sync with its own parts, and neither consumer here wants it.
     expect('text' in SCOPE).toBe(false)
   })

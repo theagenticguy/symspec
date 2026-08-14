@@ -58,7 +58,7 @@ import { stubEmbedder } from '../adapters/embedding/embedder.ts'
 import { solverServiceLayer } from '../adapters/z3/solver-service.ts'
 import { type CheckPayload, checkOp } from '../app/operations/check.ts'
 import { runOperation } from '../app/runtime/operation.ts'
-import type { RequirementsDoc as DonorDoc } from '../domain/engine/core/schema.ts'
+import type { RequirementsDoc as EngineDoc } from '../domain/engine/core/schema.ts'
 import { emptyDocument, type RequirementsDocument } from '../domain/requirements/document.ts'
 import { DocPath, DocStore, makeDocPath } from '../ports/doc-store.ts'
 import { embedderLayerOf } from '../ports/embedder.ts'
@@ -70,15 +70,15 @@ import { evalRoundCases } from './eval-rounds.ts'
 // ---------------------------------------------------------------------------
 
 /**
- * Project a donor v2 fixture onto the v3 shape.
+ * Project a v4-era v2 fixture onto the v3 shape.
  *
- * The eval fixtures are authored as donor documents, so the greenfield needs the same
+ * The eval fixtures are authored as engine documents, so the greenfield needs the same
  * CONTENT in v3. Deliberately in the test rather than in production: nothing shipped
  * reads a v2 document (v3 has no read-compat by design — migration is the `import`
  * op-stream replay), so a production converter would be dead code that also weakened
  * the format boundary.
  */
-const asV3 = (doc: DonorDoc): RequirementsDocument => ({
+const asV3 = (doc: EngineDoc): RequirementsDocument => ({
   ...emptyDocument(),
   requirements: Object.fromEntries(
     Object.entries(doc.requirements).map(([id, r]) => [
@@ -159,7 +159,7 @@ const check = async (document: RequirementsDocument): Promise<CheckPayload> => {
 /** One memoized report per fixture — each is a Z3 boot plus a k=10 temporal encode, and
  * three describe blocks read them. */
 const cache = new Map<string, Promise<CheckPayload>>()
-const report = (id: string, doc: DonorDoc): Promise<CheckPayload> => {
+const report = (id: string, doc: EngineDoc): Promise<CheckPayload> => {
   const hit = cache.get(id)
   if (hit !== undefined) return hit
   const run = check(asV3(doc))
@@ -171,7 +171,7 @@ const report = (id: string, doc: DonorDoc): Promise<CheckPayload> => {
 // The gate
 // ---------------------------------------------------------------------------
 
-describe('ADVERSARIAL — the greenfield holds the donor`s 15/15 scoreboard', () => {
+describe('ADVERSARIAL — the greenfield holds the v4 15/15 scoreboard', () => {
   const cases = evalRoundCases()
   const proofCases = cases.filter((c) => c.expectedCodes.length > 0)
   const abstainCases = cases.filter((c) => c.expectedCodes.length === 0)
@@ -193,7 +193,7 @@ describe('ADVERSARIAL — the greenfield holds the donor`s 15/15 scoreboard', ()
     const fired = payload.findings.filter((f) => testCase.expectedCodes.includes(f.code))
     expect(fired.length, testCase.note).toBeGreaterThan(0)
     // LOCALIZATION: some fired finding names ALL the planted culprits. A finding that
-    // named one would be a localization regression — the failure the donor's unsat-core
+    // named one would be a localization regression — the failure v4's unsat-core
     // minimization guards, and the difference between "something is wrong here" and a
     // usable report.
     const localized = fired.some((f) => {
@@ -260,14 +260,14 @@ describe('ADVERSARIAL — the greenfield holds the donor`s 15/15 scoreboard', ()
 
   it('every demotion is ACTIONABLE — prose reasoning AND, where mechanical, runnable ops', async () => {
     // The demotion-only doctrine is only honest if a demotion is a WORK LIST rather than
-    // a dead end. The donor asserted the prose half; v5 adds the ops half, so this
+    // a dead end. v4 asserted the prose half; v5 adds the ops half, so this
     // checks both and records which reasons carry which.
     const withOps = new Set<string>()
     const proseOnly = new Set<string>()
     for (const testCase of cases) {
       const payload = await report(testCase.id, testCase.doc)
       for (const demotion of payload.coverage.demotions) {
-        // The donor's claim: every demotion explains itself.
+        // v4's claim: every demotion explains itself.
         expect(demotion.action.length, `${testCase.id}/${demotion.reason}`).toBeGreaterThan(0)
         // v5's addition: and names something to RUN.
         if (demotion.repair !== undefined) {

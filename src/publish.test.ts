@@ -303,7 +303,7 @@ describe('the README is a PACKAGE readme, greenfield-first and honest', () => {
   it('carries the HONEST-SCOPE section in the tool`s own words', () => {
     expect(readme).toContain('## Honest scope')
     // The load-bearing sentences, verbatim from `kernel/scope.ts` — which is itself asserted
-    // byte-identical to the donor's. So softening the README means softening the corpus,
+    // byte-identical to v4's. So softening the README means softening the corpus,
     // which fails a different test. That chain is the point.
     expect(prose).toContain('sound modulo atomization')
     expect(prose).toContain('silence is not a consistency certificate')

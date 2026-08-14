@@ -45,7 +45,7 @@
  * ## The hangs are genuine, not sleep stubs
  *
  * Test 1 uses pigeonhole at n=11 (UNSAT, exponential resolution proofs). Test 2
- * uses the donor's probe-20 MULTIPLICATIVE Spacer system under donor V21 param
+ * uses v4's probe-20 MULTIPLICATIVE Spacer system under v4 V21 param
  * poisoning — an undeclared `random_seed` key silently voids the `timeout` in the
  * same params object — which S3 measured as unbounded (>20s, no sign of finishing).
  */
@@ -106,7 +106,7 @@ const MULTIPLICATIVE = `
 `
 
 /** The low-level `Z3` namespace. Untyped by design — it is z3-solver's escape
- * hatch, and the donor's own probe corpus reaches Spacer the same way. */
+ * hatch, and v4's own probe corpus reaches Spacer the same way. */
 // biome-ignore lint/suspicious/noExplicitAny: the low-level Z3 namespace is untyped
 type LowLevelZ3 = Record<string, any>
 
@@ -116,7 +116,7 @@ const lowLevel = (module: Z3Module): LowLevelZ3 => (module as unknown as { Z3: L
  * An unbounded Spacer query on its own Z3 context, via the low-level API (the
  * high-level surface has no Fixedpoint wrapper).
  *
- * `random_seed` is the donor's V21 POISON: an undeclared key in the same params
+ * `random_seed` is v4's V21 POISON: an undeclared key in the same params
  * object silently voids `timeout`, so the 200ms bound set two lines above does
  * nothing. That is deliberate — it is the only reliable way to produce a query
  * that no timeout knob can stop, which is precisely the hazard the discipline
@@ -452,7 +452,7 @@ describe('solverServiceLayer — the Layer owns the WASM lifetime', () => {
     expect(reached).toBe('object')
 
     // If the Layer had booted eagerly, the transplanted tier's memo would now be
-    // primed, and the donor `getContext` would resolve without a fresh init. Probe
+    // primed, and v4 `getContext` would resolve without a fresh init. Probe
     // it the only way that does not require instrumenting production code: a NEW
     // fresh build's module must be a genuinely new object, which is only
     // observable because nothing primed the memo above.

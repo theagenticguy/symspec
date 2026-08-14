@@ -39,7 +39,7 @@
  * difficulty of a round a red team actually won.
  *
  * The documents are v2-shaped, which is what the eval authored and what
- * `donor/core/schema.ts` still describes. `../formal/adversarial.test.ts` projects them onto
+ * `engine/core/schema.ts` still describes. `../formal/adversarial.test.ts` projects them onto
  * the v3 shape at the point of use.
  */
 
@@ -54,7 +54,7 @@ import type { AdversarialCase } from './generate.ts'
 /**
  * An empty v2 document.
  *
- * Inlined because the donor's `emptyDoc` did not survive into this package, and the only
+ * Inlined because v4's `emptyDoc` did not survive into this package, and the only
  * caller is this file. Six fields, all required by `RequirementsDoc`.
  */
 function emptyDoc(): RequirementsDoc {

@@ -38,7 +38,7 @@
  */
 
 import { Effect, Schema } from 'effect'
-import { toDonorDoc } from '../../domain/compat.ts'
+import { toEngineDoc } from '../../domain/compat.ts'
 import { DEFAULT_SEMANTIC_THRESHOLD } from '../../domain/engine/formal/semantic.ts'
 import { buildGlossaryPlan, type GlossaryPlan } from '../../domain/glossary/glossary-plan.ts'
 import { opLine } from '../../domain/requirements/ops.ts'
@@ -139,7 +139,7 @@ export const proposeGlossaryOp = defineOperation({
       const embedder = yield* service.load
 
       const plan = yield* Effect.promise(() =>
-        buildGlossaryPlan(toDonorDoc(loaded.document), embedder, {
+        buildGlossaryPlan(toEngineDoc(loaded.document), embedder, {
           embedderIsStub: service.isStub,
           ...(input.semanticThreshold !== null && Number.isFinite(input.semanticThreshold)
             ? { threshold: input.semanticThreshold }

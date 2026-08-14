@@ -4,12 +4,12 @@
  *
  * ## One fold, not one-per-command
  *
- * The donor had two mutation paths and the split cost it real behavior. `applyChange`
+ * v4 had two mutation paths and the split cost it real behavior. `applyChange`
  * (singular) applied one change; `applyChanges` (plural) was a left-fold with NO
  * try/catch, so the FIRST throw aborted a whole batch with no per-op result and no
  * continue-on-error. Its own lesson
  * (`batch-apply-atomic-fold-per-op-results.md`) concluded that a batch caller must
- * fold the singular form itself — which the donor's `apply.ts` then did, in a third
+ * fold the singular form itself — which v4's `apply.ts` then did, in a third
  * place, with its own ref-resolution and its own error mapping.
  *
  * Here there is one {@link applyOp} and one {@link foldOps}, and every surface is a
@@ -23,7 +23,7 @@
  * ## THE THREE INVARIANTS
  *
  * 1. **Resolution is against the RUNNING document, never the original.** This is
- *    the donor lesson that removed the label→UUID sidecar file: an `add` op minting
+ *    v4 lesson that removed the label→UUID sidecar file: an `add` op minting
  *    key `G1` at index 0 must be reference-able by `{"op":"derive","from":"G1"}` at
  *    index 5. Folding against the original would resolve `G1` to nothing.
  * 2. **The document is never mutated in place.** Each step returns a NEW document
@@ -31,7 +31,7 @@
  *    document still has it, which is what makes an atomic abort a no-op rather than
  *    a rollback.
  * 3. **Failure is a VALUE, not a throw.** {@link applyOp} returns
- *    `Ok | OpFailure`. The donor threw `ChangeError` and every caller had a
+ *    `Ok | OpFailure`. v4 threw `ChangeError` and every caller had a
  *    try/catch that re-derived the code from `'code' in e`; a returned union makes
  *    the failure set visible in the type and exhaustive at the call site.
  *
@@ -164,7 +164,7 @@ const newId = (): string => globalThis.crypto.randomUUID()
  * Whether clearing `attr` would strip a slot the requirement's OWN pattern needs.
  * Returns the reason when the clear must be refused.
  *
- * The donor's MN6 guard, carried verbatim in substance. `NULLABLE_ATTRS` answers
+ * v4's MN6 guard, carried verbatim in substance. `NULLABLE_ATTRS` answers
  * "may this field be absent in the schema"; this answers "may it be absent on THIS
  * requirement" — and the second is stricter. Without it, clearing `trigger` on an
  * event-driven requirement re-renders `"When , the auth service shall …"`, which is
@@ -288,7 +288,7 @@ const applyAdd = (
 // ---------------------------------------------------------------------------
 
 /** The five EARS structural slots whose edit re-renders `sentence`. A pure metadata
- * edit (priority/status/verification*) must NOT re-render, which is the donor's
+ * edit (priority/status/verification*) must NOT re-render, which is v4's
  * "five-way re-render gate". */
 const EARS_SLOTS: ReadonlySet<UpdatableAttr> = new Set([
   'patternType',
@@ -397,14 +397,14 @@ const applyDelete = (
   op: Extract<DocumentOp, { op: 'delete' }>,
 ): OpSuccess | OpFailure => {
   // `ref` wins over `id`; both are key-or-UUID. Donor parity — a stream written
-  // against the donor's `apply` used either spelling.
+  // against v4's `apply` used either spelling.
   const target = requireTarget(document, op.ref ?? op.id, 'ref (or id)', 'delete')
   if (isOpFailure(target)) return target
 
   const requirements = { ...document.requirements }
   delete requirements[target.id]
   // Inbound edges from other requirements become DANGLING rather than being
-  // cascaded away, matching the donor: `check` surfaces a dangling reference as a
+  // cascaded away, matching v4: `check` surfaces a dangling reference as a
   // finding, and silently rewriting other requirements' edges would be a mutation
   // the caller did not ask for.
   return { document: { ...document, requirements }, id: target.id, noop: false }
@@ -459,7 +459,7 @@ const applyRemoveEdge = (
   const to = requireTarget(document, op.to, 'to', 'remove-edge')
   if (isOpFailure(to)) return to
 
-  // Removing an absent edge is a no-op success (donor AC-1-7: "safe to call
+  // Removing an absent edge is a no-op success (v4 AC-1-7: "safe to call
   // defensively").
   if (!source[op.relation].includes(to.id)) {
     return { document, id: source.id, noop: true }
@@ -1078,7 +1078,7 @@ const applyUnstate = (
       `Cannot undeclare ${JSON.stringify(name)} — ${referencing.length} expression(s) still reference it: ${referencing.join(', ')}.`,
       [
         'Clear or rewrite those expressions first, then undeclare the variable.',
-        'Leaving them would put an UNDECLARED reference into the document, which the reachability encoder cannot encode — the failure it produces is a solver hang, not an error message (donor findings V14/V21), so it is refused here instead.',
+        'Leaving them would put an UNDECLARED reference into the document, which the reachability encoder cannot encode — the failure it produces is a solver hang, not an error message (v4 findings V14/V21), so it is refused here instead.',
       ],
     )
   }

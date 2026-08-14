@@ -1,7 +1,7 @@
 /**
  * `EmbedderService` — the semantic tier's PROPOSE half, behind an Effect Layer.
  *
- * G2a left this seam open deliberately: `donor/formal/embed.ts` was reduced to the
+ * G2a left this seam open deliberately: `engine/formal/embed.ts` was reduced to the
  * `Embedder` injection TYPE plus `cosine`, and the note there said a real loader
  * lands in G2b "by ADDING a producer of this type, not by reshaping any consumer".
  * This is that producer.
@@ -42,9 +42,9 @@
  * caller yields it the construction effect has returned and the ambient Scope is
  * gone (`Service not found: effect/Scope`, probed in G2a).
  *
- * ## Fail CLOSED, and why that is the opposite of the donor's first design
+ * ## Fail CLOSED, and why that is the opposite of v4's first design
  *
- * The donor's AC-9-4 shipped the tier as LAZY and OPT-IN ("default check pays zero
+ * v4's AC-9-4 shipped the tier as LAZY and OPT-IN ("default check pays zero
  * cost"). A red-team eval retired that half: a certification gate whose opposition
  * detector can be silently skipped is GAMEABLE BY OMISSION — 25/30 wins against
  * `--strict`. So a missing model is `ERR_EMBED_MODEL_MISSING` (exit 2) rather than a
@@ -52,7 +52,7 @@
  *
  * v5 keeps the fail-closed rule and its shape, with one difference that is a
  * consequence of the ops table rather than a change of mind: `--semantic` is a real
- * flag again, defaulting ON. The donor made it a deprecated no-op because it had
+ * flag again, defaulting ON. v4 made it a deprecated no-op because it had
  * already shipped it as opt-in and could not change the meaning of a flag agents
  * were passing. v5 has no such history, and a flag whose only documented behavior is
  * "does nothing" is worse for an agent reading the manifest than a flag that says
@@ -69,9 +69,9 @@ import { Effect, Layer, Scope } from 'effect'
 // where the ~110 MB actually lives.
 //
 // The build still reports INEFFECTIVE_DYNAMIC_IMPORT for `embed.ts`, and it is
-// EXPECTED rather than a defect to chase: `donor/formal/semantic.ts` lazy-imports it
+// EXPECTED rather than a defect to chase: `engine/formal/semantic.ts` lazy-imports it
 // per call (`await import('./embed.ts')` for `cosine`), and that file is byte-guarded
-// against the donor. Its laziness was load-bearing when `embed.ts` still contained
+// against v4. Its laziness was load-bearing when `embed.ts` still contained
 // the ONNX loader; now that the loader lives here, the lazy import buys nothing but
 // cannot be removed without editing a verbatim tier. The correct trade is the warning.
 import { EMBED_MODEL, type Embedder } from '../../domain/engine/formal/embed.ts'
@@ -145,7 +145,7 @@ const MAX_SEQ_LEN = 512
  * Build the real embedder: the pinned `Xenova/bge-base-en-v1.5` ONNX model on the
  * **WASM** runtime, with a pure-JS tokenizer.
  *
- * Every line of the pipeline below is a decision the donor recorded, and three of
+ * Every line of the pipeline below is a decision v4 recorded, and three of
  * them are the difference between working and silently wrong:
  *
  * - **`onnxruntime-web` directly, NOT transformers.js.** `@huggingface/transformers`
@@ -249,7 +249,7 @@ const loadRealEmbedder = async (allowRemote: boolean): Promise<Embedder> => {
  *
  * A cache miss, an offline host, a corrupt download failing its digest, a missing
  * runtime — all of them mean the same thing to a caller: the tier cannot run. The
- * donor's `loadEmbedder` wrapped its factory the same way and for the same reason,
+ * v4's `loadEmbedder` wrapped its factory the same way and for the same reason,
  * and the suggestions name the two real remedies rather than describing the internal
  * fault.
  */

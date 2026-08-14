@@ -1,7 +1,7 @@
 /**
  * THE REACHABILITY FINDING CODES — greenfield-owned.
  *
- * ## Why these are not in `donor/formal/codes.ts`
+ * ## Why these are not in `engine/formal/codes.ts`
  *
  * Codes live with the tier that emits them. That file is the engine's catalog — the
  * transplanted 30, closed over what the engine's pipeline fires — and this tier is
@@ -95,7 +95,7 @@ export type ReachabilityFndCode = (typeof REACHABILITY_FND_CODES)[number]
 /**
  * The description corpus.
  *
- * Written in the donor's own shape so `kernel/catalog.ts` can parse them with the SAME
+ * Written in v4's own shape so `kernel/catalog.ts` can parse them with the SAME
  * parsers it uses on the transplanted families rather than a second set: a leading
  * `<severity> — ` prefix (em dash, U+2014 — a hyphen matches nothing), and a trailing
  * `Suggestion:` clause where there is a remedy. That is why these read a little

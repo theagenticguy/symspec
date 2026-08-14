@@ -3,7 +3,7 @@
  *
  * ## What changed from v2, and why there is no read-compat
  *
- * v2 (the donor's `src/core/schema.ts`, Zod) is a `schemaVersion: 2` object with
+ * v2 (v4's `src/core/schema.ts`, Zod) is a `schemaVersion: 2` object with
  * a UUID-keyed requirements map, four typed edge arrays per requirement, and
  * three side tables (glossary / antonyms / waivers). v3 keeps every one of those
  * — the semantics of a requirements document did not change — and adds the two
@@ -38,7 +38,7 @@
  * the state model, the next `check` silently fell back to "no state model" and
  * demoted with the cause invisible.
  *
- * The donor's own recommendation, adopted here verbatim, is that all three of the
+ * v4's own recommendation, adopted here verbatim, is that all three of the
  * obvious options are wrong:
  *
  * - STRIP (Zod default / `onExcessProperty: 'ignore'`) — the V27 defect itself.
@@ -109,7 +109,7 @@ export type DocVersion = typeof DOC_VERSION
 // Closed enums — the shared vocabulary
 // ---------------------------------------------------------------------------
 
-/** The five EARS templates. Verbatim from the donor's `EARS_PATTERNS`. */
+/** The five EARS templates. Verbatim from v4's `EARS_PATTERNS`. */
 export const EARS_PATTERNS = [
   'ubiquitous',
   'event-driven',
@@ -119,24 +119,24 @@ export const EARS_PATTERNS = [
 ] as const
 export type EarsPattern = (typeof EARS_PATTERNS)[number]
 
-/** Business priority. Verbatim from the donor's `PRIORITIES`. */
+/** Business priority. Verbatim from v4's `PRIORITIES`. */
 export const PRIORITIES = ['low', 'medium', 'high', 'critical'] as const
 export type Priority = (typeof PRIORITIES)[number]
 
-/** Lifecycle status. Verbatim from the donor's `STATUSES`. */
+/** Lifecycle status. Verbatim from v4's `STATUSES`. */
 export const STATUSES = ['draft', 'approved', 'implemented', 'verified'] as const
 export type Status = (typeof STATUSES)[number]
 
-/** SysML-style verification method. Verbatim from the donor's `VERIFICATION_METHODS`. */
+/** SysML-style verification method. Verbatim from v4's `VERIFICATION_METHODS`. */
 export const VERIFICATION_METHODS = ['test', 'inspection', 'analysis', 'demonstration'] as const
 export type VerificationMethod = (typeof VERIFICATION_METHODS)[number]
 
-/** The four typed edge relations. Verbatim from the donor's `RELATIONS`. */
+/** The four typed edge relations. Verbatim from v4's `RELATIONS`. */
 export const RELATIONS = ['derives', 'satisfies', 'verifies', 'refines'] as const
 export type Relation = (typeof RELATIONS)[number]
 
 /**
- * The attributes `update` may change. Verbatim from the donor's
+ * The attributes `update` may change. Verbatim from v4's
  * `UPDATABLE_ATTRS`, plus v3's `responseKind`.
  *
  * ## What is deliberately NOT here, and why each absence is a rule
@@ -145,7 +145,7 @@ export type Relation = (typeof RELATIONS)[number]
  *   references silently.
  * - `key` — the stable human key. Immutable for the SAME reason, which is what
  *   makes "a key is as safe to reference as a UUID" true rather than hopeful. This
- *   is the donor's rule and it is load-bearing for the whole key-addressing story.
+ *   is v4's rule and it is load-bearing for the whole key-addressing story.
  * - `sentence` — a denormalized rendering of the slots. Writing it directly would
  *   let a document assert a sentence its own slots do not produce, and the next
  *   slot edit would silently overwrite the hand-written text. The load path
@@ -275,9 +275,9 @@ export const Uuid = Schema.String.pipe(Schema.check(Schema.isUUID()))
  * non-digit (so `42` can never be a key and key-vs-number is unambiguous), and a
  * leading alphanumeric.
  *
- * FLAGLESS regex, carried over from the donor for the same reason: it is lowered
+ * FLAGLESS regex, carried over from v4 for the same reason: it is lowered
  * into the published JSON Schema as a `pattern`, and a JSON-Schema `pattern` has
- * no flags to carry an `i` into. (The donor's Zod path threw outright on a
+ * no flags to carry an `i` into. (v4's Zod path threw outright on a
  * flagged pattern; beta.102 does not throw, which would make a flagged regex a
  * SILENT mismatch between what the manifest advertises and what the code
  * enforces — a worse failure, so the rule stands.)
@@ -445,7 +445,7 @@ const stateEffectDescription = lines(
   'Only meaningful with `responseKind: effect`, and only referenced variables that are DECLARED are',
   'accepted — an undeclared reference is ERR_USAGE at authoring time. That is deliberate and it is',
   'the front door of a real hazard: an undeclared symbol reaching the Horn encoder was measured to',
-  'hang the WASM solver unkillably (donor findings V14/V21), so the write path refuses it where the',
+  'hang the WASM solver unkillably (v4 findings V14/V21), so the write path refuses it where the',
   'author can still fix it.',
   STATE_EXPR_GRAMMAR,
   "Examples: 'lock_held := true' (unguarded); 'when pending: lock_held := true' (guarded);",
@@ -733,7 +733,7 @@ export const StateModel = Schema.Struct({
   description: lines(
     'The declared state model: the variables a reachability query ranges over, plus an optional',
     'global initial-state predicate. Present in the format from v3.0 so a state model can never be',
-    'silently stripped by a mutation (donor finding V27).',
+    'silently stripped by a mutation (v4 finding V27).',
   ),
 })
 export type StateModel = typeof StateModel.Type
@@ -1024,7 +1024,7 @@ export const RequirementsDocument = Schema.Struct({
     { variables: [] },
     lines(
       'The declared state model (v3). Present in the format from day one — never retrofitted — so a',
-      'mutation cannot strip it (donor finding V27). Defaults to an empty model.',
+      'mutation cannot strip it (v4 finding V27). Defaults to an empty model.',
     ),
   ),
   glossary: withDefault(
@@ -1057,7 +1057,7 @@ export const RequirementsDocument = Schema.Struct({
     'The whole requirements document as persisted to disk: a version tag, the UUID-keyed requirement',
     'map, the declared state model, and the three committed side tables (glossary, antonyms,',
     'waivers). Unknown TOP-LEVEL keys are preserved and disclosed as info diagnostics rather than',
-    'stripped (donor finding V27); unknown keys anywhere deeper are a hard failure.',
+    'stripped (v4 finding V27); unknown keys anywhere deeper are a hard failure.',
   ),
 })
 export type RequirementsDocument = typeof RequirementsDocument.Type

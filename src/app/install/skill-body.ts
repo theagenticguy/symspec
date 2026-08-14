@@ -4,7 +4,7 @@
  *
  * ## Thin pointer, plus the one thing a pointer cannot delegate
  *
- * The donor's skill body was deliberately a THIN POINTER: run `symspec manifest` first,
+ * v4's skill body was deliberately a THIN POINTER: run `symspec manifest` first,
  * state the one honesty caveat, do not restate every flag. That discipline is right and
  * survives here — the codegraph lesson is that a skill duplicating the tool docs drifts
  * from them, and the manifest is the surface that cannot drift because it IS the tool.
@@ -13,7 +13,7 @@
  * command, flag, code, and exit code — and it carries NOTHING about how to write a
  * requirement, because there is no schema field for "align your vocabulary before you
  * start". So the craft corpus is the one thing this body must actually TEACH rather than
- * point at, which is what donor AC-3-6 was asking for when it measured both surfaces at
+ * point at, which is what v4 AC-3-6 was asking for when it measured both surfaces at
  * ~85% reference tables.
  *
  * The split, stated as a rule: **reference material is pointed at, craft is taught.**
@@ -75,7 +75,7 @@ const CORE_LOOP = [
  * Throws when {@link CORE_LOOP} names an operation the table does not hold. That is the
  * single-source guard at this seam: a hand-written list of command names is exactly where
  * an installed skill would start telling an agent to run something that does not exist —
- * which is the defect the donor shipped when its manifest told agents to run
+ * which is the defect v4 shipped when its manifest told agents to run
  * `apply --file` against a command registered as `--doc`.
  */
 export const buildSkillBody = (binName = 'symspec'): string => {

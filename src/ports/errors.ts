@@ -4,7 +4,7 @@
  *
  * ## Why the tag is the code
  *
- * The donor kept two artifacts in sync by hand: a `z.enum` of code strings and a
+ * v4 kept two artifacts in sync by hand: a `z.enum` of code strings and a
  * parallel `ErrCodeMeta` map of `z.literal(code).describe(text)`. A code could
  * exist in one and not the other, so a `satisfies` bound was needed to force
  * them to agree. Here there is only ONE artifact per code — the class. Its
@@ -12,9 +12,9 @@
  * an error instance IS its own catalog entry. There is nothing to keep in sync,
  * so nothing can drift.
  *
- * ## Descriptions are VERBATIM from the donor
+ * ## Descriptions are VERBATIM from v4
  *
- * Every `description` below is byte-identical to the donor's
+ * Every `description` below is byte-identical to v4's
  * `src/core/codes.ts` `ErrCodeMeta` `.describe()` text — extracted
  * programmatically, not retyped, because these strings are the agent-facing
  * meaning of the code vocabulary and the spec keeps every code's "meanings
@@ -490,7 +490,7 @@ export const errCodeCatalog = (): readonly CodeCatalogEntry[] =>
 
 /**
  * A code's meaning split into its two halves at the `Suggestion:` marker every
- * donor description carries. Returning both separately lets `explain` answer
+ * v4 description carries. Returning both separately lets `explain` answer
  * "what does this code mean" and "what do I do about it" as distinct fields
  * without a second corpus to maintain.
  */

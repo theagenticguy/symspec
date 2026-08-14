@@ -6,7 +6,7 @@
  * A single line (positional), a whole file (`--file`), or stdin. All three converge
  * on {@link parseBatch}: a single line is the one-element case of a batch, so there
  * is no "single" implementation that could behave differently from the batch one.
- * That matters because the donor's own agent-UX finding was that agents feed bullet
+ * That matters because v4's own agent-UX finding was that agents feed bullet
  * lists far more often than single sentences — the batch path is the MAIN path, and
  * making the single case a special path would have optimized the rare one.
  *
@@ -14,8 +14,8 @@
  *
  * It reads no document and saves nothing: it is a pure transformation from text to
  * ops. That is what makes it safe to call speculatively on anything, and it is why
- * the operation has no `--file <doc>` (its `--file` is the INPUT text, matching the
- * donor). Committing the result is `apply`'s job, which keeps "what would this
+ * the operation has no `--file <doc>` (its `--file` is the INPUT text, matching
+ * v4). Committing the result is `apply`'s job, which keeps "what would this
  * become" and "make it so" as two separate decisions an agent takes deliberately.
  *
  * ## The payload is an APPLY-READY PLAN (spec AC-A-4)
@@ -27,7 +27,7 @@
  *   symspec parse --file spec.md --field data.opsJsonl > ops.jsonl
  *   symspec apply --file ops.jsonl
  *
- * The donor could not close that loop: its ops existed only on the COMPOUND error
+ * v4 could not close that loop: its ops existed only on the COMPOUND error
  * path, under a name the result object did not carry, and its success path emitted
  * slots an agent had to transcribe field by field (threading the top-level `negated`
  * flag by hand — a step only `cli/add.ts` knew to take).

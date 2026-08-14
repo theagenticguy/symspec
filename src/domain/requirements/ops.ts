@@ -8,7 +8,7 @@
  * by construction:
  *
  * - `../operations/import.ts` declared five op schemas (`add`, the four edge verbs,
- *   `glossary`, `antonym`, `waive`) for consuming the donor's reproduce stream;
+ *   `glossary`, `antonym`, `waive`) for consuming v4's reproduce stream;
  * - `../formal/repair.ts` emitted `commands: string[]` and an always-empty
  *   `ops: []`, with a header note saying the ops "do not exist until the G2b ops
  *   land".
@@ -22,9 +22,9 @@
  *
  * ## The verbs, and why exactly these
  *
- * They are the donor's `APPLY_OPS` (add / update / derive / satisfy / verify /
+ * They are v4's `APPLY_OPS` (add / update / derive / satisfy / verify /
  * refine / remove-edge / delete) UNIONED with the three side-table commands the
- * donor's `apply` had no op for and had to emit as shell lines
+ * v4's `apply` had no op for and had to emit as shell lines
  * (`glossary add`, `antonym add`, `waive add`), plus their four inverses, plus G4's
  * four STATE-MODEL verbs (`state` / `unstate` / `state-initial` / `classify`).
  *
@@ -37,14 +37,14 @@
  *
  * Folding the side tables in is the single most load-bearing change here, and the
  * reason is `repair`. The most common demotion discharges are `glossary add`,
- * `antonym add`, and `waive add` — the donor could only ever name them as prose
+ * `antonym add`, and `waive add` — v4 could only ever name them as prose
  * commands, so an agent had to shell out three times and could not batch a repair
  * plan. As ops they ride the same JSONL stream as everything else, so a whole
  * repair plan is one `apply`.
  *
- * ## `update`'s `value` is NULLABLE, and that replaces the donor's `--clear` split
+ * ## `update`'s `value` is NULLABLE, and that replaces v4's `--clear` split
  *
- * The donor had two surfaces for one intent: `update <ref> <attr> <value>` to set,
+ * v4 had two surfaces for one intent: `update <ref> <attr> <value>` to set,
  * and `update --clear <ref> <attr>` to clear, because its batch op could not
  * express a clear at all (`apply.ts` required `typeof value === 'string'`). So a
  * batch could set but never clear, and the CLI carried a mutual-exclusion contract
@@ -52,7 +52,7 @@
  *
  * Here `value: string | null` says it once: a string SETS (and the literal
  * `"null"` is a string, so it sets the text "null"), and `null` CLEARS. JSON
- * distinguishes them natively — which is exactly the distinction the donor had to
+ * distinguishes them natively — which is exactly the distinction v4 had to
  * build a flag for because a shell argv cannot. The CLI keeps `--clear` as the
  * spelling for `null`, since argv still cannot express it.
  *
@@ -88,7 +88,7 @@ import {
  * `id` is OPTIONAL and that is the whole ergonomic story: omitting it lets the
  * fold mint a UUID, so an agent authoring a document never handles one. A `key`
  * supplied here is immediately reference-able by LATER ops in the same batch,
- * which is what removes the donor's label→UUID sidecar file.
+ * which is what removes v4's label→UUID sidecar file.
  *
  * `sentence` is deliberately absent from the op. It is a denormalized rendering of
  * the slots, so carrying it would let a stream assert a sentence inconsistent with
@@ -133,7 +133,7 @@ export type UpdateOp = typeof UpdateOp.Type
  * `{"op":"delete", …}` — remove one requirement.
  *
  * Accepts `ref` OR `id`, both key-or-UUID and resolved identically, because the
- * donor's `apply` accepted both and a stream written against it must keep working.
+ * v4's `apply` accepted both and a stream written against it must keep working.
  * `ref` wins when both appear. Neither is required by the SCHEMA — the fold reports
  * a missing ref as a per-op usage error, which keeps the message specific ("delete
  * requires ref (or id)") rather than a schema-shaped complaint about a union.
@@ -164,7 +164,7 @@ export const EDGE_OPS = Object.keys(EDGE_OP_RELATION) as readonly (keyof typeof 
  * Derived from {@link EDGE_OP_RELATION} rather than written out, so the two directions
  * cannot disagree — and `ops.test.ts` asserts they compose to the identity in both
  * directions. It exists because the CLI takes a `--relation derives` (one command, one
- * closed flag) while the op STREAM carries `{"op":"derive"}` (the donor's spelling,
+ * closed flag) while the op STREAM carries `{"op":"derive"}` (v4's spelling,
  * append-only), so exactly one place has to map between them.
  */
 export const RELATION_EDGE_OP = Object.fromEntries(
@@ -186,7 +186,7 @@ export const EdgeOp = Schema.Struct({
 export type EdgeOp = typeof EdgeOp.Type
 
 /** `{"op":"remove-edge", …}` — remove one typed edge. A no-op when the edge is
- * already absent, so it is safe to call defensively (donor AC-1-7). */
+ * already absent, so it is safe to call defensively (v4 AC-1-7). */
 export const RemoveEdgeOp = Schema.Struct({
   op: Schema.Literal('remove-edge'),
   from: Schema.String,
@@ -274,7 +274,7 @@ export type UnantonymOp = typeof UnantonymOp.Type
  * something together — and the whole point of the op vocabulary is that seventeen
  * edits are one `apply`. A state model reachable only through single commands would
  * be the one table an agent could not author atomically, which is exactly the shape
- * the donor's side tables had before G2b folded them in.
+ * v4's side tables had before G2b folded them in.
  *
  * ## `domain` is a LIST, and `frame` defaults at the FOLD
  *

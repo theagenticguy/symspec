@@ -10,7 +10,7 @@
  * 2. `--dry-run` writes nothing on every op, not just `add`;
  * 3. the injected fold options are actually wired (the antonym consistency guard and
  *    the atomizer's normalizer), since `core/` cannot reach them itself;
- * 4. the DRIFT guard the donor's flagship command failed: a description that names a
+ * 4. the DRIFT guard v4's flagship command failed: a description that names a
  *    `--flag` must name a flag the operation declares.
  */
 
@@ -384,7 +384,7 @@ describe('the injected fold options reach the fold', () => {
     expect(result.failure.error).toContain('its own antonym')
   })
 
-  it('PRESERVES unknown top-level keys across a mutation (donor V27)', async () => {
+  it('PRESERVES unknown top-level keys across a mutation (v4 V27)', async () => {
     // The defect V27 recorded was a mutation round-tripping a document through a
     // strip-mode parse and silently dropping a forward-compatible table. The write path
     // carries the load's `unknownKeys` back, so a mutation cannot strip one.
@@ -422,7 +422,7 @@ describe('the injected fold options reach the fold', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 4. The DRIFT guard the donor's flagship command failed
+// 4. The DRIFT guard v4's flagship command failed
 // ---------------------------------------------------------------------------
 
 describe('a description naming a --flag names a flag the operation HAS', () => {
@@ -477,7 +477,7 @@ describe('a description naming a --flag names a flag the operation HAS', () => {
     // What the guard needs is that SOME description cross-references a flag, so the
     // matching logic is exercised on real text. Measured on this surface: `add` and
     // `update` name several (the mutually-exclusive pairs), which is exactly where the
-    // donor's defect class lives — a cross-reference is only written when two flags
+    // v4's defect class lives — a cross-reference is only written when two flags
     // interact, and that is when getting the name wrong is easiest.
     let total = 0
     for (const op of OPS) {
@@ -492,7 +492,7 @@ describe('a description naming a --flag names a flag the operation HAS', () => {
   })
 
   it('`apply` names --ops for the STREAM and --file for the DOCUMENT', () => {
-    // The donor's exact defect, pinned: it registered `--doc` for the document while
+    // v4's exact defect, pinned: it registered `--doc` for the document while
     // reusing a description whose prose said `--file`, so its manifest advertised
     // `apply --file <ops>` and that invocation returned ERR_USAGE.
     const fields = new Map(
@@ -504,7 +504,7 @@ describe('a description naming a --flag names a flag the operation HAS', () => {
     expect(fields.get('ops')).toContain('--ops')
     expect(fields.get('ops')).toContain('op stream')
     expect(fields.get('file')).toContain('requirements document')
-    // And `--doc`, the donor's spelling, is nowhere — there is one name per path.
+    // And `--doc`, v4's spelling, is nowhere — there is one name per path.
     for (const description of fields.values()) expect(description).not.toContain('--doc ')
   })
 })

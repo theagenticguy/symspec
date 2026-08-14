@@ -266,7 +266,7 @@ describe('check — the formal path reaches Z3 through the Layer', () => {
     const contradictions = data.findings.filter((f) => f.code === 'FND_CONTRADICTION')
     expect(contradictions.length).toBeGreaterThan(0)
     // Names BOTH culprits: a finding that named one would be a localization
-    // regression, which is the failure the donor's unsat-core minimization guards.
+    // regression, which is the failure v4's unsat-core minimization guards.
     const named = new Set(contradictions.flatMap((f) => f.requirementIds))
     expect(named.has('11111111-1111-4111-8111-111111111111')).toBe(true)
     expect(named.has('22222222-2222-4222-8222-222222222222')).toBe(true)
@@ -310,7 +310,7 @@ describe('check — the formal path reaches Z3 through the Layer', () => {
 
   it('an empty document is vacuously verified and clean', async () => {
     const data = await expectOk(emptyDocument())
-    // The donor's rule: fewer than two requirements is vacuously verified, because
+    // v4's rule: fewer than two requirements is vacuously verified, because
     // there is nothing to cross-compare. Asserted so a future "be stricter about
     // empty documents" change is a visible decision.
     expect(data.verified).toBe(true)
@@ -340,13 +340,13 @@ describe('check — the v5 report additions (AC-A-1, AC-A-2)', () => {
       const commands = demotion.repair?.commands ?? []
       expect(commands.length, `${demotion.reason} has an empty repair`).toBeGreaterThan(0)
       for (const command of commands) {
-        // RUNNABLE means no placeholders. `<blocking-code>` in the donor's action
+        // RUNNABLE means no placeholders. `<blocking-code>` in v4's action
         // prose is exactly the defect the repair join closes, so an angle-bracket
         // slot surviving into a COMMAND is a regression.
         expect(command, `placeholder in: ${command}`).not.toMatch(/<[a-z-]+>/)
         expect(command.startsWith('symspec ')).toBe(true)
       }
-      // The donor's prose is PRESERVED alongside, never replaced: it carries the
+      // v4's prose is PRESERVED alongside, never replaced: it carries the
       // reasoning (why a waiver cannot discharge a coverage fact) that a command
       // cannot express.
       expect(typeof demotion.action).toBe('string')
@@ -586,7 +586,7 @@ describe('check — the option surface', () => {
   })
 
   it('--temporal-bound 0 means the tier is OFF; a positive bound enables it', async () => {
-    // The v5 simplification: one flag instead of the donor's `--temporal` +
+    // The v5 simplification: one flag instead of v4's `--temporal` +
     // `--temporal-bound` pair, so a bound cannot be supplied to a tier that is off.
     const off = await expectOk(contradictoryDoc(), { temporalBound: 0 })
     expect(off.findings.some((f) => f.code === 'FND_TEMPORAL_CONTRADICTION')).toBe(false)
@@ -878,7 +878,7 @@ describe('the reachability tier runs ONLY when a state model is committed (G4)',
 
     const violated = payload.findings.find((f) => f.code === 'FND_REACHABILITY_VIOLATED')
     expect(violated?.severity).toBe('error')
-    // The trace cites the requirement's own KEY, not an internal rule name (donor V29).
+    // The trace cites the requirement's own KEY, not an internal rule name (v4 V29).
     expect(violated?.message).toContain('TX-A3')
 
     // And it flows into the tallies the exit contract reads, so exit 1 needs no new wiring.

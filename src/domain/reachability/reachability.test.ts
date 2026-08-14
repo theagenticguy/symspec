@@ -20,7 +20,7 @@
  * `LOCK_SAFE` — a grant COUNT that can never exceed 1, because granting is guarded on
  * `granted = 0` and releasing on `granted = 1`. Proving `granted <= 1` REQUIRES an
  * inductive invariant (no finite unrolling rules out reaching 2), which is exactly the
- * case donor probe measurements show interface B cannot discharge.
+ * case v4 probe measurements show interface B cannot discharge.
  *
  * `COUNTER_VIOLATED` — `retry_count` starts at 0 and increments; the constraint
  * `retry_count <= 2` is violated at step 3. Reachable by a finite unrolling, so the
@@ -231,7 +231,7 @@ describe('V13 — the verdict polarity is pinned at ONE named chokepoint', () =>
   })
 
   /**
-   * THE POLARITY CANARY the donor's probe results call mandatory: two fixtures whose
+   * THE POLARITY CANARY v4's probe results call mandatory: two fixtures whose
    * answers are known by construction, asserting the NAMED verdict rather than the raw
    * lbool. Inverting the chokepoint flips both of these, and no other test in the
    * suite would notice.
@@ -316,7 +316,7 @@ describe('a VIOLATED verdict carries a counterexample trace naming REQUIREMENTS 
     expect(names[names.length - 1]).toBe('TX-B2')
 
     // Every step is a name an AUTHOR would recognize — a requirement key or `init` —
-    // never an internal rule name (donor V29 groundwork).
+    // never an internal rule name (v4 V29 groundwork).
     for (const name of names) {
       expect(['init', 'TX-B1', 'TX-B2']).toContain(name)
     }

@@ -241,7 +241,7 @@ describe('THE WORKED FIXTURE — one document, one proof, one genuine defect', (
     expect(violation?.severity).toBe('error')
 
     // THE TRACE, named by the author's own requirement keys rather than internal rule
-    // names (donor V29's groundwork). The defect needs TX-A3 (enqueue while held) and then
+    // names (v4 V29's groundwork). The defect needs TX-A3 (enqueue while held) and then
     // TX-A2 (release), so both must appear.
     const trace = (violation?.evidence as unknown as { readonly trace?: readonly string[] })?.trace
     expect(trace).toBeDefined()

@@ -67,7 +67,7 @@ export interface AdversarialCase {
 /**
  * An empty v2 document.
  *
- * Inlined because the donor's `emptyDoc` did not survive into this package.
+ * Inlined because v4's `emptyDoc` did not survive into this package.
  */
 function emptyDoc(): RequirementsDoc {
   return {

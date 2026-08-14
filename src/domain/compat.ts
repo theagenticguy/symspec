@@ -4,7 +4,7 @@
  *
  * ## Why the translation lives here and nowhere else
  *
- * The transplanted tier consumes `donor/core/schema.ts`'s `RequirementsDoc`: a
+ * The transplanted tier consumes `engine/core/schema.ts`'s `RequirementsDoc`: a
  * `schemaVersion` tag, a UUID-keyed requirement map, and the three side tables.
  * The v5 document is `../core/document.ts`'s `RequirementsDocument`: `docVersion`,
  * a `stateModel`, and per-requirement `responseKind`.
@@ -31,7 +31,7 @@
  * 2. **`responseKind` is dropped.** Same argument: it is the effect-or-constraint
  *    classification the Horn encoder needs, and the propositional/numeric/temporal
  *    tiers do not read it. The v3 field exists so the classification is DATA rather
- *    than a retrofit (donor V27); it does not yet have a consumer.
+ *    than a retrofit (v4 V27); it does not yet have a consumer.
  *
  * Neither drop is a `verified` hazard, and that is checkable rather than asserted:
  * `compat.test.ts` proves the tier's output is identical whether or not a document
@@ -48,7 +48,7 @@
  *
  * ## The `schemaVersion: 2` tag is a lie the tier never reads
  *
- * It is set because the donor type requires the field. Nothing in the check path
+ * It is set because v4 type requires the field. Nothing in the check path
  * branches on it (measured: no reference outside the type declaration), so it is a
  * structural placeholder, not a claim that this is a v2 document. Stating that
  * here rather than leaving a bare `2` in the code is the difference between an
@@ -56,14 +56,14 @@
  */
 
 import type { Doc } from './engine/core/doc.ts'
-import type { Requirement as DonorRequirement } from './engine/core/schema.ts'
+import type { Requirement as EngineRequirement } from './engine/core/schema.ts'
 import type {
   Requirement as DocumentRequirement,
   RequirementsDocument,
 } from './requirements/document.ts'
 
 /**
- * Project one v3 requirement onto the donor's requirement shape.
+ * Project one v3 requirement onto v4's requirement shape.
  *
  * Optional fields are spread CONDITIONALLY rather than assigned `undefined`. The
  * v3 type is exact-optional (`exactOptionalPropertyTypes`), so an absent key is
@@ -74,7 +74,7 @@ import type {
  * hand-written v2 document would, so anything that canonicalizes JSON — a fixture,
  * a snapshot, an envelope diff — sees no spurious change.
  */
-export const toDonorRequirement = (r: DocumentRequirement): DonorRequirement => ({
+export const toEngineRequirement = (r: DocumentRequirement): EngineRequirement => ({
   id: r.id,
   patternType: r.patternType,
   systemName: r.systemName,
@@ -104,7 +104,7 @@ export const toDonorRequirement = (r: DocumentRequirement): DonorRequirement => 
 })
 
 /**
- * Project a v3 document onto the donor's document shape — the ONE boundary
+ * Project a v3 document onto v4's document shape — the ONE boundary
  * crossing.
  *
  * Requirement ORDER is preserved by construction: `Object.entries` on the v3 map
@@ -114,10 +114,10 @@ export const toDonorRequirement = (r: DocumentRequirement): DonorRequirement => 
  * and therefore the coverage report, while leaving every finding intact. Exactly
  * the kind of divergence that looks like noise in a diff.
  */
-export const toDonorDoc = (document: RequirementsDocument): Doc => {
-  const requirements: Record<string, DonorRequirement> = {}
+export const toEngineDoc = (document: RequirementsDocument): Doc => {
+  const requirements: Record<string, EngineRequirement> = {}
   for (const [id, r] of Object.entries(document.requirements)) {
-    requirements[id] = toDonorRequirement(r)
+    requirements[id] = toEngineRequirement(r)
   }
   return {
     // A structural placeholder the tier never reads — see the module header.

@@ -23,7 +23,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { toDonorDoc } from '../compat.ts'
+import { toEngineDoc } from '../compat.ts'
 import { glossaryIndex, normalize } from '../engine/formal/atomize.ts'
 import type { Embedder } from '../engine/formal/embed.ts'
 import { findOppositionCandidates } from '../engine/formal/semantic.ts'
@@ -156,7 +156,7 @@ const applyPlan = (document: RequirementsDocument, ops: readonly DocumentOp[]) =
 describe('applying the plan leaves a SOUND glossary index', () => {
   it('the clean case: three phrasings become one group', async () => {
     const doc = paraphraseDoc()
-    const plan = await buildGlossaryPlan(toDonorDoc(doc), tableEmbedder(PARAPHRASE_TABLE))
+    const plan = await buildGlossaryPlan(toEngineDoc(doc), tableEmbedder(PARAPHRASE_TABLE))
     expect(plan.ops.length).toBe(2)
     assertIndexIsSound(applyPlan(doc, plan.ops))
   })
@@ -176,7 +176,7 @@ describe('applying the plan leaves a SOUND glossary index', () => {
       req('billing service', 'issue a receipt', 'a payment settles'),
     ])
     const plan = await buildGlossaryPlan(
-      toDonorDoc(doc),
+      toEngineDoc(doc),
       tableEmbedder({
         'issue a session token': [1, 0.05],
         'issue a receipt': [1, 0.08],
@@ -204,7 +204,7 @@ describe('applying the plan leaves a SOUND glossary index', () => {
       req('auth service', 'bestow permissions', 'the user signs in'),
     ])
     const plan = await buildGlossaryPlan(
-      toDonorDoc(doc),
+      toEngineDoc(doc),
       tableEmbedder({ 'grant access': [1, 0.05], 'bestow permissions': [1, 0.08] }),
     )
     expect(plan.classes).toHaveLength(1)
@@ -221,7 +221,7 @@ describe('applying the plan leaves a SOUND glossary index', () => {
       ],
       { glossary: [{ canonical: 'mint an access token', aliases: ['grant a token'] }] },
     )
-    const plan = await buildGlossaryPlan(toDonorDoc(doc), tableEmbedder(PARAPHRASE_TABLE))
+    const plan = await buildGlossaryPlan(toEngineDoc(doc), tableEmbedder(PARAPHRASE_TABLE))
     const merged = plan.classes.find((c) => c.canonical === 'mint an access token')
     expect(merged?.canonicalForced, JSON.stringify(plan.classes)).toBe(true)
     assertIndexIsSound(applyPlan(doc, plan.ops))
@@ -247,7 +247,7 @@ describe('a suspected opposite quarantines its whole class', () => {
   } as const
 
   it('emits NO op merging a same-object-different-verb pair', async () => {
-    const plan = await buildGlossaryPlan(toDonorDoc(vaultDoc()), tableEmbedder(VAULT_TABLE))
+    const plan = await buildGlossaryPlan(toEngineDoc(vaultDoc()), tableEmbedder(VAULT_TABLE))
     // The property, stated over the ops rather than over the classification: whatever the
     // planner decided, no emitted merge may join two phrasings the shape check flags.
     for (const op of plan.ops) {
@@ -263,7 +263,7 @@ describe('a suspected opposite quarantines its whole class', () => {
   })
 
   it('hands back BOTH remedies, with the consequence of each', async () => {
-    const plan = await buildGlossaryPlan(toDonorDoc(vaultDoc()), tableEmbedder(VAULT_TABLE))
+    const plan = await buildGlossaryPlan(toEngineDoc(vaultDoc()), tableEmbedder(VAULT_TABLE))
     const held = plan.unresolved.find((u) => u.reason === 'opposition-candidate')
     expect(held, JSON.stringify(plan.unresolved)).toBeDefined()
     const kinds = new Set(held?.pairs.flatMap((p) => p.remedies.map((r) => r.kind)))
@@ -281,7 +281,7 @@ describe('a suspected opposite quarantines its whole class', () => {
     // `seal` sits in the seed class seal-unseal-expose-conceal, which canonicalizes to
     // `conceal`. Reading the head off the ATOM would tell an author to run
     // `symspec antonym close conceal`, naming a verb absent from their document.
-    const plan = await buildGlossaryPlan(toDonorDoc(vaultDoc()), tableEmbedder(VAULT_TABLE))
+    const plan = await buildGlossaryPlan(toEngineDoc(vaultDoc()), tableEmbedder(VAULT_TABLE))
     const verbs = plan.unresolved.flatMap((u) => u.pairs.flatMap((p) => [...p.verbs]))
     expect(verbs.length).toBeGreaterThan(0)
     expect(verbs).not.toContain('conceal')
@@ -291,7 +291,7 @@ describe('a suspected opposite quarantines its whole class', () => {
     // Same document, cosines pushed to near-identical. The class still does not merge,
     // because the withholding decision is structural.
     const plan = await buildGlossaryPlan(
-      toDonorDoc(vaultDoc()),
+      toEngineDoc(vaultDoc()),
       tableEmbedder({
         'seal the vault': [1, 0.001],
         'close the vault': [1, 0.002],
@@ -323,7 +323,7 @@ describe('the pass embeds each distinct phrasing exactly once', () => {
       ...PARAPHRASE_TABLE,
       'Issue a session token.': [1, 0.05],
     })
-    const plan = await buildGlossaryPlan(toDonorDoc(doc), embedder)
+    const plan = await buildGlossaryPlan(toEngineDoc(doc), embedder)
     expect(embedder.calls.length, 'one batched call, not one per pair').toBe(1)
     expect(embedder.calls[0]?.length).toBe(plan.corpus.responseNodes)
     expect(plan.corpus.embedded).toBe(plan.corpus.responseNodes)
@@ -340,7 +340,7 @@ describe('the pass embeds each distinct phrasing exactly once', () => {
 
   it('compares only WITHIN a system', async () => {
     const doc = paraphraseDoc()
-    const plan = await buildGlossaryPlan(toDonorDoc(doc), tableEmbedder(PARAPHRASE_TABLE))
+    const plan = await buildGlossaryPlan(toEngineDoc(doc), tableEmbedder(PARAPHRASE_TABLE))
     // 3 auth nodes + 1 billing node ⇒ 3 pairs, not the 6 a flat O(n²) would compare.
     expect(plan.corpus.pairsCompared).toBe(3)
     expect(plan.corpus.systems).toBe(2)
@@ -352,13 +352,13 @@ describe('the plan is deterministic', () => {
     // ONE document, twice. Two `paraphraseDoc()` calls would mint fresh ids and the plan
     // reports `requirementIds`, so that would test the fixture rather than the planner.
     const doc = paraphraseDoc()
-    const a = await buildGlossaryPlan(toDonorDoc(doc), tableEmbedder(PARAPHRASE_TABLE))
-    const b = await buildGlossaryPlan(toDonorDoc(doc), tableEmbedder(PARAPHRASE_TABLE))
+    const a = await buildGlossaryPlan(toEngineDoc(doc), tableEmbedder(PARAPHRASE_TABLE))
+    const b = await buildGlossaryPlan(toEngineDoc(doc), tableEmbedder(PARAPHRASE_TABLE))
     expect(JSON.stringify(a)).toBe(JSON.stringify(b))
   })
 
   it('does not depend on the order requirements sit in the document', async () => {
-    // `toDonorDoc` preserves `Object.entries` order, so an insertion-order difference
+    // `toEngineDoc` preserves `Object.entries` order, so an insertion-order difference
     // reaches the planner. The partition and the canonical must not notice.
     const rows = [
       req('auth service', 'issue a session token', 'the user signs in'),
@@ -366,11 +366,11 @@ describe('the plan is deterministic', () => {
       req('auth service', 'mint an access token', 'the user signs in'),
     ]
     const forward = await buildGlossaryPlan(
-      toDonorDoc(docOf(rows)),
+      toEngineDoc(docOf(rows)),
       tableEmbedder(PARAPHRASE_TABLE),
     )
     const reversed = await buildGlossaryPlan(
-      toDonorDoc(docOf([...rows].reverse())),
+      toEngineDoc(docOf([...rows].reverse())),
       tableEmbedder(PARAPHRASE_TABLE),
     )
     expect(forward.ops).toEqual(reversed.ops)
@@ -390,7 +390,7 @@ describe('the plan discloses what it did and did not do', () => {
       req('auth service', 'gamma the token', 'the user signs in'),
     ])
     const plan = await buildGlossaryPlan(
-      toDonorDoc(doc),
+      toEngineDoc(doc),
       tableEmbedder({
         'alpha the token': [1, 0],
         'beta the token': [1, 0.65],
@@ -412,7 +412,7 @@ describe('the plan discloses what it did and did not do', () => {
       req('auth service', 'delete the audit log', 'the retention window closes'),
     ])
     const plan = await buildGlossaryPlan(
-      toDonorDoc(doc),
+      toEngineDoc(doc),
       tableEmbedder({
         'issue a session token': [1, 0],
         'delete the audit log': [0, 1],
@@ -427,7 +427,7 @@ describe('the plan discloses what it did and did not do', () => {
 
   it('discloses a stub embedder rather than leaving it inferable', async () => {
     const plan = await buildGlossaryPlan(
-      toDonorDoc(paraphraseDoc()),
+      toEngineDoc(paraphraseDoc()),
       tableEmbedder(PARAPHRASE_TABLE),
       { embedderIsStub: true },
     )
@@ -441,14 +441,14 @@ describe('the plan discloses what it did and did not do', () => {
 
 /**
  * `oppositionShape` and `isNegatingPrefixPair` re-derive `fuseNegatingPrefix` and
- * `isNegatingPrefixPair` from `donor/formal/semantic.ts`, which are plain `function`s and
+ * `isNegatingPrefixPair` from `engine/formal/semantic.ts`, which are plain `function`s and
  * therefore unreachable. A copy drifts unless something compares them, and
  * the only comparable surface is the original's OBSERVABLE behavior — whether
  * `findOppositionCandidates` fires on a pair.
  */
 describe('the re-derived shape check agrees with the engine original', () => {
   /**
-   * Pairs the donor's OTHER gates do not short-circuit.
+   * Pairs v4's OTHER gates do not short-circuit.
    *
    * `findOppositionCandidates` skips a pair when the atoms are already unified or when the
    * antonym index already relates the heads — so it deliberately does NOT fire on
@@ -470,7 +470,7 @@ describe('the re-derived shape check agrees with the engine original', () => {
     ]
     // Cosine held well above the opposition floor, so the FLOOR never explains a miss and
     // any disagreement is the shape check's.
-    const donorFired =
+    const engineFired =
       (await findOppositionCandidates(reqs, tableEmbedder({ [a]: [1, 0.02], [b]: [1, 0.03] })))
         .length > 0
 
@@ -481,7 +481,7 @@ describe('the re-derived shape check agrees with the engine original', () => {
     expect(oursFired, `expected ${expected} for ${a} vs ${b}`).toBe(expected)
     // The differential itself: the two implementations must not disagree.
     expect(oursFired, 'the re-derived shape check DRIFTED from the engine original').toBe(
-      donorFired,
+      engineFired,
     )
   })
 
@@ -489,7 +489,7 @@ describe('the re-derived shape check agrees with the engine original', () => {
    * The morphology half, asserted DIRECTLY.
    *
    * These pairs are unreachable through the finding — the seed antonym table relates every
-   * one of them, so the donor short-circuits before the shape check runs. Asserting the
+   * one of them, so v4 short-circuits before the shape check runs. Asserting the
    * primitive is the only option left, and saying so here is what stops a reader assuming
    * the differential above covers it.
    */

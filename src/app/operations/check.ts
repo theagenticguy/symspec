@@ -3,7 +3,7 @@
  *
  * ## What this operation is, structurally
  *
- * A thin Effect shell over the engine pipeline (`../donor/pipeline/check.ts`), plus two
+ * A thin Effect shell over the engine pipeline (`engine/pipeline/check.ts`), plus two
  * v5 additions its report shape does not carry. The boundary keeps one property: every
  * behavioral claim this tool makes about a proof comes from the engine's own verdict —
  * this file adds only at the seam, and never rewrites a verdict inside it.
@@ -18,7 +18,7 @@
  *    (AC-A-2), and `data.budgetHint` (AC-A-8, G3) — all ADDITIVE, so the tier's own
  *    `findings` / `demotions` / `verified` pass through unmodified and a reader can tell
  *    which parts of the envelope the tier decided from which parts this shell added.
- * 4. Validate the option surface up front, with the donor's exact usage errors.
+ * 4. Validate the option surface up front, with v4's exact usage errors.
  *
  * ## Why the whole run is ONE Effect.promise and not per-tier Effects
  *
@@ -31,7 +31,7 @@
  *   exit by closing the scope;
  * - the tiers' own `--timeout-ms` (per-solver `solver.set('timeout', …)`) and
  *   `--solver-budget-ms` (whole-run deadline, consulted between tiers) are the
- *   in-band bounds, and they are the donor's, unchanged;
+ *   in-band bounds, and they are v4's, unchanged;
  * - `SolverService.solve` / `interruptibleSolve` remains the sanctioned primitive
  *   for anything the greenfield writes NEW against Z3 — which in G2a is the guard
  *   test, and in G4 will be the Spacer reachability tier.
@@ -48,7 +48,7 @@
  * ## The temporal bound's cap is a MEASUREMENT, not a taste
  *
  * `--temporal-bound` is capped at 200 and the cap is enforced here with the
- * donor's exact rationale, because the encode phase is NOT interruptible by either
+ * v4's exact rationale, because the encode phase is NOT interruptible by either
  * budget knob: `--timeout-ms` is a per-solver setting and the cost is paid building
  * the term graph before any solver sees it, while `--solver-budget-ms` is consulted
  * only BEFORE the tier starts (temporal is one whole-spec unit of work). So a large
@@ -61,7 +61,7 @@
 import { Effect, Schema } from 'effect'
 import { type BudgetHint, budgetHintFor } from '../../domain/advice/budget-hint.ts'
 import { repairForDemotion } from '../../domain/advice/repair.ts'
-import { toDonorDoc } from '../../domain/compat.ts'
+import { toEngineDoc } from '../../domain/compat.ts'
 import type { Embedder } from '../../domain/engine/formal/embed.ts'
 import { DEFAULT_SEMANTIC_THRESHOLD } from '../../domain/engine/formal/semantic.ts'
 import type {
@@ -214,7 +214,7 @@ export interface CheckProgress {
  * propositional tier.
  *
  * `elapsedMs` is REPORTED, never gated on. The latency budget lives in the feasibility
- * gate, which is a separate artifact for a reason the donor learned the hard way: a
+ * gate, which is a separate artifact for a reason v4 learned the hard way: a
  * budget enforced inside the tier is a budget that silently changes verdicts.
  */
 export interface ReachabilitySummary {
@@ -239,9 +239,9 @@ export interface ReachabilitySummary {
 }
 
 /**
- * The `check` payload: the donor's report shape, plus the two v5 additions.
+ * The `check` payload: v4's report shape, plus the two v5 additions.
  *
- * Every donor field keeps its name and meaning — `findings`, `excluded`,
+ * Every engine field keeps its name and meaning — `findings`, `excluded`,
  * `pairsChecked`, `waived`, `counts`, `residualRisk`, `coverage`, `verified`,
  * `strictGate`. That is agent API, not legacy. `progress` and the `repair` inside
  * `coverage.demotions[]` are ADDITIVE, so a consumer reading only the tier's fields sees
@@ -306,12 +306,12 @@ const boolFlag = (description: string) =>
   )
 
 /**
- * The G2a option surface. Deliberately a SUBSET of the donor's `check` flags —
+ * The G2a option surface. Deliberately a SUBSET of v4's `check` flags —
  * `--emit-smt2`, `--solver z3-bin|cvc5`, `--solver-path`, `--semantic-threshold`,
  * and `--similarity-threshold` are G2b/G3 — and every included flag keeps the
- * donor's exact name, meaning, and default.
+ * v4's exact name, meaning, and default.
  *
- * `--temporal-bound` has no `--temporal` companion here, on purpose: the donor
+ * `--temporal-bound` has no `--temporal` companion here, on purpose: v4
  * needed both because commander cannot express "a bound implies the tier", and the
  * result is a flag that silently does nothing without its partner. A single
  * `--temporal-bound` whose DEFAULT is 0 (meaning off) is the same capability with
@@ -368,7 +368,7 @@ const CheckInput = Schema.Struct({
     0,
     lines(
       'Whole-run wall-clock solver budget in milliseconds, spanning every solver tier. 0 means',
-      'unbounded (the default), which is the donor behavior when the flag is absent.',
+      'unbounded (the default), which is the engine behavior when the flag is absent.',
       'A tier that stops early records a truncation, which becomes a `solver-budget-exhausted`',
       'demotion — so a truncated run can NEVER report verified: true. The budget starts at the',
       'first solver contact, not at document load, so no solver knob governs parse/lint time.',
@@ -459,7 +459,7 @@ const CheckInput = Schema.Struct({
     ),
   ),
   // DEFAULTS TRUE — the opposite of every other boolean flag here, and the reason is
-  // a red-team result rather than a preference. The donor shipped the semantic tier
+  // a red-team result rather than a preference. v4 shipped the semantic tier
   // opt-in, and an eval defeated `--strict` 25/30 by OMISSION: a certification gate
   // whose opposition detector can be skipped is gameable by not running it. So the
   // tier is on, and turning it OFF is the thing you have to ask for.
@@ -502,14 +502,14 @@ const CheckInput = Schema.Struct({
 })
 
 // ---------------------------------------------------------------------------
-// Option validation — the donor's usage errors, exactly
+// Option validation — v4's usage errors, exactly
 // ---------------------------------------------------------------------------
 
 /**
  * Validate the numeric knobs before any work starts, so a typo is a clean
  * `ERR_USAGE` rather than a silently-disabled gate or an unbounded run.
  *
- * The donor validated these in its commander action for the same reason; the
+ * v4 validated these in its commander action for the same reason; the
  * messages are carried over with the same substance. The one addition is `repair`
  * on each: the corrected invocation is a command an agent can run verbatim, which
  * is the AC-A-9 discipline applied to usage errors too.
@@ -555,7 +555,7 @@ const validate = (input: typeof CheckInput.Type, path: string): Effect.Effect<vo
     )
   }
   if (input.temporalBound > MAX_TEMPORAL_BOUND) {
-    // The donor's rationale, verbatim in substance: this is the one usage error
+    // v4's rationale, verbatim in substance: this is the one usage error
     // whose MESSAGE is the justification, because a bare "max is 200" invites the
     // reader to assume the cap is arbitrary and route around it.
     return usage(
@@ -572,10 +572,10 @@ const validate = (input: typeof CheckInput.Type, path: string): Effect.Effect<vo
 }
 
 /**
- * Translate the validated input into the donor's `CheckOptions`.
+ * Translate the validated input into v4's `CheckOptions`.
  *
  * Every absent option is an ABSENT KEY, never `undefined`. That is not just
- * `exactOptionalPropertyTypes` hygiene here — the donor branches on
+ * `exactOptionalPropertyTypes` hygiene here — v4 branches on
  * `options.temporal !== undefined` and `options.solverBudgetMs !== undefined`, so
  * `{temporal: undefined}` and `{}` mean the same thing to the tier but the sentinel
  * translation must be explicit or a `0` bound would enable the tier with k=0.
@@ -586,15 +586,15 @@ const toCheckOptions = (
    * The loaded embedder, or `undefined` when the tier is off.
    *
    * Passed IN rather than loaded here, because loading is an Effect that can fail and
-   * this function is a pure translation. The `undefined` case is the same one the
-   * donor has always handled first-class: `options.semantic` absent means the tier
+   * this function is a pure translation. The `undefined` case is one the
+   * engine handles first-class: `options.semantic` absent means the tier
    * did not run, which the pipeline reports as a `semantic-tier-skipped` demotion
    * rather than treating as a clean run.
    */
   embedder: Embedder | undefined,
 ): CheckOptions => ({
   timeoutMs: input.timeoutMs,
-  // 0 is the "unbounded" sentinel; the donor expresses unbounded as an absent key.
+  // 0 is the "unbounded" sentinel; v4 expresses unbounded as an absent key.
   ...(input.solverBudgetMs > 0 ? { solverBudgetMs: input.solverBudgetMs } : {}),
   // A bound of 0 means the tier is off; any positive bound enables it.
   ...(input.temporalBound > 0 ? { temporal: { bound: input.temporalBound } } : {}),
@@ -604,7 +604,7 @@ const toCheckOptions = (
   // the strictest legal setting into no gate at all.
   ...(input.failOnUnmatched !== null ? { failOnUnmatched: input.failOnUnmatched } : {}),
   // The semantic tier is enabled by the PRESENCE of this key, so the embedder's
-  // absence and the flag being off converge on one code path — the donor's.
+  // absence and the flag being off converge on one code path — v4's.
   ...(embedder !== undefined
     ? {
         semantic: {
@@ -642,7 +642,7 @@ const progressOf = (report: CheckReport): CheckProgress => ({
  * The severity order, as a predicate — so the reachability findings honor
  * `--min-severity` through the SAME rule the transplanted tier does.
  *
- * Re-derived here rather than imported because the donor's `filterReport` applies the
+ * Re-derived here rather than imported because v4's `filterReport` applies the
  * rule internally and exposes no predicate. Keeping it a three-element index comparison
  * (rather than a set per level) is what makes "error is the top of the order, so
  * `--min-severity error` can never hide the finding the exit gate keys on" true by
@@ -722,7 +722,7 @@ const withRepairs = (
  * Exit codes come from the kernel's contract, computed from the ENVELOPE rather
  * than returned by this handler: an error-severity finding in `data.findings` maps
  * to 1, a tripped `data.strictGate` with no error finding maps to 3, and a clean
- * run maps to 0. That is the donor's semantics exactly, and it lands for free
+ * run maps to 0. That is v4's semantics exactly, and it lands for free
  * because `exitCodeForEnvelope` already reads both fields structurally.
  */
 export const checkOp = defineOperation({
@@ -745,7 +745,7 @@ export const checkOp = defineOperation({
       // HERE — after validation and after the document loaded — so a usage error or
       // a missing document never pays the ~200-1000ms init. This is also the call
       // that primes the transplanted tier's memo, which is why `runCheck` below can
-      // reach Z3 through the donor's unchanged `getContext` with the Layer-owned
+      // reach Z3 through v4's unchanged `getContext` with the Layer-owned
       // instance. Not merely reaching the service: a provided Layer is BUILT
       // eagerly on beta.102 (probed), so reaching it proves nothing; yielding the
       // cached boot is the operative step.
@@ -759,7 +759,7 @@ export const checkOp = defineOperation({
       // (exit 2) instead of a report whose opposition detector silently did not run.
       // A detector that can be skipped is a gate that can be gamed by omission.
       const embedder = input.semantic ? yield* (yield* EmbedderService).load : undefined
-      const donorDoc = toDonorDoc(loaded.document)
+      const engineDoc = toEngineDoc(loaded.document)
 
       // The AC-A-8 ANCHOR. Measured around the pipeline call and nowhere else, so it
       // is the wall clock the solver tiers actually consumed on this machine under
@@ -771,11 +771,11 @@ export const checkOp = defineOperation({
       const startedAt = Date.now()
 
       const full = yield* Effect.tryPromise({
-        try: () => runCheck(donorDoc, toCheckOptions(input, embedder)),
+        try: () => runCheck(engineDoc, toCheckOptions(input, embedder)),
         catch: (cause) =>
           // The tier's own typed failures (a `SolverBudgetExceededError` escaping
           // `findNeedsReview` to a direct caller) and any genuine defect both land
-          // here. `ERR_SOLVER_INCONCLUSIVE` is the donor's catch-all code for a
+          // here. `ERR_SOLVER_INCONCLUSIVE` is v4's catch-all code for a
           // check that could not complete, and it is the honest one: the run
           // reached no verdict, which is different from both "the spec is bad" and
           // "the tool is misconfigured".
@@ -921,7 +921,7 @@ export const checkOp = defineOperation({
           })),
           demotions: allDemotions.map((d) => ({ ...d, action: runnableInProse(d.action) })),
         },
-        // `verified` is recomputed from the MERGED demotion set, preserving the donor's
+        // `verified` is recomputed from the MERGED demotion set, preserving v4's
         // single-writer rule (`verified = demotions.length === 0`). A reachability
         // demotion can therefore only push it toward false — the demotion-only doctrine,
         // which holds because nothing here ever REMOVES a demotion.

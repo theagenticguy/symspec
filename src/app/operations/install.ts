@@ -3,7 +3,7 @@
  *
  * ## What this operation is
  *
- * The donor's install surface, ported through the kernel with the three V11 defects fixed
+ * v4's install surface, ported through the kernel with the three V11 defects fixed
  * (see `../install/targets.ts` for each fix and why porting a known defect would be the
  * wrong call). The body it writes is GENERATED from the operations table, the craft
  * corpus, and the scope corpus, so an installed skill can never teach an agent something
@@ -14,7 +14,7 @@
  * `install` / `uninstall` / `check` / `print` are one table entry with a `mode` field
  * rather than four, because they share the whole target-resolution surface and differ only
  * in what they do with a resolved path. Four operations would mean four manifest rows
- * publishing four copies of `--target`'s semantics — and the donor's own defect at this
+ * publishing four copies of `--target`'s semantics — and v4's own defect at this
  * seam (a manifest row describing `--file` for a command registered as `--doc`) is what
  * that duplication costs.
  *
@@ -115,7 +115,7 @@ export interface InstallPayload {
   /**
    * Hosts with no serviceable surface.
    *
-   * EMPTY as of the V11 fix — the donor listed opencode and gemini here while
+   * EMPTY as of the V11 fix — v4 listed opencode and gemini here while
    * `agents-standard` was already serving both. Kept as a field because it is agent API
    * and should not appear and disappear with its own contents.
    */
@@ -189,7 +189,7 @@ const contentsFor = (target: AgentTarget): string => target.render(buildSkillBod
  * The skip list, projected onto the envelope's `{host, reason}` shape.
  *
  * The registry keys it as `id` (matching a target's own `id`) while the wire field is
- * `host` — the donor's shipped name, preserved because it is agent API. One projection
+ * `host` — v4's shipped name, preserved because it is agent API. One projection
  * rather than two spellings of the same list.
  */
 const skippedList = (): readonly { readonly host: string; readonly reason: string }[] =>

@@ -157,7 +157,7 @@ describe('the nested-verb spelling is rewritten to the positional form', () => {
 /**
  * A finding whose message carries the engine tier's own spelling, verbatim.
  *
- * Copied from `donor/formal/quantity-alias.ts` and `donor/formal/semantic.ts` rather
+ * Copied from `engine/formal/quantity-alias.ts` and `engine/formal/semantic.ts` rather
  * than paraphrased: the point is to prove the boundary handles what those files really
  * produce, and a paraphrase would prove only that it handles this test.
  */
@@ -186,7 +186,7 @@ const OPPOSITION_MESSAGE =
   '`symspec glossary add "start the pump" "halt the pump"` instead. Committing the wrong ' +
   'one MANUFACTURES a false contradiction.'
 
-/** Every reason in the donor union, so a new one cannot slip past this sweep. */
+/** Every reason in v4 union, so a new one cannot slip past this sweep. */
 const EVERY_REASON: readonly CoverageDemotion['reason'][] = [
   'uncovered-requirement',
   'open-opposition-candidate',

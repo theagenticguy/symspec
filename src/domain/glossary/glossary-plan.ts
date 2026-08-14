@@ -30,7 +30,7 @@
  *
  * ## Cosine never decides
  *
- * `donor/formal/semantic.ts` is explicit that cosine CANNOT distinguish antonymy from
+ * `engine/formal/semantic.ts` is explicit that cosine CANNOT distinguish antonymy from
  * synonymy, because antonyms embed CLOSE. So similarity only ever proposes an edge; every
  * decision to WITHHOLD an edge is made by a deterministic signal (the committed antonym
  * table, negating-prefix morphology, or the same-object-different-verb shape). A class
@@ -68,7 +68,7 @@ import type { DocumentOp } from '../requirements/ops.ts'
  * Split a normalized body into a de-inflected head and rest, fusing a standalone
  * negating-prefix token back onto the verb it modifies.
  *
- * A re-derivation of `fuseNegatingPrefix` in `donor/formal/semantic.ts`, which is a plain
+ * A re-derivation of `fuseNegatingPrefix` in `engine/formal/semantic.ts`, which is a plain
  * `function` and therefore unreachable from outside that module. A duplicate drifts
  * unless something compares them, so `glossary-plan.test.ts` pins this against the
  * ORIGINAL'S OBSERVABLE BEHAVIOR — whether `findOppositionCandidates` fires — rather
@@ -240,7 +240,7 @@ export interface BuildGlossaryPlanOptions {
 /**
  * Disjoint-set over sorted string keys.
  *
- * `donor/formal/graph.ts` has one, module-private, so it cannot be
+ * `engine/formal/graph.ts` has one, module-private, so it cannot be
  * imported. Fifteen lines is cheaper than any alternative.
  *
  * The root is always the smaller index, so the PARTITION does not depend on the order edges
@@ -298,7 +298,7 @@ interface Node {
 /**
  * The antonym index this document's atoms were built with.
  *
- * Mirrors `docAntonymIndex` in `donor/pipeline/check.ts:560` exactly: both heads
+ * Mirrors `docAntonymIndex` in `engine/pipeline/check.ts:560` exactly: both heads
  * normalized, and an odd polarity cycle SWALLOWED rather than thrown. The swallow matters
  * here for the same reason it does there — a read-only pass must not crash on a document
  * whose committed antonyms are inconsistent, and the seed index is the honest fallback
@@ -676,7 +676,7 @@ export const buildGlossaryPlan = async (
  *
  * An existing committed canonical WINS — it is the only value that does not fork a group
  * the document already has. Otherwise the lexicographically smallest normalized body, the
- * same rule `donor/formal/antonyms.ts` uses to canonicalize a signed antonym class, so
+ * same rule `engine/formal/antonyms.ts` uses to canonicalize a signed antonym class, so
  * there is one canonicalization rule to learn for both side tables.
  *
  * The choice is transparently arbitrary, and that is the honest property: applying a

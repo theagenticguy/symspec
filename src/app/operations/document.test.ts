@@ -14,7 +14,7 @@
  *
  * ## The chokepoint claim is asserted, not assumed
  *
- * The donor lesson is that key⇄UUID addressing works everywhere BECAUSE there is
+ * v4 lesson is that key⇄UUID addressing works everywhere BECAUSE there is
  * one resolver. So the tests assert both halves: that `show` accepts a key and a
  * UUID identically, and that the resolver itself handles every case (miss on an
  * empty document, miss with near-misses, exact-case preference).

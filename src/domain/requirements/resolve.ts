@@ -5,7 +5,7 @@
  *
  * Donor lesson `stable-key-resolution-single-chokepoint`: symspec addresses
  * requirements by minted UUID, but authors want a stable human key ("G1",
- * "TX-B6") usable wherever a UUID is. The donor got that across its whole surface
+ * "TX-B6") usable wherever a UUID is. v4 got that across its whole surface
  * from TWO small edits, because every id-taking command already funneled its raw
  * `<id>` through one guard. Extending THAT guard was O(1) commands instead of
  * O(n), and — the part that actually matters — made it impossible to apply

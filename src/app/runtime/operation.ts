@@ -5,7 +5,7 @@
  *
  * Every use case is ONE entry in one table. The CLI command tree, the
  * machine-readable manifest, and `--help` are all PROJECTIONS of that table, not
- * parallel artifacts kept in sync. The donor's triple-wiring (a commander
+ * parallel artifacts kept in sync. v4's triple-wiring (a commander
  * command, a hand-written manifest row, and a `descriptions.ts` entry) plus the
  * roundtrip drift test that policed it simply do not exist here: a new operation
  * becomes visible on every surface by being appended to the table, and drift is

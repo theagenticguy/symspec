@@ -6,7 +6,7 @@
  * Three concerns, kept separate because each has a different failure mode:
  *
  * 1. **PATH RESOLUTION** ({@link DocPath}) — where the document is. Positional
- *    argument → `SYMSPEC_DOC` → `./requirements.json`, the donor's convention,
+ *    argument → `SYMSPEC_DOC` → `./requirements.json`, v4's convention,
  *    unchanged. Kept as its own service so the resolution rule lives in one
  *    place and every operation gets it by construction.
  * 2. **SERIALIZATION** — pure functions ({@link serializeDocument},
@@ -17,7 +17,7 @@
  * What it does NOT own: mutation. The store loads and saves; changing a document
  * is the ops' business. That is why there is no `update` method here.
  *
- * ## The atomic-write pattern, ported from the donor's `storage.ts`
+ * ## The atomic-write pattern, ported from v4's `storage.ts`
  *
  * A write lands on a SIBLING temp file first, then `rename()`s over the target.
  * `rename()` within one filesystem is atomic, so a crash mid-write — or a write
@@ -47,16 +47,16 @@
  *
  * ## Errors: the two disjoint load failures
  *
- * `ERR_DOC_PARSE` and `ERR_SCHEMA_VERSION` are kept DISJOINT, in the donor's
- * order and for the donor's reason. The version check runs FIRST, on the raw
+ * `ERR_DOC_PARSE` and `ERR_SCHEMA_VERSION` are kept DISJOINT, in v4's
+ * order and for v4's reason. The version check runs FIRST, on the raw
  * parsed JSON, before schema decoding — so a document that declares a version
  * this build does not know gets `ERR_SCHEMA_VERSION` with the migration path,
  * rather than an `ERR_DOC_PARSE` complaining about a `docVersion` literal
  * mismatch. Getting that order wrong is the difference between an agent being
  * told "run this migration" and being told "your file is malformed".
  *
- * (Note this INVERTS the donor's ordering, which checked the version after a
- * successful `safeParse`. It has to: the donor's version field was an open
+ * (Note this INVERTS v4's ordering, which checked the version after a
+ * successful `safeParse`. It has to: v4's version field was an open
  * `z.number().int()`, so a wrong version still satisfied the schema, whereas v3's
  * `docVersion` is a `Schema.Literal(3)` that a wrong version fails. Same
  * disjointness, same agent-visible outcome, opposite mechanism.)
@@ -182,7 +182,7 @@ const formatSchemaError = (error: Schema.SchemaError): string =>
  *
  * - `docVersion` equals {@link DOC_VERSION} → proceed.
  * - a v2 `schemaVersion` is present instead → `ERR_SCHEMA_VERSION` naming the
- *   donor-CLI migration pipeline, which is the ONE command pair that fixes it.
+ *   v4-CLI migration pipeline, which is the ONE command pair that fixes it.
  * - any other value → `ERR_SCHEMA_VERSION` stating both numbers.
  *
  * A value with NEITHER key falls through to the decoder, which reports the
@@ -210,7 +210,7 @@ const checkDocVersion = (raw: unknown, path: string): Effect.Effect<void, ErrSch
           `v${DOC_VERSION} deliberately has no read-compatibility with v2. Migration is a one-shot import through the op stream the v4 CLI already emits.`,
           `Step 1 — get the op stream: run the v4 CLI against ${path} on a bumped schemaVersion; its ERR_SCHEMA_VERSION envelope carries one \`{"op":…}\` JSONL record per requirement and per edge in dependency order, plus \`symspec glossary\`/\`antonym\`/\`waive\` commands for the side tables.`,
           `Step 2 — consume it: \`symspec import --file <ops.jsonl> --doc <new.json>\`, or pipe the records to \`symspec import\` on stdin.`,
-          'The import reports what it created and passes the donor`s gaps[] through unchanged, so nothing is claimed to reproduce that does not.',
+          'The import reports what it created and passes the v4 gaps[] through unchanged, so nothing is claimed to reproduce that does not.',
         ],
       }),
     )

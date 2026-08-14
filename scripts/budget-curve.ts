@@ -2,11 +2,11 @@
  * The `budgetHint` CALIBRATION PROBE — measure this pipeline's own cost curve.
  *
  * `data.budgetHint` (spec AC-A-8) must recommend a `--solver-budget-ms` derived
- * from measurements taken on THIS pipeline, not from the donor's numbers (donor
+ * from measurements taken on THIS pipeline, not from v4's numbers (v4
  * scale data: N=10 → 2.7s … N=100 → 79.2s). Those are prior art for the SHAPE of
  * the curve — clean O(N²) on two axes — and nothing more: the greenfield runs the
- * transplanted tier through a Layer-owned WASM module rather than the donor's
- * module-level memo, and the machine is not the donor's machine.
+ * transplanted tier through a Layer-owned WASM module rather than v4's
+ * module-level memo, and the machine is not v4's machine.
  *
  * So this script sweeps N over synthetic documents whose requirements share a
  * trigger (so the pairwise tiers actually have candidate pairs to compare) and

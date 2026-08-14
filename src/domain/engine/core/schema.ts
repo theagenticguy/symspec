@@ -1,11 +1,11 @@
 /**
- * The donor's `src/core/schema.ts`, reduced to the TYPES the transplanted check
+ * v4's `src/core/schema.ts`, reduced to the TYPES the transplanted check
  * path actually consumes — and nothing else.
  *
  * ## Why this file is REWRITTEN rather than copied verbatim
  *
- * It is one of exactly four donor files this transplant materially edits (the
- * others: `core/doc.ts`, `formal/codes.ts`, `formal/backend.ts`). The donor
+ * It is one of exactly four files v4 this transplant materially edits (the
+ * others: `core/doc.ts`, `formal/codes.ts`, `formal/backend.ts`). v4
  * original is 721 lines of Zod: ~40 `.describe()`-annotated atomic field schemas,
  * the composed `RequirementSchema` / `RequirementsDocSchema` load-time validators,
  * the discriminated-union `ChangeSchema`, and the per-tool input shapes. The
@@ -18,12 +18,12 @@
  * `Requirement` (solvers/types.ts, lint/gtwr.ts, pipeline/gate.ts,
  * pipeline/check.ts), and `Waiver` (pipeline/gate.ts, pipeline/check.ts). All
  * three are pure TYPES. So the honest port is the types, structurally identical
- * to what the donor's Zod schemas infer, with the validators dropped: v3
+ * to what v4's Zod schemas infer, with the validators dropped: v3
  * documents are validated by `../../../core/document.ts` (Effect Schema) before
  * anything here is reached, and re-validating with a second schema library would
  * be two sources of truth for one contract.
  *
- * The type shapes below are transcribed from the donor's `z.infer` results, not
+ * The type shapes below are transcribed from v4's `z.infer` results, not
  * re-derived, so `Requirement` here and `Requirement` there are the same
  * structural type — which is what lets the differential oracle hand ONE document
  * object to both pipelines.
@@ -31,15 +31,15 @@
  * ## `RequirementsDoc` is still the v2 shape, deliberately
  *
  * The transplanted `pipeline/check.ts` reads `doc.requirements` / `doc.glossary`
- * / `doc.antonyms` / `doc.waivers`, and the donor's `schemaVersion` tag rides
+ * / `doc.antonyms` / `doc.waivers`, and v4's `schemaVersion` tag rides
  * along unused. Keeping the v2 shape here means the transplanted pipeline is
- * BYTE-IDENTICAL to the donor's, and the v3→v2-view projection happens once, at
+ * BYTE-IDENTICAL to v4's, and the v3→v2-view projection happens once, at
  * the boundary, in `../../compat.ts`. Translating inside the tier would have put
  * a conversion in 40 files instead of 1.
  */
 
 // ---------------------------------------------------------------------------
-// Enum constants — verbatim values from the donor
+// Enum constants — verbatim values from v4
 // ---------------------------------------------------------------------------
 
 export const EARS_PATTERNS = [
@@ -64,7 +64,7 @@ export const RELATIONS = ['derives', 'satisfies', 'verifies', 'refines'] as cons
 export type Relation = (typeof RELATIONS)[number]
 
 // ---------------------------------------------------------------------------
-// The requirement — structurally identical to the donor's `z.infer<typeof
+// The requirement — structurally identical to v4's `z.infer<typeof
 // RequirementSchema>`
 // ---------------------------------------------------------------------------
 
@@ -100,13 +100,13 @@ export interface Requirement {
 }
 
 // ---------------------------------------------------------------------------
-// The renderer, re-exported exactly as the donor does
+// The renderer, re-exported exactly as v4 does
 // ---------------------------------------------------------------------------
 
 export { renderSentence } from './render.ts'
 
 // ---------------------------------------------------------------------------
-// Analysis findings — verbatim from the donor
+// Analysis findings — verbatim from v4
 // ---------------------------------------------------------------------------
 
 export type Finding =
@@ -139,7 +139,7 @@ export type Finding =
   | { kind: 'LeafUnverifiable'; id: string; message: string }
 
 // ---------------------------------------------------------------------------
-// The side tables and the document shape — verbatim from the donor
+// The side tables and the document shape — verbatim from v4
 // ---------------------------------------------------------------------------
 
 /** One committed synonym group. */

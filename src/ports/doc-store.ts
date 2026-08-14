@@ -11,10 +11,10 @@ import { Context, type Effect } from 'effect'
 import type { LoadedDocument, RequirementsDocument } from '../domain/requirements/document.ts'
 import type { ErrDocNotFound, ErrDocParse, ErrIo, ErrSchemaVersion } from './errors.ts'
 
-/** The default document path when nothing else resolves. Donor convention. */
+/** The default document path when nothing else resolves. v4 convention. */
 export const DEFAULT_DOC_PATH = './requirements.json'
 
-/** The environment variable that overrides the default. Donor convention. */
+/** The environment variable that overrides the default. v4 convention. */
 export const DOC_PATH_ENV_VAR = 'SYMSPEC_DOC'
 
 /**

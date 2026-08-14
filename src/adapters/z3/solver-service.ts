@@ -4,14 +4,14 @@
  *
  * ## What the Layer buys, and why it is nearly free
  *
- * The donor reached Z3 through a module-level memoized promise
- * (`donor/formal/backend.ts`: `let inflight: Promise<Z3Module> | undefined`). That
+ * v4 reached Z3 through a module-level memoized promise
+ * (`engine/formal/backend.ts`: `let inflight: Promise<Z3Module> | undefined`). That
  * is a global no caller can scope, restart, or dispose. A Layer can be `fresh`ed,
  * built into a `ManagedRuntime`, and disposed, and its scope OWNS the WASM
  * lifetime.
  *
  * The transplant cost is one injection point, not a ~7.8k-LOC Effect-ization.
- * Measured on the donor: `backend.ts` is the ONLY importer of `z3-solver`, and
+ * Measured on v4: `backend.ts` is the ONLY importer of `z3-solver`, and
  * exactly three non-test files call `getContext()`. So {@link solverServiceLayer}'s
  * acquire boots the module and PRIMES that memo, and every tier below —
  * contradiction, subsumption, vacuity, incomplete, needs-review, numeric, temporal
@@ -40,7 +40,7 @@
  * Three consequences, all measured in spike S3, all counter-intuitive:
  *
  * 1. **The event loop stays LIVE during a query.** `Effect.timeout` fires on
- *    schedule and the fiber interrupts on time. The donor's V14 prior ("hangs are
+ *    schedule and the fiber interrupts on time. v4's V14 prior ("hangs are
  *    unkillable from JS, no `Promise.race`/abort escape") meant the race could not
  *    STOP Z3 — not that it never resolved.
  * 2. **Bare abandonment does not leak — it WEDGES.** After a fiber interrupt with
@@ -80,11 +80,11 @@ import { type BootedSolver, interruptibleSolve, SolverService } from '../../port
  *
  * `Effect.promise` (not `tryPromise`) because a WASM boot failure is a DEFECT, not
  * a recoverable typed error — it means the installed `z3-solver` is broken, which
- * no `ERR_*` code and no agent-facing suggestion can act on. This matches the
- * donor, where `getContext` simply rejects.
+ * no `ERR_*` code and no agent-facing suggestion can act on. This matches v4,
+ * where `getContext` simply rejects.
  *
  * The `primeZ3(module)` call is the entire seam. See the header note in
- * `donor/formal/backend.ts`.
+ * `engine/formal/backend.ts`.
  */
 const acquire: Effect.Effect<BootedSolver> = Effect.promise(async () => {
   const { init } = await import('z3-solver')

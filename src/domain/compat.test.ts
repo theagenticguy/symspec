@@ -44,7 +44,7 @@ import { Effect } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { solverServiceLayer } from '../adapters/z3/solver-service.ts'
 import { SolverService } from '../ports/solver.ts'
-import { toDonorDoc, toDonorRequirement } from './compat.ts'
+import { toEngineDoc, toEngineRequirement } from './compat.ts'
 // The pipeline the projection FEEDS, so the observable consequences are the tier's own,
 // not a re-derivation of what they ought to be.
 import { runCheck } from './engine/pipeline/check.ts'
@@ -88,7 +88,7 @@ const B = 'bbbbbbbb-2222-4222-8222-222222222222'
 /**
  * Run the TRANSPLANTED pipeline over a v3 document through the projection.
  *
- * Deliberately calls the donor `runCheck` directly rather than the `check` operation:
+ * Deliberately calls v4 `runCheck` directly rather than the `check` operation:
  * this file is about the PROJECTION, and going through the op would add the option
  * translation and the envelope to every assertion for no gain.
  */
@@ -96,7 +96,7 @@ const check = (document: RequirementsDocument) =>
   Effect.runPromise(
     Effect.flatMap(SolverService, (solver) =>
       Effect.flatMap(solver.boot, () =>
-        Effect.promise(() => runCheck(toDonorDoc(document), { strict: true })),
+        Effect.promise(() => runCheck(toEngineDoc(document), { strict: true })),
       ),
     ).pipe(Effect.provide(solverServiceLayer)),
   )
@@ -142,8 +142,8 @@ describe('compat — the `negated` flag survives, and it is observable', () => {
   it('carries the flag through the single-requirement projection too', () => {
     // The unit-level statement, so a failure localizes to the projection rather than
     // to a tier: the field is present and has the right value on both settings.
-    expect(toDonorRequirement(req({ id: A, negated: true })).negated).toBe(true)
-    expect(toDonorRequirement(req({ id: A, negated: false })).negated).toBe(false)
+    expect(toEngineRequirement(req({ id: A, negated: true })).negated).toBe(true)
+    expect(toEngineRequirement(req({ id: A, negated: false })).negated).toBe(false)
   })
 })
 
@@ -167,7 +167,7 @@ describe('compat — every projected field the tier reads', () => {
   })
 
   it('preserves `trigger` and `preCondition`, which scope every atom', async () => {
-    const projected = toDonorRequirement(
+    const projected = toEngineRequirement(
       req({
         id: A,
         patternType: 'state-driven',
@@ -206,7 +206,7 @@ describe('compat — every projected field the tier reads', () => {
     const after = await codesOf(withAntonym)
     // The seed table may already know open/shut; the claim that matters is that the
     // committed table ARRIVES, which the unit assertion pins directly.
-    expect(toDonorDoc(withAntonym).antonyms).toEqual([{ a: 'open', b: 'shut' }])
+    expect(toEngineDoc(withAntonym).antonyms).toEqual([{ a: 'open', b: 'shut' }])
     // And that supplying it never LOSES a finding — the demotion-only direction.
     expect(after.has('FND_CONTRADICTION')).toBe(before.has('FND_CONTRADICTION') || true)
   })
@@ -217,7 +217,7 @@ describe('compat — every projected field the tier reads', () => {
       ...doc,
       waivers: [{ code: 'FND_EXACT_DUPLICATE', reason: 'reviewed: intentional restatement' }],
     }
-    expect(toDonorDoc(waived).waivers).toEqual([
+    expect(toEngineDoc(waived).waivers).toEqual([
       { code: 'FND_EXACT_DUPLICATE', reason: 'reviewed: intentional restatement' },
     ])
     const report = await check(waived)
@@ -235,12 +235,12 @@ describe('compat — every projected field the tier reads', () => {
       ...docOf(req({ id: A })),
       waivers: [{ code: 'GTWR_R5_INDEFINITE_ARTICLE', requirementId: A, reason: 'reviewed' }],
     }
-    expect(toDonorDoc(doc).waivers[0]?.requirementId).toBe(A)
+    expect(toEngineDoc(doc).waivers[0]?.requirementId).toBe(A)
   })
 
   it('preserves edge arrays by VALUE, and does not share them with the v3 document', () => {
     const document = docOf(req({ id: A, derives: [B] }), req({ id: B }))
-    const projected = toDonorDoc(document)
+    const projected = toEngineDoc(document)
     expect(projected.requirements[A]?.derives).toEqual([B])
     // A SHARED array would let a future mutation inside the engine tier reach back into
     // the caller's v3 document — an aliasing bug in the most confusing possible place.
@@ -251,7 +251,7 @@ describe('compat — every projected field the tier reads', () => {
     // `{trigger: undefined}` and `{}` behave the same for the tier's `!== undefined`
     // guards but serialize differently — so absence has to stay absence, or a projected
     // document differs from a hand-written one on a field neither actually set.
-    const projected = toDonorRequirement(req({ id: A, patternType: 'ubiquitous' }))
+    const projected = toEngineRequirement(req({ id: A, patternType: 'ubiquitous' }))
     expect('preCondition' in projected).toBe(false)
     expect('key' in projected).toBe(false)
     expect('verificationMethod' in projected).toBe(false)
@@ -269,7 +269,7 @@ describe('compat — every projected field the tier reads', () => {
         [A]: req({ id: A }),
       },
     }
-    expect(Object.keys(toDonorDoc(document).requirements)).toEqual([B, A])
+    expect(Object.keys(toEngineDoc(document).requirements)).toEqual([B, A])
   })
 })
 
@@ -336,8 +336,8 @@ describe('compat — the two dropped v3 fields have no consumer in the G2a path'
 
   it('the schemaVersion placeholder is 2 and is never read', () => {
     // Stated as a test so the placeholder cannot be "fixed" to 3 by someone who reads
-    // it as a claim about the document. It is there because the donor TYPE requires
+    // it as a claim about the document. It is there because v4 TYPE requires
     // the field; no tier branches on it.
-    expect(toDonorDoc(emptyDocument()).schemaVersion).toBe(2)
+    expect(toEngineDoc(emptyDocument()).schemaVersion).toBe(2)
   })
 })

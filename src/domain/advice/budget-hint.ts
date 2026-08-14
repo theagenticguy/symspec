@@ -7,7 +7,7 @@
  * `--solver-budget-ms` is the one knob whose right value an agent cannot guess. Too
  * low and the run truncates, which forces a `solver-budget-exhausted` demotion and
  * `verified: false` no matter how clean the document is; too high and a runaway
- * document takes minutes. The donor answered neither question: a truncated run said
+ * document takes minutes. v4 answered neither question: a truncated run said
  * "raise --solver-budget-ms" in prose and left the number to the caller, and
  * `repair.commands` (G2a) improved on that only by DOUBLING the current figure —
  * which is a guess that happens to converge, not a measurement.
@@ -39,9 +39,9 @@
  * work the run did versus the work it completed, which is a ratio — and a ratio is
  * portable where an absolute is not.
  *
- * ## The shape the donor scale data DOES justify
+ * ## The shape v4 scale data DOES justify
  *
- * The donor's N=10 → 2.7s … N=100 → 79.2s is prior art for one thing only: the cost
+ * v4's N=10 → 2.7s … N=100 → 79.2s is prior art for one thing only: the cost
  * is superlinear in requirement count and roughly LINEAR IN CANDIDATE PAIRS, because
  * the pairwise tiers dominate and pair count is O(N²). Both sweeps agree on that:
  * across the greenfield's own N=20..60 points, ms/pair sits in a 35-42 band while

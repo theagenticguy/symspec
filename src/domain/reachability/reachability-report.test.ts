@@ -98,11 +98,11 @@ describe('the tier may DEMOTE and may never promote', () => {
   })
 
   /**
-   * VIOLATED does NOT demote, and that is the donor's semantics rather than an omission.
+   * VIOLATED does NOT demote, and that is v4's semantics rather than an omission.
    *
    * `verified` answers "did the tool COMPARE enough to certify?", not "is the document
    * good". A proven contradiction is an ERROR FINDING — the tool worked, the spec failed —
-   * and the donor treats it exactly this way: `FND_CONTRADICTION` pushes no demotion, and
+   * and v4 treats it exactly this way: `FND_CONTRADICTION` pushes no demotion, and
    * the exit contract maps an error-severity finding to exit 1 independently of
    * `verified`. Adding a demotion here would conflate "I could not check" with "I checked
    * and found a defect", which is the 1-vs-3 distinction the exit codes exist to make.
@@ -421,7 +421,7 @@ describe('partial coverage is DISCLOSED, in the FND_NO_PAIRS_CHECKED tradition',
   it('variables but no constraints: names the CLASSIFY command instead', () => {
     // The commonest half-authored state: declaring variables is the easy half. Naming
     // the wrong command here would send an agent confidently nowhere — the failure mode
-    // the donor's `<blocking-code>` placeholder had.
+    // v4's `<blocking-code>` placeholder had.
     const projection = projectReachability(reportOf({ variables: 2, results: [] }), DOC)
     expect(projection.findings[0]?.message).toContain('NO requirement carries a')
     expect(projection.demotions[0]?.repair?.commands?.join(' ')).toContain('symspec classify')
@@ -504,7 +504,7 @@ describe('a `stable` variable nothing writes is named', () => {
 
 describe('every emitted repair is runnable rather than a placeholder to parse', () => {
   it('carries no unresolved `<blocking-code>`-style placeholder in a COMMAND', () => {
-    // The donor's defect this closes: `action` prose naming `symspec waive add
+    // v4's defect this closes: `action` prose naming `symspec waive add
     // <blocking-code>`, which an agent ran verbatim and got a usage error. Angle-bracket
     // slots are legitimate in an OP (an agent must supply the reason or the predicate),
     // but a COMMAND that cannot be run as-is is a dead end — except where the command IS

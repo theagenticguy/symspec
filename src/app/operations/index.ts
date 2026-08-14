@@ -18,7 +18,7 @@
  * and `./import.ts`):
  *
  * - `init` — create an empty v3 document, refusing to clobber an existing one.
- * - `import` — consume a donor reproduce-op stream into a v3 document. The whole
+ * - `import` — consume a v4 reproduce-op stream into a v3 document. The whole
  *   v2 migration story.
  * - `list` / `show <ref>` — the reads, resolving a ref through the one chokepoint.
  *
@@ -30,7 +30,7 @@
  * `state-initial` (the model-wide initial predicate), and `classify` (label a
  * requirement's response as an effect or a constraint, with its expression). Three
  * operations rather than one because they are scoped differently: two are
- * document-scoped and one is requirement-scoped, which is the donor's own "two tables,
+ * document-scoped and one is requirement-scoped, which is v4's own "two tables,
  * not one" finding. They are the only way to author the input the Spacer reachability
  * tier reads, and every one of them validates references against the DECLARED
  * variables — so an undeclared name is an `ERR_USAGE` here rather than an unkillable
@@ -194,7 +194,7 @@ const manifestEnvelope = () =>
  *
  * The agent-loop primitive: an envelope carries a `code`, and this turns that code
  * back into its meaning without the agent needing an out-of-band table AND WITHOUT
- * FETCHING THE MANIFEST (spec AC-A-3 / donor AC-3-8 — the manifest is ~48 KB of
+ * FETCHING THE MANIFEST (spec AC-A-3 / v4 AC-3-8 — the manifest is ~48 KB of
  * JSON to answer a question about one string).
  *
  * ## G3: all THREE catalogs, not one

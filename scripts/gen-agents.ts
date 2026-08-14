@@ -1,7 +1,7 @@
 /**
  * `AGENTS.md` generator — a shell around the renderer, which lives in `src/`.
  *
- * The renderer is `src/kernel/agents-doc.ts`, deliberately: the donor kept its generator in
+ * The renderer is `src/kernel/agents-doc.ts`, deliberately: v4 kept its generator in
  * `scripts/`, outside the typechecker's `include` and outside the test suite, so a bug in
  * the generator was invisible until it had been committed into the file. Here the tests
  * cover the projection and this script only decides where the bytes go.

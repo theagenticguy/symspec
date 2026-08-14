@@ -118,7 +118,7 @@ describe('the roots the operation installs into', () => {
 
 describe('V11 fix #1: the Kiro/Copilot glob covers MARKDOWN, not only JSON', () => {
   it('matches markdown spec filenames as well as the JSON documents', () => {
-    // The donor's pattern was '**/{requirements,*.requirements}.json' — so the steering
+    // v4's pattern was '**/{requirements,*.requirements}.json' — so the steering
     // doc loaded only with a requirements JSON open, and never while an author drafted
     // the prose that becomes one.
     expect(KIRO_FILE_MATCH).toContain('md')
@@ -159,7 +159,7 @@ describe('V11 fix #1: the Kiro/Copilot glob covers MARKDOWN, not only JSON', () 
 
 describe('V11 fix #2: opencode and gemini are SERVED, not skipped', () => {
   it('reports an EMPTY skip list', () => {
-    // The donor listed both while `agents-standard` was already writing the file both
+    // v4 listed both while `agents-standard` was already writing the file both
     // read — telling a user it could not serve two hosts it had just served.
     expect(SKIPPED_HOSTS).toEqual([])
   })
@@ -196,7 +196,7 @@ describe('V11 fix #2: opencode and gemini are SERVED, not skipped', () => {
 
 describe('V11 fix #3: --target auto with no host marker installs the open standard', () => {
   it('falls back to agents-standard rather than resolving to an empty list', async () => {
-    // The donor exited 0 here having written no file, which is indistinguishable from
+    // v4 exited 0 here having written no file, which is indistinguishable from
     // success — the worst possible behavior for a zero-config command.
     const data = await expectOk()
     expect(data.basis).toBe('fallback')
@@ -337,7 +337,7 @@ describe('install is idempotent and never touches a root instruction file', () =
     expect(removed.targets[0]?.files[0]?.action).toBe('removed')
     expect(existsSync(path)).toBe(false)
 
-    // Repeating is a quiet no-op, not an error — the donor's discipline, kept.
+    // Repeating is a quiet no-op, not an error — v4's discipline, kept.
     const again = await expectOk({ target: 'claude', mode: 'uninstall' })
     expect(again.targets[0]?.files[0]?.action).toBe('unchanged')
   })
@@ -420,7 +420,7 @@ describe('the skill body is generated, never hand-written', () => {
 
   it('THROWS when the core loop names an operation the table does not hold', () => {
     // The guard at the one seam where an installed file could start telling an agent to
-    // run a command that does not exist — which is the defect the donor shipped when its
+    // run a command that does not exist — which is the defect v4 shipped when its
     // manifest documented `apply --file` against a command registered as `--doc`.
     // Verified by construction: the loop list is checked against the live table at render
     // time, so this test asserts the check RUNS by confirming a real render succeeds and

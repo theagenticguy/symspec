@@ -1,8 +1,8 @@
 /**
  * THE AGENT-HOST TARGET REGISTRY — one skill file per host, and the three V11 defects
- * FIXED (spec AC-A-5, donor AC-3-7).
+ * FIXED (spec AC-A-5, v4 AC-3-7).
  *
- * ## The shape, carried over from the donor
+ * ## The shape, carried over from v4
  *
  * Every target writes ONE self-contained skill/rule file into a host's dedicated config
  * subdirectory, and NEVER a host's root instruction file (`CLAUDE.md` / `AGENTS.md` /
@@ -12,11 +12,11 @@
  *
  * ## The three V11 defects, and what each fix actually changes
  *
- * All three were VERIFIED defects in the donor (spec 003 finding V11 + AC-3-7). They are
+ * All three were VERIFIED defects in v4 (spec 003 finding V11 + AC-3-7). They are
  * fixed here rather than ported, because porting a known defect into a greenfield is how
  * a rewrite inherits a bug it already paid to find.
  *
- * **1. Kiro's glob was JSON-only.** The donor wrote
+ * **1. Kiro's glob was JSON-only.** v4 wrote
  * `fileMatchPattern: '**\/{requirements,*.requirements}.json'` (`targets.ts:135`), so the
  * steering doc loaded only when a `.json` requirements document was open. But an author
  * works in MARKDOWN: a spec, a design doc, a PR description. The one moment the guidance
@@ -24,14 +24,14 @@
  * exactly when it did not load. {@link KIRO_FILE_MATCH} now covers markdown AND the JSON
  * documents.
  *
- * **2. `SKIPPED_HOSTS` listed two hosts symspec already serves.** The donor skipped
+ * **2. `SKIPPED_HOSTS` listed two hosts symspec already serves.** v4 skipped
  * `opencode` and `gemini` for "no dedicated rules dir" — and both read `.agents/skills`,
  * which the `agents-standard` target ALREADY writes. So install reported two hosts as
  * unsupported while having just configured them. The list is now EMPTY, and kept as a
  * named export so the envelope field stays stable and a genuinely unserviceable host has
  * somewhere to go.
  *
- * **3. `--target auto` installed NOTHING in a repo with no host marker.** The donor's
+ * **3. `--target auto` installed NOTHING in a repo with no host marker.** v4's
  * `auto` filtered to hosts whose marker directory exists (`targets.ts:197-199`), so a
  * fresh checkout — no `.claude`, no `.agents`, no `.kiro` — resolved to an empty target
  * list and install exited successfully having written nothing. That is the worst possible
@@ -56,7 +56,7 @@ export const SKILL_NAME = 'symspec'
  *
  * Names the concrete triggers — EARS, requirements, spec conflicts — so a host's
  * relevance matcher fires on the right prompts rather than on every mention of "check".
- * Extended past the donor's version with the AUTHORING triggers, because G3's whole point
+ * Extended past v4's version with the AUTHORING triggers, because G3's whole point
  * is that the skill now teaches authoring: an agent about to write a requirement should
  * load this, not only an agent about to validate one.
  */
@@ -75,7 +75,7 @@ export const SKILL_DESCRIPTION =
 /**
  * Kiro's `fileMatchPattern`, covering MARKDOWN as well as the JSON documents.
  *
- * The donor's `'**\/{requirements,*.requirements}.json'` is the V11 defect: it loads the
+ * v4's `'**\/{requirements,*.requirements}.json'` is the V11 defect: it loads the
  * steering doc only when a requirements JSON is open. Requirements are DRAFTED in
  * markdown — a spec, a design doc, an RFC — and the guidance is most valuable before the
  * JSON document exists at all.
@@ -95,7 +95,7 @@ export const KIRO_FILE_MATCH = '**/{requirements,*.requirements,spec,SPEC,*.spec
 /**
  * Hosts with no serviceable install surface — now EMPTY, which is the V11 fix.
  *
- * The donor listed `opencode` ("persistent rules live only in AGENTS.md") and `gemini`
+ * v4 listed `opencode` ("persistent rules live only in AGENTS.md") and `gemini`
  * ("persistent context lives only in GEMINI.md") and reported both as skipped on every
  * run. Both read `.agents/skills`, which the `agents-standard` target writes, so install
  * was telling a user it could not serve two hosts it had just served.
@@ -110,7 +110,7 @@ export const SKIPPED_HOSTS: readonly { readonly id: string; readonly reason: str
 /**
  * Which host ids each target actually serves, published in the envelope.
  *
- * This is the positive statement the donor's `SKIPPED_HOSTS` was the negative,
+ * This is the positive statement v4's `SKIPPED_HOSTS` was the negative,
  * wrong version of. `agents-standard` writes ONE file that four hosts read, and saying so
  * explicitly is what makes the empty skip list legible: a user who wonders "what about
  * opencode?" can see it named under the target that covers it.
@@ -214,7 +214,7 @@ const yamlFrontmatter = (fields: Record<string, string>, body: string): string =
  *
  * Needs its OWN target even though the frontmatter is identical to the open standard,
  * because Claude Code reads `.claude/skills/` and NOT `.agents/skills/` — verified against
- * a live install, and the donor's lesson records shipping `agents-standard` alone and
+ * a live install, and v4's lesson records shipping `agents-standard` alone and
  * having Claude Code see nothing.
  */
 const claude = makeTarget({
@@ -232,7 +232,7 @@ const claude = makeTarget({
  * The agentskills.io OPEN STANDARD: `.agents/skills/<name>/SKILL.md`.
  *
  * One file, four hosts: Cursor, Codex CLI, opencode, and Gemini CLI all read it. That is
- * the V11 fix expressed as a fact rather than a skip reason — the donor listed the last
+ * the V11 fix expressed as a fact rather than a skip reason — v4 listed the last
  * two as unserviceable while this target was already serving them.
  *
  * Also the `--target auto` fallback (V11 fix #3), for exactly this reason: it is the
@@ -286,7 +286,7 @@ const windsurf = makeTarget({
  * `.github/instructions/symspec.instructions.md` with an `applyTo:` glob — leaving the
  * repo-wide `.github/copilot-instructions.md` untouched.
  *
- * The glob gets the same markdown widening as Kiro's, for the same reason: the donor's
+ * The glob gets the same markdown widening as Kiro's, for the same reason: v4's
  * JSON-only pattern missed the author drafting prose.
  */
 const copilot = makeTarget({
@@ -334,7 +334,7 @@ export interface ResolvedTargets {
  * Resolve a `--target` value to concrete targets.
  *
  * - `auto` (the default): every host whose marker directory exists — and when NONE does,
- *   {@link AUTO_FALLBACK_TARGET} rather than an empty list. That is V11 fix #3: the donor
+ *   {@link AUTO_FALLBACK_TARGET} rather than an empty list. That is V11 fix #3: v4
  *   returned nothing here, so `symspec install` in a fresh checkout exited 0 having
  *   written no file, which is indistinguishable from success.
  * - `all`: every registered target.

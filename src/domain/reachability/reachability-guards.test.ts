@@ -1,5 +1,5 @@
 /**
- * THE GUARDS-MUST-FIRE MATRIX — one test per donor hazard, each structured so REMOVING
+ * THE GUARDS-MUST-FIRE MATRIX — one test per v4 hazard, each structured so REMOVING
  * its mitigation makes it FAIL.
  *
  * ## Why this file exists when the hazards are already tested elsewhere
@@ -29,7 +29,7 @@
  *
  * V27 is the one hazard with no code in `reachability.ts` to sabotage, because its
  * mitigation is the document format itself — `stateModel` is a first-class field rather
- * than a retrofit, so the strip that destroyed it in the donor is unrepresentable. That
+ * than a retrofit, so the strip that destroyed it in v4 is unrepresentable. That
  * makes it the easiest one to lose to a future refactor and the one most worth an explicit
  * round-trip test, which is most of this file.
  *
@@ -48,7 +48,7 @@ import { describe, expect, it } from 'vitest'
 import { parseDocumentText, serializeDocument } from '../../adapters/fs/store.ts'
 import { solverServiceLayer } from '../../adapters/z3/solver-service.ts'
 import { SolverService } from '../../ports/solver.ts'
-import { toDonorDoc } from '../compat.ts'
+import { toEngineDoc } from '../compat.ts'
 import {
   DOC_VERSION,
   FRAME_KINDS,
@@ -420,7 +420,7 @@ describe('V14/V21 GUARD — undeclared params and the interrupt escape', () => {
 /**
  * V27's mitigation is the FORMAT, so this is where it gets its teeth.
  *
- * The donor's defect, measured: `RequirementsDocSchema` was a plain `z.object` (Zod's
+ * v4's defect, measured: `RequirementsDocSchema` was a plain `z.object` (Zod's
  * default STRIP mode) and every mutation round-tripped through `safeParse`, so a document
  * carrying `stateModel` loaded fine and lost the key after ONE `symspec add` — no error,
  * no warning, no finding. And because a reachability proof is CONDITIONAL on that model,
@@ -481,7 +481,7 @@ describe('V27 GUARD — `stateModel` survives EVERY mutation op', () => {
 
   it('a mutation preserves the per-requirement CLASSIFICATION as well', () => {
     // `stateModel` is the document-scoped half; `responseKind` + the expression is the
-    // requirement-scoped half, and V27's donor defect would take either.
+    // requirement-scoped half, and the V27 defect would take either.
     const before = modelledDoc()
     const result = applyOp(
       before,
@@ -541,8 +541,8 @@ describe('V27 GUARD — `stateModel` survives EVERY mutation op', () => {
    * tier would silently see no state model.
    */
   it('the compat projection drops it — and the tier reads the v3 document DIRECTLY', () => {
-    const donorShaped = toDonorDoc(modelledDoc()) as unknown as Record<string, unknown>
-    expect('stateModel' in donorShaped).toBe(false)
+    const engineShaped = toEngineDoc(modelledDoc()) as unknown as Record<string, unknown>
+    expect('stateModel' in engineShaped).toBe(false)
     // And the tier's own reader gets the model, from the v3 document, with no boundary in
     // between. Asserted together so the pair reads as one claim.
     expect(prepareModel(modelledDoc()).variables).toHaveLength(2)

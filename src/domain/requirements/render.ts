@@ -3,11 +3,11 @@
  *
  * ## Ported verbatim (behavior), retyped (surface)
  *
- * The five EARS templates and the `negated` polarity rule are the donor's
+ * The five EARS templates and the `negated` polarity rule are v4's
  * `src/core/render.ts` byte-for-byte in their OUTPUT: the same clause order, the
  * same punctuation, the same `While <pre>, when <trigger>, …` combination case.
  * The document format changed in v5; the sentences it renders did not, which is
- * what lets the donor's fixtures and the import round-trip compare rendered text
+ * what lets v4's fixtures and the import round-trip compare rendered text
  * across the two implementations.
  *
  * ## Why `sentence` is stored at all

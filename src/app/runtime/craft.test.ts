@@ -3,7 +3,7 @@
  *
  * ## Why this file has to exist
  *
- * A craft section is prose about behavior, and prose about behavior rots. The donor
+ * A craft section is prose about behavior, and prose about behavior rots. v4
  * shipped `GTWR_R20_PURPOSE` telling authors to "move rationale to a separate
  * attribute" — a field that did not exist — and nothing failed, because no test
  * connected the advice to the tool.
@@ -24,7 +24,7 @@ import { Effect, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { stubEmbedder } from '../../adapters/embedding/embedder.ts'
 import { solverServiceLayer } from '../../adapters/z3/solver-service.ts'
-import type { Requirement as DonorRequirement } from '../../domain/engine/core/schema.ts'
+import type { Requirement as EngineRequirement } from '../../domain/engine/core/schema.ts'
 import { detectAmbiguity } from '../../domain/engine/formal/ambiguity.ts'
 import { checkGtWRules, checkGtWRulesSet } from '../../domain/engine/lint/gtwr.ts'
 import { asView } from '../../domain/engine/solvers/types.ts'
@@ -51,12 +51,12 @@ import { runOperation } from './operation.ts'
 const TS = '2026-01-01T00:00:00.000Z'
 
 /**
- * A donor-shaped requirement carrying `sentence`, for the lint detectors.
+ * An engine-shaped requirement carrying `sentence`, for the lint detectors.
  *
  * The lint tier reads the RENDERED sentence, so the slots only have to be
  * structurally valid — what is under test is the text.
  */
-const linted = (sentence: string): DonorRequirement =>
+const linted = (sentence: string): EngineRequirement =>
   ({
     id: '11111111-1111-4111-8111-111111111111',
     patternType: 'event-driven',
@@ -73,7 +73,7 @@ const linted = (sentence: string): DonorRequirement =>
     createdAt: TS,
     updatedAt: TS,
     sentence,
-  }) as DonorRequirement
+  }) as EngineRequirement
 
 /** Every GtWR code one sentence provokes, deduplicated, in emission order. */
 const gtwrCodes = (sentence: string): readonly string[] => [
@@ -115,7 +115,7 @@ describe('the craft corpus is well-formed', () => {
   })
 
   /**
-   * THE `GTWR_R20_PURPOSE` GUARD: the donor taught authors to use a field that did not
+   * THE `GTWR_R20_PURPOSE` GUARD: v4 taught authors to use a field that did not
    * exist. A craft section naming a code the tool cannot emit is the same defect, and
    * this is what makes it impossible.
    */

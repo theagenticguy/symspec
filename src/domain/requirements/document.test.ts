@@ -343,7 +343,7 @@ describe('strictness is relaxed at the TOP LEVEL ONLY', () => {
     }
   })
 
-  it('ACCEPTS the key shapes the donor documents', () => {
+  it('ACCEPTS the key shapes v4 documents', () => {
     for (const good of ['G1', 'AUTH-3', 'TX-B6', 'perf.p99', 'S12', 'a_b']) {
       expect(
         attempt({

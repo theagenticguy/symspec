@@ -151,7 +151,7 @@ describe('AC-A-4 — one `proposedOps` name, and the suggestion names the real f
       expect(field, 'a suggestion must never name a field that does not exist').toBeDefined()
       expect(field !== undefined && field in result).toBe(true)
     }
-    // And it is the one name, not the donor's second one.
+    // And it is the one name, not v4's second one.
     expect(named).toContain('proposedOps')
     expect('proposedSplits' in result).toBe(false)
   })
@@ -175,7 +175,7 @@ describe('AC-A-4 — one `proposedOps` name, and the suggestion names the real f
   })
 
   it('carries the negated FLAG onto the op, leaving the response POSITIVE', async () => {
-    // The field only `cli/add.ts` knew to thread in the donor. Losing it would
+    // The field only `cli/add.ts` knew to thread in v4. Losing it would
     // persist a prohibition as a permission — the worst available silent error.
     const result = await parseLine('The api shall not expose internal errors')
     expect(result.outcome).toBe('ok')
@@ -261,7 +261,7 @@ describe('tier-2 gating — a clean sentence never loads the wink model', () => 
 
   /**
    * THE DONOR BUG. `winkNLP(model)` leaks, and dies on its ~21st construction with a
-   * `RangeError: Invalid string length` from inside the model package. The donor's
+   * `RangeError: Invalid string length` from inside the model package. v4's
    * `runTier2` loads per LINE, so its `parse --file` aborts on the 21st escalating
    * line of a real requirements file — with a dependency-internal RangeError rather
    * than a parse error, so the whole batch is lost instead of reporting per-line.
@@ -272,7 +272,7 @@ describe('tier-2 gating — a clean sentence never loads the wink model', () => 
    * removing the memo and watching this test time out, which is the guards-must-fire
    * check for it.
    */
-  it('survives 40 ESCALATING lines through the real model (donor bug regression)', async () => {
+  it('survives 40 ESCALATING lines through the real model (v4 bug regression)', async () => {
     const text = Array.from(
       { length: 40 },
       (_, i) => `The audit record ${i} shall be written to the ledger`,

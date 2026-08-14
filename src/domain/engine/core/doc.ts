@@ -1,10 +1,10 @@
 /**
- * The donor's `src/core/doc.ts`, reduced to the two names the transplanted check
+ * v4's `src/core/doc.ts`, reduced to the two names the transplanted check
  * path uses.
  *
  * ## Why this file is REWRITTEN (edit #2 of 4)
  *
- * The donor original is a facade over the v2 STORAGE layer: `loadDoc` /
+ * v4 original is a facade over the v2 STORAGE layer: `loadDoc` /
  * `saveDoc` (reading and writing the on-disk JSON via `./storage.ts`),
  * `applyChange` / `applyChanges` (re-exported from `./changes.ts`, the Change-
  * record mutation path), `newId` (`node:crypto.randomUUID`),
@@ -23,7 +23,7 @@
  * nothing calls — and worse, would have given the tier a SECOND way to read a
  * document off disk, bypassing the store Layer and its diagnostics.
  *
- * `listRequirements` is byte-identical to the donor's. `Doc` is still the alias
+ * `listRequirements` is byte-identical to v4's. `Doc` is still the alias
  * for the v2 `RequirementsDoc` — see the note in `./schema.ts` on why the v3→v2
  * projection happens once at the boundary rather than inside the tier.
  */
@@ -36,9 +36,9 @@ import type { Requirement, RequirementsDoc } from './schema.ts'
  */
 export type Doc = RequirementsDoc
 
-/** Every requirement in the document, in map-insertion order. Verbatim from the
- * donor: the ORDER is load-bearing (it feeds the atom roster and the candidate-
- * pair emission), so this is a plain `Object.values` and not a sort. */
+/** Every requirement in the document, in map-insertion order. The ORDER is
+ * load-bearing (it feeds the atom roster and the candidate-pair emission), so
+ * this is a plain `Object.values` and not a sort. */
 export function listRequirements(doc: Doc): Requirement[] {
   return Object.values(doc.requirements)
 }

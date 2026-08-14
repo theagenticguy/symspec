@@ -251,7 +251,7 @@ describe('load failures are disjoint — each remedy gets its own code', () => {
 
   it('ERR_SCHEMA_VERSION on a v2 document, carrying the MIGRATION PATH', async () => {
     // The one failure a real user hits. Prose an agent cannot execute is the
-    // defect the donor's reproduce work removed; these suggestions name both
+    // defect v4's reproduce work removed; these suggestions name both
     // commands.
     const dir = tempDir()
     const p = join(dir, 'v2.json')

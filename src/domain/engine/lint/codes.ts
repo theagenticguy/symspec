@@ -4,19 +4,19 @@
  *
  * ## Why this file is EDITED rather than copied verbatim
  *
- * The same reason as `../formal/codes.ts`: the donor declares this as a `z.enum`
+ * The same reason as `../formal/codes.ts`: v4 declares this as a `z.enum`
  * plus a parallel `GtwrCodeMeta` of `z.literal(code).describe(text)`, bound by
  * `satisfies Record<GtwrCode, …>`. The greenfield does not ship Zod (spec: "Zod
  * (greenfield is Effect Schema native; no bridge needed)"), so the enum is a `const`
  * tuple and the meta corpus is a plain record — the same two artifacts, the same
  * `satisfies` bound, no schema library.
  *
- * The descriptions below were EXTRACTED PROGRAMMATICALLY from the live donor's
+ * The descriptions below were EXTRACTED PROGRAMMATICALLY from the live v4's
  * described literals, not retyped. That is not laziness: these 24 strings are the
  * agent-facing meaning of a quarter of the code vocabulary, the spec's standing
  * constraint is that all 75 codes survive "with meanings intact", and a typo in one
- * is invisible in review. `../../donor-fidelity.test.ts` diffs them against the
- * donor on every run, which is only a meaningful check because both sides are READ
+ * is invisible in review. They were diffed byte-for-byte against live v4 at
+ * transplant time, which was only a meaningful check because both sides were READ
  * rather than one being transcribed.
  *
  * ## Severity is PER-FINDING, not per-code
@@ -39,8 +39,8 @@
  */
 
 /**
- * The GTWR rule codes, in the donor's append-only order. Grouped by concern, exactly
- * as the donor groups them.
+ * The GTWR rule codes, in v4's append-only order. Grouped by concern, exactly
+ * as v4 groups them.
  */
 export const GTWR_CODES = [
   // Surface pattern / cardinality
@@ -87,12 +87,12 @@ export interface GtwrCodeEntry {
 /**
  * The per-code description corpus the manifest reads to build its GTWR table.
  *
- * `satisfies Record<GtwrCode, GtwrCodeEntry>` is the donor's bound, carried over: it
+ * `satisfies Record<GtwrCode, GtwrCodeEntry>` is v4's bound, carried over: it
  * forces this corpus and {@link GTWR_CODES} to cover EXACTLY the same codes at
  * compile time, so a code added to one and forgotten in the other does not compile.
  * Each entry restates its own `code` so a lookup-then-emit path cannot report a
  * different code than it looked up (asserted, since a plain record can get it wrong
- * where the donor's `z.literal(code)` made it structural).
+ * where v4's `z.literal(code)` made it structural).
  */
 export const GtwrCodeMeta = {
   GTWR_R1_PATTERN: {

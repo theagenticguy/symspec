@@ -17,12 +17,12 @@
  * which runs the DONOR CLI and harvests its `ERR_SCHEMA_VERSION` envelope. Had this
  * test synthesized the streams itself, it would only prove `import` agrees with
  * this file's idea of an op stream. The fixture is checked in so the suite is
- * hermetic, and a test below asserts it still LOOKS like donor output, so a silent
+ * hermetic, and a test below asserts it still LOOKS like v4 output, so a silent
  * hand edit to a fixture is caught.
  *
  * ## The gaps[] pass-through is checked, not assumed
  *
- * The donor discloses that timestamps do not reproduce. That disclosure must reach
+ * v4 discloses that timestamps do not reproduce. That disclosure must reach
  * the caller VERBATIM — softening it in v5's words would risk making a precise
  * statement vague, and dropping it would make the import claim more fidelity than
  * it has.
@@ -50,7 +50,7 @@ import {
 const fixture = (name: string): string =>
   readFileSync(fileURLToPath(new URL(`./__fixtures__/${name}`, import.meta.url)), 'utf8')
 
-/** The v2 source document, as the shape the donor read. */
+/** The v2 source document, as the shape v4 read. */
 interface V2Doc {
   readonly schemaVersion: number
   readonly requirements: Record<string, V2Requirement>
@@ -83,7 +83,7 @@ const TIMESTAMP = '2026-08-03T00:00:00.000Z'
 
 const fold = (text: string) => Effect.runSync(foldImportStream(text, TIMESTAMP))
 
-/** The two production documents under test, each with its donor-generated stream. */
+/** The two production documents under test, each with its v4-generated stream. */
 const CASES = [
   { name: 'agent-run-triggers', slug: 'hex-bonk-agent-run-triggers' },
   { name: 'schedule-management', slug: 'hex-bonk-schedule-management' },
@@ -171,7 +171,7 @@ describe.each(CASES)('round trip: hex-bonk $name', ({ slug }) => {
   })
 
   it('RE-RENDERS the sentence from the slots, matching the v2 stored text', () => {
-    // The donor deliberately does not emit `sentence` — it is a denormalized view.
+    // v4 deliberately does not emit `sentence` — it is a denormalized view.
     // This asserts the round trip reproduces it anyway, which is only true if the
     // renderer is faithful AND every slot survived. Any drift here means one or the
     // other broke.
@@ -186,13 +186,13 @@ describe.each(CASES)('round trip: hex-bonk $name', ({ slug }) => {
   it('imports every side-table row the source carried', () => {
     expect(result.counts.waivers).toBe(source.waivers?.length ?? 0)
     expect(result.counts.antonyms).toBe(source.antonyms?.length ?? 0)
-    // The glossary count compares CANONICAL ENTRIES, not commands: the donor emits
+    // The glossary count compares CANONICAL ENTRIES, not commands: v4 emits
     // one command per ALIAS, so N aliases under one canonical must merge back into
     // one entry rather than becoming N single-alias entries.
     expect(result.counts.glossary).toBe(source.glossary?.length ?? 0)
   })
 
-  it('passes the donor`s gaps[] through VERBATIM', () => {
+  it('passes the v4 gaps[] through VERBATIM', () => {
     expect(result.gaps.length).toBeGreaterThan(0)
     // The timestamp gap always applies to a document with requirements.
     expect(result.gaps.join(' ')).toContain('createdAt/updatedAt')
@@ -227,13 +227,13 @@ describe.each(CASES)('round trip: hex-bonk $name', ({ slug }) => {
 })
 
 // ---------------------------------------------------------------------------
-// The fixtures are still donor-shaped
+// The fixtures are still v4-shaped
 // ---------------------------------------------------------------------------
 
 describe('the checked-in op streams still look like DONOR output', () => {
-  it.each(CASES)('$name uses the donor`s three line kinds and nothing else', ({ slug }) => {
+  it.each(CASES)('$name uses the v4 three line kinds and nothing else', ({ slug }) => {
     // Guards against a hand edit that would quietly make the round trip test a test
-    // of this file's imagination instead of the donor's actual emitter.
+    // of this file's imagination instead of v4's actual emitter.
     for (const line of fixture(`${slug}.ops.jsonl`).split('\n')) {
       const text = line.trim()
       if (text.length === 0) continue
@@ -256,22 +256,22 @@ describe('the checked-in op streams still look like DONOR output', () => {
 // The edge-op table
 // ---------------------------------------------------------------------------
 
-describe('EDGE_OP_RELATION is the exact inverse of the donor`s table', () => {
+describe('EDGE_OP_RELATION is the exact inverse of the v4 table', () => {
   it('maps every relation exactly once', () => {
     expect(Object.values(EDGE_OP_RELATION).sort()).toEqual([...RELATIONS].sort())
   })
 
-  it('is the donor`s RELATION_REPRODUCE_OP inverted', () => {
-    // Restated verbatim from the donor's `src/core/reproduce.ts`. If either side
+  it('is the v4 RELATION_REPRODUCE_OP inverted', () => {
+    // Restated verbatim from v4's `src/core/reproduce.ts`. If either side
     // gains a relation without the other, this fails — the same construction the
-    // donor used to keep its own two tables from drifting.
-    const donorTable: Record<Relation, string> = {
+    // v4 kept its own two tables from drifting.
+    const v4Table: Record<Relation, string> = {
       derives: 'derive',
       satisfies: 'satisfy',
       verifies: 'verify',
       refines: 'refine',
     }
-    for (const [relation, verb] of Object.entries(donorTable)) {
+    for (const [relation, verb] of Object.entries(v4Table)) {
       expect(EDGE_OP_RELATION[verb as keyof typeof EDGE_OP_RELATION]).toBe(relation)
     }
   })
@@ -303,8 +303,8 @@ describe('side-table command parsing', () => {
     ])
   })
 
-  it('unescapes the donor`s embedded-quote spelling', () => {
-    // The donor writes an embedded apostrophe as '\'' — a real waiver reason in the
+  it('unescapes the v4 embedded-quote spelling', () => {
+    // v4 writes an embedded apostrophe as '\'' — a real waiver reason in the
     // agent-run-triggers fixture uses it ("document's vocabulary"), so getting this
     // wrong silently corrupts a reviewed audit trail.
     const tokens = tokenizeCommand(`symspec waive add X --reason 'the doc'\\''s vocabulary'`)
@@ -384,7 +384,7 @@ const addLine = (extra: Record<string, unknown>) =>
 
 describe('fold semantics', () => {
   it('resolves a FORWARD key reference — order in the file does not matter', () => {
-    // The donor emits dependency-ordered streams, but a hand-written one must not
+    // v4 emits dependency-ordered streams, but a hand-written one must not
     // silently lose edges for putting an edge before its target. Two passes.
     const stream = [
       '{"op":"derive","from":"G1","to":"S1"}',
@@ -485,7 +485,7 @@ describe('fold semantics', () => {
   })
 
   it('MERGES glossary aliases under one canonical entry', () => {
-    // The donor emits one command per alias; N appends would produce N entries
+    // v4 emits one command per alias; N appends would produce N entries
     // where the source had one.
     const result = fold(
       [

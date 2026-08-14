@@ -1,6 +1,6 @@
 /**
  * THE AUTHORING-CRAFT CORPUS — how to author a sound spec, not merely which commands
- * exist (spec AC-A-6, donor AC-3-6).
+ * exist (spec AC-A-6, v4 AC-3-6).
  *
  * ## The gap this closes, measured
  *
@@ -77,7 +77,7 @@
  *
  * `codes` is not decoration: `craft.test.ts` asserts every code named here exists in
  * the unified catalog, so a section cannot teach an agent to look for a code the tool
- * does not emit. That failure mode is exactly what `GTWR_R20_PURPOSE` did in the donor
+ * does not emit. That failure mode is exactly what `GTWR_R20_PURPOSE` did in v4
  * — it told authors to "move rationale to a separate attribute", a field that did not
  * exist.
  */
@@ -174,7 +174,7 @@ handling.`,
  * CERTIFICATE: paraphrases atomize to distinct atoms, so two genuinely contradictory
  * requirements phrased differently are never compared and `check` reports nothing.
  *
- * The donor's surfaces taught the reactive loop — write, check, read the demotions,
+ * v4's surfaces taught the reactive loop — write, check, read the demotions,
  * commit the suggested `glossary add`. That works, and it is strictly more expensive
  * than deciding the vocabulary first: every misaligned pair costs a full `check` cycle
  * plus a review of a propose-only candidate that could have been avoided by using the
@@ -240,7 +240,7 @@ that records "I triaged this and it is not a conflict".`,
 /**
  * When to split a requirement and which edge to use.
  *
- * The donor surfaces list the four relations in the `--relation` flag description and
+ * v4 surfaces list the four relations in the `--relation` flag description and
  * nowhere say which to reach for. That leaves the one structurally consequential
  * relation — `verifies` — undocumented in the place an author would look, even though
  * its absence on a leaf produces `FND_LEAF_UNVERIFIABLE`.

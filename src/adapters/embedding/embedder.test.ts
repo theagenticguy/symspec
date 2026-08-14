@@ -9,7 +9,7 @@
  *    the expensive thing sits behind `Effect.cached` INSIDE the service shape.
  * 2. **It fails CLOSED.** A missing model is `ERR_EMBED_MODEL_MISSING`, never a
  *    silent skip. A detector that can be skipped is a gate that can be gamed by
- *    omission, which is the red-team result that retired the donor's opt-in design.
+ *    omission, which is the red-team result that retired v4's opt-in design.
  * 3. **PROPOSE-ONLY, demotion-only.** The semantic findings are `info` severity, they
  *    may push `verified` toward abstention, and they can NEVER promote it. Asserted
  *    against the real transplanted tier with a hand-authored vector table, because

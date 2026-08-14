@@ -3,7 +3,7 @@
  *
  * ## Why a service, and not a direct call
  *
- * `donor/formal/model-cache.ts` already implements the fetch: `downloadModelAssets()`
+ * `engine/formal/model-cache.ts` already implements the fetch: `downloadModelAssets()`
  * force-fetches all three pinned assets, sha256-verifies each, and reports which were
  * already cached. The seam goes above that call, not inside it — the project rule for
  * anything with a network cost, so a test never depends on the fetch's interior.

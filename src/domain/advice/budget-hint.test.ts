@@ -255,7 +255,7 @@ describe('a truncated run recommends a budget derived from the work it DID do', 
   })
 
   it('yields `0` unrun units — not a crash — when the action prose does not parse', () => {
-    // The count is parsed out of the pipeline's own sentence. If a future donor edit
+    // The count is parsed out of the pipeline's own sentence. If a future engine edit
     // rewords it, the hint must degrade to "scale on the completed fraction" rather
     // than throw or report a wrong number.
     const report = reportOf({

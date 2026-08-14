@@ -46,7 +46,7 @@
  * over the declared state, and a user-written quantifier would silently change what
  * question is asked); no arithmetic beyond `+`/`-` on declared ints and literals
  * (multiplication makes the transition relation nonlinear, which is where the
- * donor's probe-20 measured an unbounded Spacer hang); no function calls; no
+ * v4's probe-20 measured an unbounded Spacer hang); no function calls; no
  * strings.
  *
  * `and`/`or`/`not` are WORDS, not `&&`/`||`/`!`. The document is prose that humans
@@ -219,7 +219,7 @@ const fail = (error: string, suggestions: readonly string[], offset?: number): E
 /**
  * A variable or enum-member name: identifier-shaped, dots allowed.
  *
- * Dots are in because the donor's own state-variable examples use them
+ * Dots are in because v4's own state-variable examples use them
  * (`perf.p99`-style naming is idiomatic in these documents), and they cannot be
  * confused with anything else in this grammar — there is no member access.
  */
@@ -711,7 +711,7 @@ const undeclared = (name: string, vars: DeclaredVars): ExprError => {
     declared.length === 0
       ? 'This document declares no state variables yet. Declare one first: `symspec state --name <name> --type bool`.'
       : `Declared variables: ${declared.join(', ')}.`,
-    'Every name in an effect or a constraint must be declared in the state model — an undeclared reference is refused HERE, at authoring time, because it would otherwise reach the Horn encoder and hang the solver (donor findings V14/V21).',
+    'Every name in an effect or a constraint must be declared in the state model — an undeclared reference is refused HERE, at authoring time, because it would otherwise reach the Horn encoder and hang the solver (v4 findings V14/V21).',
     'Declare it: `symspec state --name <name> --type bool|int|enum`.',
   ])
 }

@@ -5,9 +5,9 @@
  * GitHub Actions runs it. That chaining is the entire point of this file existing rather
  * than a benchmark script.
  *
- * ## The defect this file exists NOT to inherit (donor V19)
+ * ## The defect this file exists NOT to inherit (v4 V19)
  *
- * The donor's `scripts/temporal-feasibility.ts` is well-built — committed budget, warm-up
+ * v4's `scripts/temporal-feasibility.ts` is well-built — committed budget, warm-up
  * run to exclude WASM init, two-factor verdict, exit 1 infeasible / 2 crash — and it
  * GATED NOTHING. It was referenced in no `package.json` script, no `lefthook.yml` job, and
  * no workflow; only `knip.json` type-checked it. A gate nobody runs is documentation with
@@ -21,7 +21,7 @@
  *
  * An encoding that answers instantly because it proves nothing is worse than a slow one
  * that proves something. So the verdict is a CONJUNCTION over a polarity pair — the same
- * structure the donor's temporal gate uses, and for the same reason it doubles as the V13
+ * structure v4's temporal gate uses, and for the same reason it doubles as the V13
  * polarity canary:
  *
  *   1. the PROVABLE fixture must come back with a PROOF — `PROVED` or
@@ -153,7 +153,7 @@ const req = (n: number, key: string, over: Partial<Requirement>): Requirement =>
  * The representative model: a grant counter plus `VARIABLE_COUNT - 1` distractor booleans.
  *
  * The distractors are not padding — they are the load. Spacer's cost scales with the state
- * space, and the donor's measurements (122ms at 400 state variables) are the basis for
+ * space, and v4's measurements (122ms at 400 state variables) are the basis for
  * believing this tier is affordable at all. A model with one variable would run in 30ms
  * regardless of how badly the encoding regressed.
  *

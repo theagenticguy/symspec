@@ -309,9 +309,9 @@ const floatFlag = (
 /**
  * An OPTIONAL POSITIONAL argument for a doc-path field, decorated from the schema.
  *
- * A positional (not a flag) for the document path, matching the donor's shape:
+ * A positional (not a flag) for the document path, matching v4's shape:
  * `symspec list ./requirements.json` is what an agent naturally types, and the
- * donor's own error text confirms an agent tries exactly that. The description is
+ * v4's own error text confirms an agent tries exactly that. The description is
  * still read from the schema, so the single-source property holds across the
  * flag/argument distinction.
  *
@@ -582,7 +582,7 @@ const addCommand = Command.make(
 /**
  * `update <attr> [value]` — the ATTR is a positional, the ref is a flag.
  *
- * Deliberately not the donor's `update <ref> <attr> <value>`: `--ref` and `--where` are
+ * Deliberately not v4's `update <ref> <attr> <value>`: `--ref` and `--where` are
  * mutually exclusive, and a bulk update has no ref at all, so a leading ref positional
  * would be present in one mode and absent in the other. Naming it makes the two modes
  * read the same.
@@ -795,10 +795,10 @@ const classifyCommand = Command.make(
 ).pipe(Command.withDescription(classifyOp.summary))
 
 /**
- * `apply` takes everything as FLAGS, and the naming is the donor's lesson applied.
+ * `apply` takes everything as FLAGS, and the naming is v4's lesson applied.
  *
  * It has TWO paths (the op stream in, the document out), so `--ops` and `--file` are
- * both named. The donor registered `--doc` for the document while reusing a shared
+ * both named. v4 registered `--doc` for the document while reusing a shared
  * description whose prose said `--file`, and its manifest consequently told an agent to
  * run `apply --file` — which returned ERR_USAGE on the flagship command.
  */

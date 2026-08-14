@@ -2,9 +2,9 @@
  * REPAIR SYNTHESIS — turning every demotion into a `{ops[], commands[]}` an agent
  * can apply without reading prose (spec AC-A-1).
  *
- * ## What the donor left to the agent, and what this closes
+ * ## What v4 left to the agent, and what this closes
  *
- * The donor's `CoverageDemotion` carries `action: string` — a paragraph of prose
+ * v4's `CoverageDemotion` carries `action: string` — a paragraph of prose
  * naming the discharging command, e.g.
  *
  *   "Alternatively, `symspec waive add <blocking-code> --ref <id> --reason "…"`"
@@ -22,7 +22,7 @@
  * parse — resolving `<blocking-code>` from the run's own excluded-requirement
  * evidence and `<a>`/`<b>` from the finding that raised the demotion.
  *
- * The donor's `action` prose is PRESERVED alongside, unchanged. It carries the
+ * v4's `action` prose is PRESERVED alongside, unchanged. It carries the
  * *reasoning* (why waiving cannot discharge a coverage fact, why re-admission is
  * defensible), which a runnable command cannot express, and dropping it would lose
  * the honesty the demotion-only doctrine rests on. The repair is additive: prose
@@ -37,7 +37,7 @@
  *
  * `core/ops.ts` fixed the shape, so `ops` now carries the actual `DocumentOp`
  * records — decodable by `apply` BY CONSTRUCTION, since the finding emits from the
- * same union `apply` decodes. That closes the loop the donor could not:
+ * same union `apply` decodes. That closes the loop v4 could not:
  *
  *     symspec check --field data.coverage.demotions   # read the plan
  *     symspec apply --ops plan.jsonl                  # execute it
@@ -94,7 +94,7 @@ export interface RepairContext {
    *
    * `optionalKey` rather than `number | undefined`: under
    * `exactOptionalPropertyTypes` an unbounded run OMITS the key, which is the same
-   * absence-is-absence convention the donor `CheckOptions` uses, so the caller can
+   * absence-is-absence convention v4 `CheckOptions` uses, so the caller can
    * spread its options straight in with no `undefined` widening.
    */
   readonly solverBudgetMs?: number
@@ -140,13 +140,13 @@ const raisedBudget = (current: number | undefined, recommended: number | undefin
  *
  * Exhaustive over {@link DemotionReason} by construction: the `switch` returns in
  * every arm and the function's return type has no `undefined`, so adding a reason
- * to the donor's union without handling it here is a compile error rather than a
+ * to v4's union without handling it here is a compile error rather than a
  * silently repair-less demotion.
  */
 export const repairForDemotion = (demotion: CoverageDemotion, context: RepairContext): Repair => {
   switch (demotion.reason) {
     // ---------------------------------------------------------------------
-    // THE PLACEHOLDER JOIN — the one the donor left to the agent
+    // THE PLACEHOLDER JOIN — the one v4 left to the agent
     // ---------------------------------------------------------------------
     case 'excluded-from-formal': {
       const id = demotion.requirementIds[0]
@@ -286,7 +286,7 @@ export const repairForDemotion = (demotion: CoverageDemotion, context: RepairCon
  *
  * The semantic/quantity-alias findings BUILD their suggested invocation into their
  * message with the real verb heads or quantity labels substituted (see
- * `donor/formal/semantic.ts` and `donor/formal/quantity-alias.ts`). So the advice is
+ * `engine/formal/semantic.ts` and `engine/formal/quantity-alias.ts`). So the advice is
  * READ from the finding, never reconstructed — which means it cannot drift from what
  * the finding says, and a future change to the wording propagates for free.
  *

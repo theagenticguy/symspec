@@ -3,7 +3,7 @@
  *
  * ## Why the generator lives in `src/` and not in `scripts/`
  *
- * The donor put its generator in `scripts/gen-agents.ts` and the drift gate in a shell
+ * v4 put its generator in `scripts/gen-agents.ts` and the drift gate in a shell
  * pipeline, which meant the generator itself was outside the typechecker's `include` and
  * outside the test suite: nothing could assert what it produced except a byte-diff against
  * the committed file. So a bug in the generator was invisible until it had already been

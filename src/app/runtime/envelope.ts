@@ -4,7 +4,7 @@
  *
  * ## Ported, not reinvented
  *
- * This shape is **agent API**, not legacy: the donor's `src/cli/envelope.ts`
+ * This shape is **agent API**, not legacy: v4's `src/cli/envelope.ts`
  * defined it, agents in the field switch on it, and the v5 greenfield preserves
  * it byte-for-byte at the wire level. What changed is the implementation
  * language (Zod → Effect Schema) and the provenance of the `code` field (a
@@ -31,7 +31,7 @@
  *
  * ## `repair` — new in v5 (spec AC-A-9)
  *
- * The donor grew a narrow `proposedOps` field late, for one error code
+ * v4 grew a narrow `proposedOps` field late, for one error code
  * (`ERR_PARSE_COMPOUND`). v5 generalizes it from day one: {@link Repair} is the
  * structured, machine-actionable remedy an agent applies to make the failure go
  * away — `ops` to pipe into `import`/`apply`, `commands` to run. It exists as a
@@ -134,7 +134,7 @@ export type NotError<T extends string> = T extends 'error' ? never : T
  * the literal `'error'`) and adds the failure payload:
  *
  * - `error` — the human-readable message. Named `error` (not `message`) because
- *   that is the donor's shipped wire field.
+ *   that is v4's shipped wire field.
  * - `code` — a stable `ERR_*` code from {@link ./errors.ts}. This is the field
  *   agents switch on; it is the `_tag` of the error class that produced the
  *   envelope, so the code and the class cannot drift.
@@ -203,10 +203,10 @@ export const isErrorEnvelope = (env: Envelope): env is ErrorEnvelope => env.type
  * Serialize an envelope to the single line written to STDOUT — success and
  * failure alike.
  *
- * ## Both envelopes go to stdout (donor fidelity, deliberately NOT the spike's
+ * ## Both envelopes go to stdout (v4's contract, deliberately NOT the spike's
  * choice)
  *
- * The donor writes every envelope, error included, to stdout: `src/cli/index.ts`
+ * v4 writes every envelope, error included, to stdout: `src/cli/index.ts`
  * `emit()` renders and calls `writeStdoutAndExit`, and `src/cli/exit.ts`'s
  * contract docs say so explicitly for code `2` ("The ERROR envelope … is written
  * to stdout"). The S2 kernel spike put errors on stderr instead. THE DONOR WINS:

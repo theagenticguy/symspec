@@ -22,7 +22,7 @@ import { exitCodeForEnvelope, hasErrorSeverityFinding, hasFailedStrictGate } fro
 const finding = (severity: string) => ({ code: 'FND_X', severity })
 
 describe('the four exit codes', () => {
-  it('are 0 / 1 / 2 / 3 — the donor contract, unchanged', () => {
+  it('are 0 / 1 / 2 / 3 — v4 contract, unchanged', () => {
     expect(EXIT_CLEAN).toBe(0)
     expect(EXIT_FINDINGS_FAILURE).toBe(1)
     expect(EXIT_OPERATIONAL_ERROR).toBe(2)

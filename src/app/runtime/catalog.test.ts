@@ -66,7 +66,7 @@ describe('the unified catalog spans all three code families', () => {
   it('lists the families in order, each in its own append-only order', () => {
     const rows = allCodes()
     expect(rows.slice(0, 21).map((r) => r.family)).toEqual(Array(21).fill('ERR'))
-    // 36 FND rows: the donor's 30 then the reachability 6, both reporting `family: 'FND'`.
+    // 36 FND rows: v4's 30 then the reachability 6, both reporting `family: 'FND'`.
     expect(rows.slice(21, 57).map((r) => r.family)).toEqual(Array(36).fill('FND'))
     expect(rows.slice(57).map((r) => r.family)).toEqual(Array(24).fill('GTWR'))
     // The per-family order is the shipped append-only order, unreordered — and WITHIN the
@@ -267,7 +267,7 @@ describe('worked examples are extracted where the corpus carries one', () => {
    * R9's canonical INCOSE exemplar ends in a period, and the first `such as` regex
    * terminated on `[^.(]` — so this one entry silently produced no example while the
    * other ten worked. The same shape (an entry ending in `.` made unreachable by a
-   * terminator that assumes it does not) already cost the donor six dead lexicon
+   * terminator that assumes it does not) already cost v4 six dead lexicon
    * entries, R9 among them. Pinned by CONTENT, so a terminator that truncates before
    * the trailing period fails here rather than passing the count.
    */
@@ -324,7 +324,7 @@ describe('runnable commands are lifted out of the description text', () => {
 describe('suggestions split at the corpus marker', () => {
   it('splits every ERR_* description that carries a Suggestion: clause', () => {
     const err = allCodes().filter((r) => r.family === 'ERR')
-    // Every one of the 21 donor descriptions carries exactly one Suggestion: clause —
+    // Every one of the 21 v4 descriptions carries exactly one Suggestion: clause —
     // which is what let `explainCode` split one string into two fields with no second
     // corpus, and remains true after widening to three families.
     for (const row of err) {

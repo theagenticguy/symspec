@@ -27,7 +27,7 @@
  * ## THE LAYER SEAM (transplant edit #4 of 4 — the only functional one)
  *
  * This is the whole cost of putting ~7.8k LOC of formal tier behind an Effect
- * Layer. Measured on the donor: this file is the ONLY importer of `z3-solver`, and
+ * Layer. Measured on v4: this file is the ONLY importer of `z3-solver`, and
  * exactly three non-test files call {@link getContext}. So priming this module's
  * memoized `inflight` promise from the Layer's `acquire` gives every tier below —
  * contradiction, subsumption, vacuity, incomplete, needs-review, numeric,
@@ -36,7 +36,7 @@
  * zero edits to any other tier file.
  *
  * {@link primeZ3} and {@link resetZ3} are the two functions added. Everything else
- * in this file is the donor's, unchanged — including `loadZ3`'s lazy dynamic
+ * in this file is v4's, unchanged — including `loadZ3`'s lazy dynamic
  * import, which still serves a direct library caller who never built the Layer.
  *
  * `resetZ3` exists for the Layer's RELEASE and for `Layer.fresh`: without it, a

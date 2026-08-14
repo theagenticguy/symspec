@@ -8,7 +8,7 @@
  * inductive invariant; an answer of "yes" is a counterexample trace naming which
  * requirements fired in which order.
  *
- * Everything below is shaped by measurements from the donor's ~30-script probe
+ * Everything below is shaped by measurements from v4's ~30-script probe
  * corpus (`.erpaval/sessions/session-511b2b/probes/`) and re-verified against the
  * installed z3-solver 5.0.0 before being written. Where a comment states a number,
  * that number was measured, not recalled.
@@ -79,7 +79,7 @@
  * invariant*; `frame=strict` → REACHABLE. `alarm` is genuinely reachable, so under the
  * frame Spacer proves a false answer and hands back a certificate for it.
  *
- * The polarity tension the donor spec did not name: strict (no-frame) is the sound
+ * The polarity tension v4 spec did not name: strict (no-frame) is the sound
  * direction for proving UNREACHABLE, but the UNSOUND direction for reporting
  * REACHABLE — with nothing framed, a variable may change spontaneously between steps,
  * so a "violation" can be an artifact of the encoding rather than a real defect.
@@ -415,7 +415,7 @@ export interface PreparedModel {
 }
 
 /** A requirement's label for evidence: its stable key if it has one, else its UUID.
- * Keys, not internal rule names — donor V29's groundwork, so a trace reads in the
+ * Keys, not internal rule names — v4 V29's groundwork, so a trace reads in the
  * author's own vocabulary. */
 const labelOf = (requirement: Requirement): string => requirement.key ?? requirement.id
 
@@ -555,7 +555,7 @@ export const writeSetOf = (prepared: PreparedModel): ReadonlyMap<string, readonl
 /**
  * Variables declared `stable` that NO requirement writes — the V16 shape, named.
  *
- * This is the donor's measured unsoundness exactly: `alarm` declared stable and
+ * This is v4's measured unsoundness exactly: `alarm` declared stable and
  * written by nothing means the framed encoding pins it to its initial value forever,
  * so Spacer proves properties about it that the document never licensed. Prove-twice
  * already prevents the false PROVED (such a property comes back
@@ -579,7 +579,7 @@ export const frameDriftOf = (prepared: PreparedModel): readonly string[] => {
 
 /**
  * The low-level `Z3` namespace. Untyped by design — it is z3-solver's own escape hatch
- * (`Z3HighLevel & Z3LowLevel` exposes no Fixedpoint wrapper at all), and the donor's
+ * (`Z3HighLevel & Z3LowLevel` exposes no Fixedpoint wrapper at all), and v4's
  * probe corpus reaches Spacer the same way.
  *
  * Confined to this file. Nothing above the module boundary sees a `Z3_ast`.
@@ -597,7 +597,7 @@ type Ast = any
  *
  * `Z3.is_quantifier_ast` DOES NOT EXIST on 5.0.0 (verified — the namespace has
  * `is_quantifier_forall` / `is_quantifier_exists` and `get_ast_kind`, but no general
- * predicate), which is one of two API surprises beyond the donor's catalog found while
+ * predicate), which is one of two API surprises beyond v4's catalog found while
  * writing this file.
  */
 /**
@@ -686,7 +686,7 @@ export const setDeclaredParams = (
  * An `enum` becomes an INT with range constraints rather than a Z3 finite-domain or
  * datatype sort, and that choice is worth stating. A finite-domain sort would be the
  * natural spelling, but Spacer's support for it is far less exercised than its
- * arithmetic support, and the donor's measured scaling numbers (122ms at 400 state
+ * arithmetic support, and v4's measured scaling numbers (122ms at 400 state
  * variables) are all on bool/int models. Ints with `0 <= x < |domain|` keep the tier
  * on the path that was measured, and the member↔index mapping is total and injective,
  * so nothing is lost semantically — a member name is recovered for evidence by
@@ -1145,7 +1145,7 @@ const forDisplay = (text: string): string =>
  *
  * ## A Z3 AST IS A DAG, AND AN UN-MEMOIZED WALK OF IT DOES NOT TERMINATE
  *
- * This is a NEW surprise, measured here rather than inherited from the donor's catalog,
+ * This is a NEW surprise, measured here rather than inherited from v4's catalog,
  * and it is worth stating precisely because the symptom is indistinguishable from the
  * V14/V21 solver hang it is not.
  *
@@ -1163,7 +1163,7 @@ const forDisplay = (text: string): string =>
  * a deep-but-narrow term would still overflow without it.
  *
  * Walks with `get_ast_kind` rather than `is_quantifier_ast`, which DOES NOT EXIST on
- * 5.0.0 — a second API surprise beyond the donor's catalog.
+ * 5.0.0 — a second API surprise beyond v4's catalog.
  */
 const findInvariantBody = (
   Z3: LowLevelZ3,
@@ -1257,7 +1257,7 @@ const findInvariantBody = (
  *
  * `system.initTerm`, `system.transitionTerm` and `system.badTerm` are the very terms
  * the Horn rules were built from, not re-derived from the document. That is the AC-1-3
- * lesson stated as code: the donor's exported `.smt2` answered a WEAKER question than
+ * lesson stated as code: v4's exported `.smt2` answered a WEAKER question than
  * its in-process tier and returned `sat` where the tier proved `unsat`. A certificate
  * check built from a second derivation would validate a different question and be
  * theater.
@@ -1520,7 +1520,7 @@ const runQuery = (
  * constraint reported violated by a requirement that only touches `idle`. See
  * {@link FrameMode}.
  *
- * Cost is ~2× on the paths needing both runs, which the donor's measurements make
+ * Cost is ~2× on the paths needing both runs, which v4's measurements make
  * immaterial: 122ms at 400 state variables.
  */
 export const decideConstraint = (

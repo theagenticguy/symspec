@@ -3,7 +3,7 @@
  *
  * ## Why this file is EDITED rather than copied verbatim
  *
- * Same reason as `./result.ts`: the donor original's only non-verbatim content is
+ * Same reason as `./result.ts`: v4 original's only non-verbatim content is
  * two Zod schemas (`BatchSummarySchema`, `BatchParseResultSchema`) with no non-test
  * consumers, and the greenfield does not port Zod. The line policy — the part that
  * actually decides what gets parsed — is carried over exactly, because it encodes
@@ -95,9 +95,9 @@ export const summarize = (results: readonly ParseResult[]): BatchSummary => {
  * ## The bug, measured
  *
  * `runTier2` calls `opts.load ?? defaultTier2Loader` PER LINE, and
- * `defaultTier2Loader` constructs a fresh `winkNLP(model)` every call. The donor's
+ * `defaultTier2Loader` constructs a fresh `winkNLP(model)` every call. v4's
  * header claims the model "loads at most once" — but nothing memoizes it, and per
- * line was fine only because no donor test ever escalated more than a handful of
+ * line was fine only because no v4 test ever escalated more than a handful of
  * lines in one process.
  *
  * `winkNLP(model)` accumulates state that is never released. Probed directly:
@@ -106,14 +106,14 @@ export const summarize = (results: readonly ParseResult[]): BatchSummary => {
  *   // => RangeError: Invalid string length, at load 21
  *
  * (inside `wink-eng-lite-web-model`'s `load-cer-meta-model.js`, which appends to a
- * string that eventually exceeds V8's maximum length). So the donor's `parse --file`
+ * string that eventually exceeds V8's maximum length). So v4's `parse --file`
  * DIES on the 21st escalating line of a real requirements file — and the failure is
  * a `RangeError` from inside a dependency, not a parse error, so it aborts the whole
  * batch with no per-line report. A 42-requirement spec with 21 passive sentences is
  * an entirely ordinary input.
  *
- * Confirmed against the LIVE donor, not just reasoned about: 30 escalating lines
- * through the donor's own `parseBatch` never completes (the loads slow
+ * Confirmed against LIVE v4, not just reasoned about: 30 escalating lines
+ * through v4's own `parseBatch` never completes (the loads slow
  * superlinearly as the leaked string grows, then throw).
  *
  * ## The fix, and why it is sound rather than merely effective
@@ -125,9 +125,9 @@ export const summarize = (results: readonly ParseResult[]): BatchSummary => {
  * both the correctness fix and a ~3x speedup on the escalating path.
  *
  * Still LAZY: the analyzer is resolved on the FIRST line that actually escalates, so
- * a batch of clean sentences loads nothing. That is the donor's gating contract, and
+ * a batch of clean sentences loads nothing. That is v4's gating contract, and
  * `parse.test.ts` asserts it by counting loader invocations — which is also how it
- * asserts the "at most once" half that the donor only claimed.
+ * asserts the "at most once" half that v4 only claimed.
  *
  * A caller that injects `opts.load` gets the same memoization, so a test fake is
  * called once per batch too. That is what makes the invocation count assertable at
@@ -157,7 +157,7 @@ export const parseBatch = async (
   text: string,
   opts: Tier2Options = {},
 ): Promise<BatchParseResult> => {
-  // ONE loader for the whole batch. See `memoizedLoader` for the donor bug this
+  // ONE loader for the whole batch. See `memoizedLoader` for v4 bug this
   // closes.
   const load = memoizedLoader(opts.load ?? defaultTier2Loader)
   const results: ParseResult[] = []

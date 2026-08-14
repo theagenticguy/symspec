@@ -4,7 +4,7 @@
  * `symspec check` is driven in an edit/CI loop, so its POSIX exit status is a
  * first-class part of the agent-facing contract — not an afterthought. This
  * module is the single mapping, so every command path and every test computes
- * the code the same way. Ported from the donor's `src/cli/exit.ts`; the four
+ * the code the same way. Ported from v4's `src/cli/exit.ts`; the four
  * codes and their meanings are unchanged agent API.
  *
  * ## The four codes
@@ -52,7 +52,7 @@
  * A CLI PARSE failure (a missing required flag, an unknown subcommand) never
  * reaches this function: `effect/unstable/cli` fails before a handler runs and
  * the runtime exits `1`. That was measured in spike S2, and it happens to match
- * the donor's contract for a usage error, so no wiring is needed to produce it.
+ * v4's contract for a usage error, so no wiring is needed to produce it.
  * The `1` this module returns for findings and the `1` the CLI returns for usage
  * are the same code by design, distinguished by whether stdout carried an
  * envelope at all.

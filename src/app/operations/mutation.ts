@@ -8,22 +8,22 @@
  * `antonym`, and `apply`. Every one of them builds a `DocumentOp[]` and hands it to
  * {@link runFold}. The single-op commands fold a one-element stream; `apply` folds an
  * N-element one. So there is no per-command mutation logic that could disagree with
- * the batch path — the donor's `add`/`update`/`waive`/`glossary` cores each had their
+ * the batch path — v4's `add`/`update`/`waive`/`glossary` cores each had their
  * own, and `apply.ts` re-implemented all four a third time.
  *
  * What that buys concretely: `--dry-run` is one branch in {@link runFold} rather than
- * a per-command feature (the donor had it only on `add`), the atomic-abort semantics
+ * a per-command feature (v4 had it only on `add`), the atomic-abort semantics
  * apply to a single op as much as to a batch, and adding a verb means adding an entry
  * to `core/ops.ts` plus one table row here.
  *
  * ## `apply` is the flagship, and its op stream is the SAME vocabulary
  *
- * The donor's `apply` accepted eight verbs and could not express the three side
+ * v4's `apply` accepted eight verbs and could not express the three side
  * tables at all — those rode out as shell command lines its `import` had to re-parse.
  * Here `apply` consumes the whole `DocumentOp` union, so a repair plan that mixes a
  * `glossary add`, two `waive`s and an `update` is ONE invocation.
  *
- * ## The manifest-vs-parser drift the donor hit, avoided by construction
+ * ## The manifest-vs-parser drift v4 hit, avoided by construction
  *
  * Donor lesson `manifest-single-source-derivation` records the exact failure: `apply`
  * registered `--doc` while reusing a shared `.describe()` whose prose hardcoded
@@ -37,7 +37,7 @@ import { Effect, Schema } from 'effect'
 import { buildAntonymIndexWithDoc } from '../../domain/engine/formal/antonyms.ts'
 import { normalize } from '../../domain/engine/formal/atomize.ts'
 // STATIC. A dynamic import here bought nothing: `operations/parse.ts` imports
-// `donor/parse/batch.ts` statically and that imports `result.ts` statically, so the parse
+// `engine/parse/batch.ts` statically and that imports `result.ts` statically, so the parse
 // ladder is in the main chunk on every run regardless. The lazy form only added an await
 // and made the build report an ineffective dynamic import.
 import { parseLine } from '../../domain/engine/parse/result.ts'
@@ -90,7 +90,7 @@ const docPathField = (verb: string) =>
 /**
  * `--dry-run`, available on EVERY mutation op rather than just `add`.
  *
- * The donor had it only on `add`, which is backwards: the ops most worth previewing
+ * v4 had it only on `add`, which is backwards: the ops most worth previewing
  * are the destructive ones (`delete`) and the bulk ones (`apply`), not the additive
  * single one. Because the preview is a branch in the shared fold, giving it to all
  * twelve costs one flag declaration each and cannot behave differently per command.
@@ -267,7 +267,7 @@ const runFold = (args: {
     const written = result.write && !args.dryRun
     if (written) {
       // The preserved unknown top-level keys ride along, so a mutation cannot strip a
-      // forward-compatible table (donor finding V27 — the defect was a mutation
+      // forward-compatible table (v4 finding V27 — the defect was a mutation
       // round-tripping through a strip-mode parse).
       yield* store.save(path, {
         document: result.document,
@@ -403,7 +403,7 @@ export const addOp = defineOperation({
 
       // THE PARSE PATH. Delegated to the same ladder `parse` uses, and its
       // `proposedOp` is consumed directly — no field-by-field transcription, which is
-      // where the donor lost the `negated` flag unless `cli/add.ts` remembered it.
+      // where v4 lost the `negated` flag unless `cli/add.ts` remembered it.
       if (input.fromParse !== null) {
         const parsed = yield* Effect.promise(() => parseLine(input.fromParse as string))
 
@@ -682,14 +682,14 @@ export const deleteOp = defineOperation({
  * `link` — every edge verb behind ONE operation with a `--relation` flag, plus
  * `--remove` for the inverse.
  *
- * The donor shipped five commands (`derive`, `satisfy`, `verify`, `refine`,
+ * v4 shipped five commands (`derive`, `satisfy`, `verify`, `refine`,
  * `remove-edge`) whose only difference was one string. Five table entries means five
  * manifest rows, five help blocks, and five places a description can drift; one entry
  * with a closed `--relation` means the relation set is published ONCE, from
  * `RELATIONS`, and cannot disagree with what the fold accepts.
  *
- * The `apply` op stream keeps the donor's per-verb spellings (`{"op":"derive"}`),
- * because those are what a donor-emitted stream contains and the vocabulary is
+ * The `apply` op stream keeps v4's per-verb spellings (`{"op":"derive"}`),
+ * because those are what a v4-emitted stream contains and the vocabulary is
  * append-only. So the CLI is one command and the stream has four verbs — a projection
  * difference, not two vocabularies.
  */
@@ -919,7 +919,7 @@ export const antonymOp = defineOperation({
  * ## Why the state model is TWO operations and not one
  *
  * `state` declares a VARIABLE; `classify` labels a REQUIREMENT's response and gives
- * its expression. That split mirrors the donor's own "two tables, not one" finding
+ * its expression. That split mirrors v4's own "two tables, not one" finding
  * (spec 003's AC-2-1 note): the variable set is document-scoped and the
  * effect/constraint label is requirement-scoped, and collapsing them into one command
  * would mean a flag set where half the flags are meaningless in either mode.
@@ -1317,7 +1317,7 @@ export const applyOpDefinition = defineOperation({
   summary: 'Apply a JSONL stream of document ops in one process and one atomic write',
   type: 'apply',
   input: Schema.Struct({
-    // NAMED `--ops`, and the name matters: the donor's `apply` registered `--doc` for
+    // NAMED `--ops`, and the name matters: v4's `apply` registered `--doc` for
     // the DOCUMENT while reusing a shared description whose prose said `--file`, so its
     // manifest told an agent to run `apply --file` and got ERR_USAGE. Here the stream
     // is `--ops` and the document is `--file`, each described by its own text naming
@@ -1327,7 +1327,7 @@ export const applyOpDefinition = defineOperation({
         'Path to the JSONL op stream: one `{"op":...}` record per line. Omit to read STDIN.',
         'Blank lines and `#` comments are skipped, so a stream can be annotated.',
         'Every op verb `symspec manifest` publishes is accepted — including the three side tables',
-        '(`glossary`, `antonym`, `waive`) the donor could only express as shell commands.',
+        '(`glossary`, `antonym`, `waive`) v4 could only express as shell commands.',
         'A `key` minted by an `add` earlier in the SAME stream is referenceable by later ops, which',
         'is what removes the label-to-UUID sidecar file entirely.',
         'Example: --ops ./repair-plan.jsonl',

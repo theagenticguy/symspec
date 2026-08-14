@@ -17,7 +17,7 @@
  *
  * ## Through the platform `FileSystem`, not `node:fs`
  *
- * Unlike the donor's version (which called `node:fs` directly), every write here goes
+ * Unlike v4's version (which called `node:fs` directly), every write here goes
  * through Effect's `FileSystem` service. That is not ceremony: it makes the whole install
  * surface testable against an in-memory filesystem, which is what lets
  * `install.test.ts` assert the host→path matrix for all five targets and both locations

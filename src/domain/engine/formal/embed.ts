@@ -1,10 +1,10 @@
 /**
- * The donor's `src/formal/embed.ts`, reduced to its INTERFACE — the PROPOSE half
+ * v4's `src/formal/embed.ts`, reduced to its INTERFACE — the PROPOSE half
  * of the semantic paraphrase-bridging tier, minus the model loader.
  *
  * ## Why this file is reduced (and it is NOT one of the four material edits)
  *
- * The donor original loads the pinned `Xenova/bge-base-en-v1.5` sentence model on
+ * v4 original loads the pinned `Xenova/bge-base-en-v1.5` sentence model on
  * the ONNX WASM runtime through a sha256-pinned local cache (`./model-cache.ts`,
  * ~110 MB of assets). That whole apparatus — `loadEmbedder`, the pipeline factory,
  * the tokenizer, `EmbedModelMissingError`, the offline/allowRemote discipline — is
@@ -27,11 +27,11 @@
  * - {@link EMBED_MODEL} — the pin, kept as a constant so the G2b loader and any
  *   `download-model` surface quote one string.
  *
- * G2a therefore runs `check` with `options.semantic` ABSENT, which the donor
+ * G2a therefore runs `check` with `options.semantic` ABSENT, which v4
  * pipeline already handles as a first-class case: it emits a
  * `semantic-tier-skipped` demotion carrying the supplying command, so `verified`
  * can never be true over a document whose opposition candidates went untriaged.
- * The absence is DISCLOSED, not silently defaulted — the same demotion the donor
+ * The absence is DISCLOSED, not silently defaulted — the same demotion v4
  * produces for a library caller who supplies no embedder.
  *
  * ## Propose-only (the load-bearing invariant, preserved)
@@ -54,7 +54,7 @@ export type Embedder = (texts: readonly string[]) => Promise<Float32Array[]>
  * `normalize: true` guarantees unit length. Returns a value in `[-1, 1]`.
  * Mismatched lengths return 0 (defensive; never thrown).
  *
- * Verbatim from the donor.
+ * Verbatim from v4.
  */
 export function cosine(a: Float32Array, b: Float32Array): number {
   if (a.length !== b.length) return 0

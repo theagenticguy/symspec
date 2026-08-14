@@ -51,7 +51,7 @@
  *
  * ## Zod removed (transplant edit #3 of 4)
  *
- * The donor declared this as `z.enum([...])` plus a parallel `FndCodeMeta` of
+ * v4 declared this as `z.enum([...])` plus a parallel `FndCodeMeta` of
  * `z.literal(code).describe(text)` bound by `satisfies Record<FndCode, …>`. The
  * greenfield does not ship Zod (spec: "Zod (greenfield is Effect Schema native;
  * no bridge needed)"), so the enum is a `const` tuple and the meta corpus is a
@@ -59,9 +59,9 @@
  * library.
  *
  * The 30 code strings and all 30 description texts below were extracted
- * PROGRAMMATICALLY from the live donor's `FndCodeMeta` (`.description` off each
- * described literal), not retyped, so they are byte-identical to the donor's
- * agent-facing text. `codes.test.ts` re-extracts from the donor and diffs, so a
+ * PROGRAMMATICALLY from the live v4's `FndCodeMeta` (`.description` off each
+ * described literal), not retyped, so they are byte-identical to v4's
+ * agent-facing text. `codes.test.ts` re-extracts from v4 and diffs, so a
  * divergence is a test failure rather than a silent drift.
  */
 export const FND_CODES = [
@@ -138,7 +138,7 @@ export type FndCode = (typeof FND_CODES)[number]
 
 /**
  * Per-code description corpus. The `satisfies` bound forces the corpus to cover
- * EXACTLY the enum members — the same guarantee the donor's
+ * EXACTLY the enum members — the same guarantee v4's
  * `satisfies Record<FndCode, z.ZodLiteral<FndCode>>` gave.
  */
 export const FndCodeMeta = {
