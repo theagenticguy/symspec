@@ -24,9 +24,10 @@
  *      went→go, shut→shut …) — WordNet `verb.exc`-derived, curated to verbs
  *      plausible as an EARS response head;
  *   2. else the closed 3sg rules: `-ies→-y` (denies→deny), `-sses/-shes/-ches/
- *      -xes/-zes/-oes → strip -es` (passes→pass, goes→go), else strip a final
- *      `-s` when the token is ≥4 chars and does not end `-ss`/`-us`/`-is`
- *      (protects pass/status/basis).
+ *      -xes/-zzes/-oes → strip -es` (passes→pass, buzzes→buzz, goes→go), else
+ *      strip a final `-s` when the token is ≥4 chars and does not end
+ *      `-ss`/`-us`/`-is` (protects pass/status/basis). A single-`z` stem is a
+ *      `-ze` verb taking plain `-s` (energizes→energize), not a sibilant.
  * A token neither rule matches is returned unchanged (OOV technical verbs like
  * "memoizes" fall through to the 3sg rule; unknown pasts stay themselves).
  * Idempotent on base forms: deInflectHead('open') === 'open'.
@@ -187,7 +188,11 @@ export function deInflectHead(head: string): string {
   const irregular = IRREGULAR_VERB_LEMMAS.get(head)
   if (irregular !== undefined) return irregular
   if (head.length >= 4 && head.endsWith('ies')) return `${head.slice(0, -3)}y`
-  if (/(?:ss|sh|ch|x|z|o)es$/.test(head)) return head.slice(0, -2)
+  // A single `z` is NOT in the sibilant set: a `-ze` verb takes plain `-s`
+  // (energizes = energize + s), so only a doubled z (buzzes) strips `-es` —
+  // otherwise every `-ze` head mangles to `-z` and misses both the seed
+  // antonym table and the negating-prefix comparison keyed on its base form.
+  if (/(?:ss|sh|ch|x|zz|o)es$/.test(head)) return head.slice(0, -2)
   if (head.length >= 4 && head.endsWith('s') && !/(?:ss|us|is)$/.test(head)) {
     return head.slice(0, -1)
   }

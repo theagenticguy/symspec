@@ -513,19 +513,13 @@ describe('the re-derived shape check agrees with the engine original', () => {
   })
 
   /**
-   * A RECALL GAP in the engine lemmatizer, pinned so it is a known quantity.
-   *
-   * `deInflectHead` strips two characters from a `-zes` ending, so "energizes" lemmatizes to
-   * `energiz` rather than `energize` — and `de_energize` vs `energiz` is not a prefix pair.
-   * The 3sg form of a `-ze` verb therefore does NOT pair with its `de-` opposite, while the
-   * base form does. `donor/formal/semantic.ts` names this exact case as one that works.
-   *
-   * The failure direction is a MISSED suggestion in a propose-only tier, which is the
-   * honest direction. Asserted rather than silently inherited, so a lemmatizer fix
-   * shows up here as an improvement.
+   * The 3sg form of a `-ze` verb pairs with its `de-` opposite — the exact case
+   * `engine/formal/semantic.ts` documents ("energizes the coil", head
+   * `energize`, against `de_energize`). `engine/formal/lemma.test.ts` owns the
+   * token-level rows; this asserts the pairing those rows exist for.
    */
-  it('MISSES a 3sg `-zes` verb against its de- opposite (engine lemmatizer)', () => {
-    expect(oppositionShape(normalize('energizes the coil'))).toEqual(['energiz', 'the_coil'])
-    expect(isNegatingPrefixPair('de_energize', 'energiz')).toBe(false)
+  it('pairs a 3sg `-zes` verb with its de- opposite', () => {
+    expect(oppositionShape(normalize('energizes the coil'))).toEqual(['energize', 'the_coil'])
+    expect(isNegatingPrefixPair('de_energize', 'energize')).toBe(true)
   })
 })

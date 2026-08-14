@@ -1323,10 +1323,18 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
         ...(shares
           ? {}
           : {
+              // A one-requirement document gets the TRUTH, not the rewrite
+              // advice: there are no peers to share vocabulary with, and an
+              // agent handed the generic suggestion would churn the only
+              // requirement forever without ever changing this row.
               suggestion:
-                `Rewrite ${id} to share guard/response vocabulary with the requirements it ` +
-                'relates to, or link its terms via `symspec glossary add`/`symspec antonym add` ' +
-                'so the formal tier can cross-compare it.',
+                requirements.length < 2
+                  ? `${id} is the only requirement, so there is nothing to cross-compare yet. ` +
+                    'Coverage begins when a second requirement lands (`symspec add`); this row ' +
+                    'will then say whether the two share vocabulary.'
+                  : `Rewrite ${id} to share guard/response vocabulary with the requirements it ` +
+                    'relates to, or link its terms via `symspec glossary add`/`symspec antonym add` ' +
+                    'so the formal tier can cross-compare it.',
             }),
       }
     })
