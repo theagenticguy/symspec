@@ -94,6 +94,33 @@ const ProposeGlossaryInput = Schema.Struct({
   ),
 })
 
+/**
+ * The oppositions clause, appended to either branch below.
+ *
+ * Reported even when nothing clusters, because an opposition that formed no class is
+ * exactly the case the plan used to be silent about — and it is the half that manufactures
+ * a false contradiction if committed the wrong way, so it must not be reachable only by
+ * reading `data.oppositions` directly.
+ */
+const oppositionClause = (plan: GlossaryPlan): string => {
+  const found = plan.oppositions.length
+  if (found === 0) {
+    return plan.corpus.oppositionSignals > 0
+      ? ` ${plan.corpus.oppositionSignals} pair(s) carried an opposition signal but sat below the ` +
+          `${plan.oppositionCosineFloor} topical floor, so they read as unrelated rather than opposed.`
+      : ''
+  }
+  const quarantined = plan.oppositions.filter((o) => o.formsClass).length
+  return (
+    ` ${found} structurally-opposed pair(s) reported` +
+    (quarantined > 0
+      ? `, ${quarantined} of which quarantined a merge`
+      : ', none of which a merge threatened') +
+    '. Each offers BOTH readings: committing the wrong one manufactures a false contradiction, so ' +
+    'none of them is in `ops`.'
+  )
+}
+
 /** One line a human can read before deciding whether to read the rest. */
 const summarize = (plan: GlossaryPlan): string => {
   const merges = plan.ops.length
@@ -105,7 +132,8 @@ const summarize = (plan: GlossaryPlan): string => {
       `${plan.corpus.responseNodes} distinct response phrasing(s): nothing clusters above ` +
       `${plan.threshold}. The vocabulary is already distinct, or already unified — ` +
       `${plan.corpus.alreadyUnified} phrasing(s) were folded by the committed tables before ` +
-      'this pass ran.'
+      'this pass ran.' +
+      oppositionClause(plan)
     )
   }
   const transitive = plan.classes.filter((c) => c.transitive).length
@@ -115,7 +143,8 @@ const summarize = (plan: GlossaryPlan): string => {
     `${plan.corpus.responseNodes} distinct response phrasing(s) at threshold ${plan.threshold}` +
     (transitive > 0
       ? `; ${transitive} class(es) formed by CHAINING rather than direct similarity and are listed first.`
-      : '.')
+      : '.') +
+    oppositionClause(plan)
   )
 }
 

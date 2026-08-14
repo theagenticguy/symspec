@@ -56,7 +56,10 @@ import {
 import { glossaryIndex, normalize } from '../engine/formal/atomize.ts'
 import type { Embedder } from '../engine/formal/embed.ts'
 import { deInflectHead } from '../engine/formal/lemma.ts'
-import { DEFAULT_SEMANTIC_THRESHOLD } from '../engine/formal/semantic.ts'
+import {
+  DEFAULT_OPPOSITION_COSINE_FLOOR,
+  DEFAULT_SEMANTIC_THRESHOLD,
+} from '../engine/formal/semantic.ts'
 import { encodeIncluded } from '../engine/pipeline/check.ts'
 import type { DocumentOp } from '../requirements/ops.ts'
 
@@ -188,6 +191,55 @@ export interface ProposedClass {
   readonly transitive: boolean
 }
 
+/**
+ * One structurally-opposed pair, reported at DOCUMENT scale.
+ *
+ * ## The gap this closes
+ *
+ * `signalFor` used to run only on pairs INSIDE a cosine-formed class, so a pair had to
+ * clear the clustering threshold before anything asked whether it was an opposition. A
+ * structurally-opposed pair sitting between the opposition floor and that threshold
+ * therefore never appeared in the plan at all — only as a pairwise
+ * `FND_OPPOSITION_CANDIDATE` during `check --semantic`. An author reading the plan to design
+ * their vocabulary in one pass was shown the merges and not the oppositions, which is the
+ * half that manufactures rather than masks.
+ *
+ * The signal is now computed once during the pair sweep and read from there by both
+ * consumers, so the class-level `pairs` and this section cannot disagree about what an
+ * opposition is — they are one code path rather than two kept in step by a comment.
+ *
+ * ## Never in `ops`
+ *
+ * There is no op that resolves an opposition. `antonym` is the DECIDE half for the
+ * response tier and is the one committed record whose wrong value manufactures a false
+ * contradiction, so it is offered as a runnable command with both readings and never as an
+ * applyable record.
+ */
+export interface OppositionPair {
+  readonly system: string
+  /** The AUTHOR's phrasings, sorted — never an atom body, never an index. */
+  readonly phrases: readonly [string, string]
+  readonly atoms: readonly [string, string]
+  /** Every requirement on either side, so the reader can go look. */
+  readonly requirementIds: readonly string[]
+  readonly signal: OppositionSignal
+  /** The two verb heads, exactly what `symspec antonym` takes as positionals. */
+  readonly verbs: readonly [string, string]
+  /** DISCLOSED. Cosine confirms topical relatedness; it never decides opposition. */
+  readonly cosine: number
+  /** False means morphology admitted this pair, not the cosine — a `de-`/`un-`/`dis-` pair. */
+  readonly aboveCosineFloor: boolean
+  /**
+   * True when this pair also sits inside a cosine-formed class, i.e. it QUARANTINED a merge.
+   *
+   * The distinction a reader needs: `true` means the planner declined a merge it would
+   * otherwise have proposed, `false` means this is a pair worth knowing about that no merge
+   * threatened.
+   */
+  readonly formsClass: boolean
+  readonly remedies: readonly Remedy[]
+}
+
 /** A class withheld from `ops`, with the choice that would unblock it. */
 export interface UnresolvedClass {
   readonly reason: UnresolvedReason
@@ -211,12 +263,25 @@ export interface GlossaryCorpus {
   readonly pairsCompared: number
   /** Raw phrases the CURRENT tables already folded onto a shared atom. */
   readonly alreadyUnified: number
+  /**
+   * Pairs carrying a deterministic opposition signal, BEFORE the cosine floor.
+   *
+   * Reported alongside `oppositions.length` so a reader can tell "no oppositions exist" from
+   * "the floor filtered them out" — the same distinction `pairsCompared` draws for merges.
+   */
+  readonly oppositionSignals: number
 }
 
 /** The whole plan. */
 export interface GlossaryPlan {
   readonly vocabulary: GlossaryVocabulary
   readonly threshold: number
+  /**
+   * The topical-relatedness floor below which a non-morphological opposition is not
+   * reported. A separate judgment from `threshold`, and imported rather than restated —
+   * `engine/formal/semantic.ts` owns the measured band for both.
+   */
+  readonly oppositionCosineFloor: number
   readonly canonicalRule: 'lexicographic-smallest-normalized-body'
   /** A stub embedder makes every cosine meaningless. Disclosed, never inferred. */
   readonly embedderIsStub: boolean
@@ -224,6 +289,11 @@ export interface GlossaryPlan {
   /** Sorted weakest-first, so the likeliest-wrong reads first. */
   readonly classes: readonly ProposedClass[]
   readonly unresolved: readonly UnresolvedClass[]
+  /**
+   * Every structurally-opposed pair in the document, whether or not a merge threatened it.
+   * Never in `ops` — no op resolves an opposition.
+   */
+  readonly oppositions: readonly OppositionPair[]
   /** UNAMBIGUOUS classes only. Collision-free by construction. */
   readonly ops: readonly DocumentOp[]
 }
@@ -489,6 +559,19 @@ export const buildGlossaryPlan = async (
   const edges: [number, number][] = []
   const cosines = new Map<string, number>()
   const key = (i: number, j: number) => `${Math.min(i, j)}|${Math.max(i, j)}`
+  /**
+   * The opposition signal per compared pair, computed HERE rather than inside the per-class
+   * loop.
+   *
+   * Both consumers read this one map: the class-level quarantine, and the document-scale
+   * `oppositions` section. Computing it in the class loop alone is what made a
+   * sub-threshold opposition invisible to the plan, and computing it twice would be two
+   * implementations of "what counts as an opposition" kept in step by a comment.
+   */
+  const signals = new Map<
+    string,
+    { readonly signal: OppositionSignal; readonly verbs: readonly [string, string] }
+  >()
   let pairsCompared = 0
   for (const bucket of [...bySystem.values()]) {
     for (let x = 0; x < bucket.length; x++) {
@@ -500,6 +583,8 @@ export const buildGlossaryPlan = async (
         const vj = vectors[j]
         const score = vi !== undefined && vj !== undefined ? cosine(vi, vj) : 0
         cosines.set(key(i, j), score)
+        const hit = signalFor(nodes[i] as Node, nodes[j] as Node, antonyms)
+        if (hit !== undefined) signals.set(key(i, j), hit)
         if (score >= threshold) edges.push([i, j])
       }
     }
@@ -523,24 +608,31 @@ export const buildGlossaryPlan = async (
     readonly canonicalIsExistingAlias: boolean
   }
   const candidates: Candidate[] = []
+  /** Pair keys that sit inside a multi-member class, so `formsClass` is a fact not a guess. */
+  const classPairKeys = new Set<string>()
   for (const indices of [...groups.values()].sort((a, b) => (a[0] as number) - (b[0] as number))) {
     if (indices.length < 2) continue
     const members = indices.map((i) => nodes[i] as Node)
     const pairs: AmbiguousPair[] = []
     for (let x = 0; x < indices.length; x++) {
       for (let y = x + 1; y < indices.length; y++) {
-        const a = nodes[indices[x] as number] as Node
-        const b = nodes[indices[y] as number] as Node
-        const hit = signalFor(a, b, antonyms)
+        const i = indices[x] as number
+        const j = indices[y] as number
+        const a = nodes[i] as Node
+        const b = nodes[j] as Node
+        // Read the memoized signal. Deliberately NOT gated on the opposition cosine floor:
+        // a class formed by chaining can hold an internal pair whose own cosine is far below
+        // it, and that pair still quarantines. The floor is a REPORTING gate for the
+        // document-scale section, never a condition on withholding a merge.
+        const hit = signals.get(key(i, j))
         if (hit === undefined) continue
+        classPairKeys.add(key(i, j))
         pairs.push({
           a: a.atom,
           b: b.atom,
           signal: hit.signal,
           verbs: hit.verbs,
-          cosine: Number(
-            (cosines.get(key(indices[x] as number, indices[y] as number)) ?? 0).toFixed(3),
-          ),
+          cosine: Number((cosines.get(key(i, j)) ?? 0).toFixed(3)),
           remedies: remediesFor(a, b, hit.signal, hit.verbs),
         })
       }
@@ -667,12 +759,50 @@ export const buildGlossaryPlan = async (
     })
   }
 
+  // ---- Document-scale oppositions -----------------------------------------
+  //
+  // Every signalled pair the sweep saw, gated exactly the way `findOppositionCandidates`
+  // gates: a morphological pair is admitted regardless of cosine, everything else must clear
+  // the topical floor. Cosine is disclosed on the record and decides nothing.
+  const oppositions: OppositionPair[] = []
+  for (const [pairKey, hit] of signals) {
+    const [left, right] = pairKey.split('|')
+    const i = Number(left)
+    const j = Number(right)
+    const a = nodes[i] as Node
+    const b = nodes[j] as Node
+    const score = cosines.get(pairKey) ?? 0
+    const aboveCosineFloor = score >= DEFAULT_OPPOSITION_COSINE_FLOOR
+    if (!aboveCosineFloor && !isNegatingPrefixPair(hit.verbs[0], hit.verbs[1])) continue
+    const phrases: readonly [string, string] =
+      a.phrase.localeCompare(b.phrase) <= 0 ? [a.phrase, b.phrase] : [b.phrase, a.phrase]
+    oppositions.push({
+      system: a.system,
+      phrases,
+      atoms: a.atom.localeCompare(b.atom) <= 0 ? [a.atom, b.atom] : [b.atom, a.atom],
+      requirementIds: [...new Set([...a.requirementIds, ...b.requirementIds])].sort(),
+      signal: hit.signal,
+      verbs: hit.verbs,
+      cosine: Number(score.toFixed(3)),
+      aboveCosineFloor,
+      formsClass: classPairKeys.has(pairKey),
+      remedies: remediesFor(a, b, hit.signal, hit.verbs),
+    })
+  }
+
   classes.sort((a, b) => a.minCosine - b.minCosine || a.canonical.localeCompare(b.canonical))
   unresolved.sort((a, b) => a.reason.localeCompare(b.reason) || a.system.localeCompare(b.system))
+  oppositions.sort(
+    (a, b) =>
+      a.system.localeCompare(b.system) ||
+      a.phrases[0].localeCompare(b.phrases[0]) ||
+      a.phrases[1].localeCompare(b.phrases[1]),
+  )
 
   return {
     vocabulary: 'response',
     threshold,
+    oppositionCosineFloor: DEFAULT_OPPOSITION_COSINE_FLOOR,
     canonicalRule: 'lexicographic-smallest-normalized-body',
     embedderIsStub: options.embedderIsStub ?? false,
     corpus: {
@@ -682,9 +812,11 @@ export const buildGlossaryPlan = async (
       embedded: vectors.length,
       pairsCompared,
       alreadyUnified,
+      oppositionSignals: signals.size,
     },
     classes,
     unresolved,
+    oppositions,
     ops: classes.flatMap((c) => c.ops),
   }
 }

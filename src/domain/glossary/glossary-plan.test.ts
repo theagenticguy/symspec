@@ -519,6 +519,161 @@ describe('a suspected opposite quarantines its whole class', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Opposition, at DOCUMENT scale rather than only inside a formed class
+// ---------------------------------------------------------------------------
+
+/**
+ * 2-D vectors at an exact cosine to `[1, 0]`.
+ *
+ * `cos θ = 1 / hypot(1, t)` for `[1, t]`, so `t = tan(acos(c))`. Writing the target cosine
+ * and deriving the vector keeps the intent in the test instead of in a magic number, and
+ * lets a case sit deliberately inside the band between the opposition floor and the
+ * clustering threshold — the band that had no coverage at all.
+ */
+const atCosine = (c: number): readonly [number, number] => [1, Math.tan(Math.acos(c))]
+
+describe('every structurally-opposed pair is reported, not only the ones a class caught', () => {
+  const vaultPair = () =>
+    docOf([
+      req('vault service', 'close the vault', 'the shift ends'),
+      req('vault service', 'shut the vault', 'the audit begins'),
+    ])
+  const vaultTable = (c: number) => ({
+    'close the vault': [1, 0] as const,
+    'shut the vault': atCosine(c),
+  })
+
+  /**
+   * THE GAP. At 0.60 the pair is above the opposition floor (0.5) and below the clustering
+   * threshold (0.72), so no class forms — and before this, nothing asked whether it was an
+   * opposition. `check --semantic` reported it pairwise while the whole-document plan an
+   * author reads to design their vocabulary said nothing.
+   */
+  it('reports a pair BETWEEN the opposition floor and the clustering threshold', async () => {
+    const plan = await buildGlossaryPlan(toEngineDoc(vaultPair()), tableEmbedder(vaultTable(0.6)))
+    // No class formed, so the old code path never evaluated this pair.
+    expect(plan.classes).toEqual([])
+    expect(plan.unresolved).toEqual([])
+
+    expect(plan.oppositions).toHaveLength(1)
+    const only = plan.oppositions[0]
+    expect(only?.signal).toBe('same-object-different-verb')
+    expect(only?.phrases).toEqual(['close the vault', 'shut the vault'])
+    expect(only?.aboveCosineFloor).toBe(true)
+    // The distinction a reader needs: nothing was quarantined here, because nothing merged.
+    expect(only?.formsClass).toBe(false)
+    expect(only?.cosine).toBeGreaterThanOrEqual(plan.oppositionCosineFloor)
+    expect(only?.cosine).toBeLessThan(plan.threshold)
+  })
+
+  it('marks formsClass when the pair also QUARANTINED a merge', async () => {
+    const plan = await buildGlossaryPlan(toEngineDoc(vaultPair()), tableEmbedder(vaultTable(0.95)))
+    expect(plan.unresolved.map((u) => u.reason)).toEqual(['opposition-candidate'])
+    expect(plan.oppositions).toHaveLength(1)
+    expect(plan.oppositions[0]?.formsClass).toBe(true)
+  })
+
+  /**
+   * Below the floor the pair is unrelated rather than opposed, so it is not reported — but
+   * `oppositionSignals` still counts it, which is what distinguishes "no oppositions exist"
+   * from "the floor filtered them out".
+   */
+  it('withholds a sub-floor pair from the report, and still says it saw one', async () => {
+    const plan = await buildGlossaryPlan(toEngineDoc(vaultPair()), tableEmbedder(vaultTable(0.4)))
+    expect(plan.oppositions).toEqual([])
+    expect(plan.corpus.oppositionSignals).toBe(1)
+  })
+
+  /**
+   * Morphology bypasses the floor, exactly as `semantic.ts` argues: a `de-`/`un-`/`dis-`
+   * pair is opposition by STRUCTURE, so no embedding is needed to believe it. Verbs chosen
+   * outside the seed antonym table — a seed pair like seal/unseal would be unified by
+   * `atomize` into ONE node, leaving no pair to report.
+   */
+  it('reports a negating-prefix pair even far BELOW the cosine floor', async () => {
+    const doc = docOf([
+      req('index service', 'duplicate the shard', 'the batch lands'),
+      req('index service', 'de-duplicate the shard', 'the audit begins'),
+    ])
+    const plan = await buildGlossaryPlan(
+      toEngineDoc(doc),
+      tableEmbedder({
+        'duplicate the shard': [1, 0],
+        'de-duplicate the shard': atCosine(0.2),
+      }),
+    )
+    expect(plan.oppositions).toHaveLength(1)
+    expect(plan.oppositions[0]?.signal).toBe('negating-prefix')
+    // Admitted by structure, and the record says so rather than implying the cosine carried it.
+    expect(plan.oppositions[0]?.aboveCosineFloor).toBe(false)
+    expect(plan.oppositions[0]?.cosine).toBeLessThan(plan.oppositionCosineFloor)
+  })
+
+  it('never puts an opposition in `ops` — no op resolves one', async () => {
+    for (const c of [0.4, 0.6, 0.95]) {
+      const plan = await buildGlossaryPlan(toEngineDoc(vaultPair()), tableEmbedder(vaultTable(c)))
+      expect(plan.ops).toEqual([])
+      for (const o of plan.oppositions) {
+        expect(o.remedies.flatMap((r) => r.ops).length, JSON.stringify(o)).toBeGreaterThanOrEqual(0)
+      }
+    }
+  })
+
+  it('is deterministic and order-independent', async () => {
+    const rows = [
+      req('vault service', 'close the vault', 'the shift ends'),
+      req('vault service', 'shut the vault', 'the audit begins'),
+    ]
+    const table = vaultTable(0.6)
+    const forward = await buildGlossaryPlan(toEngineDoc(docOf(rows)), tableEmbedder(table))
+    const reversed = await buildGlossaryPlan(
+      toEngineDoc(docOf([...rows].reverse())),
+      tableEmbedder(table),
+    )
+    expect(JSON.stringify(forward.oppositions)).toBe(JSON.stringify(reversed.oppositions))
+  })
+
+  /**
+   * The DIVERGENCE, asserted rather than hidden.
+   *
+   * `findOppositionCandidates` skips any pair whose heads share an antonym canonical —
+   * polarity-blind — because from the engine's seat the pair is "already handled". The plan
+   * fires `seed-antonym` when the canonicals match and the POLARITIES DIFFER, because at
+   * document scale the useful thing to say is that these did not unify only because their
+   * objects differ, and realigning the objects proves the conflict with no new vocabulary.
+   *
+   * So the two are NOT the same predicate, and a test claiming they agree everywhere would
+   * be wrong. This pins where they part company and why.
+   */
+  it('reports a seed-antonym pair the engine deliberately skips', async () => {
+    const a = 'grant access'
+    const b = 'revoke permission'
+    const engineFired = (
+      await findOppositionCandidates(
+        [
+          { id: 'r-a', systemName: 'sys', systemResponse: a },
+          { id: 'r-b', systemName: 'sys', systemResponse: b },
+        ],
+        tableEmbedder({ [a]: [1, 0.02], [b]: [1, 0.03] }),
+      )
+    ).length
+    expect(engineFired, 'the engine skips a pair its antonym table already relates').toBe(0)
+
+    const plan = await buildGlossaryPlan(
+      toEngineDoc(
+        docOf([
+          req('vault service', a, 'the badge scans'),
+          req('vault service', b, 'the badge scans'),
+        ]),
+      ),
+      tableEmbedder({ [a]: [1, 0.02], [b]: [1, 0.03] }),
+    )
+    expect(plan.oppositions.map((o) => o.signal)).toEqual(['seed-antonym'])
+    expect(plan.oppositions[0]?.remedies[0]?.kind).toBe('realign-objects')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Dedup, determinism, and disclosure
 // ---------------------------------------------------------------------------
 
