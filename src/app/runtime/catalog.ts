@@ -55,8 +55,8 @@ import {
   REACHABILITY_FND_CODES,
   ReachabilityFndCodeMeta,
 } from '../../domain/reachability/reachability-codes.ts'
-import { runnable } from './command-form.ts'
-import { descriptionOf, ERR_CLASSES, tagOf } from './errors.ts'
+import { runnable } from '../../ports/command-form.ts'
+import { descriptionOf, ERR_CLASSES, tagOf } from '../../ports/errors.ts'
 
 // ---------------------------------------------------------------------------
 // The row

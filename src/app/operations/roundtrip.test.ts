@@ -38,8 +38,7 @@
 
 import { Effect, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { embedderLayerOf, stubEmbedder } from '../../adapters/embedding/embedder.ts'
-import { DocPath, DocStore, makeDocPath } from '../../adapters/fs/store.ts'
+import { stubEmbedder } from '../../adapters/embedding/embedder.ts'
 import { solverServiceLayer } from '../../adapters/z3/solver-service.ts'
 import {
   emptyDocument,
@@ -48,10 +47,12 @@ import {
   type RequirementsDocument,
 } from '../../domain/requirements/document.ts'
 import { type DocumentOp, decodeOp, opLine } from '../../domain/requirements/ops.ts'
+import { DocPath, DocStore, makeDocPath } from '../../ports/doc-store.ts'
+import { embedderLayerOf } from '../../ports/embedder.ts'
+import { StreamSource } from '../../ports/stream.ts'
 import { runOperation } from '../runtime/operation.ts'
 import { type CheckPayload, checkOp } from './check.ts'
 import { applyOpDefinition, type MutationPayload } from './mutation.ts'
-import { StreamSource } from './stream.ts'
 
 // ---------------------------------------------------------------------------
 // The world

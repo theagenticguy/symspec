@@ -63,28 +63,13 @@ export const API_VERSION = 1 as const
 export type ApiVersion = typeof API_VERSION
 
 // ---------------------------------------------------------------------------
-// Repair — the structured remedy (AC-A-9)
+// Repair — the structured remedy (AC-A-9). The SHAPE lives in ports/repair.ts,
+// because domain tiers produce a repair and this ring serializes it.
 // ---------------------------------------------------------------------------
 
-/**
- * A machine-actionable remedy attached to a failure.
- *
- * `ops` are ready-to-apply document operations (the JSONL op records the
- * `import`/`apply` stream consumes) — objects rather than a narrower type
- * because the v3 document-op union lands with the doc store, and the envelope
- * must not depend on it. `commands` are literal shell command lines an agent can
- * run as-is.
- *
- * Both arrays are present when a `repair` is present; either may be empty, but a
- * `repair` with two empty arrays is meaningless and should be omitted entirely
- * (see {@link failure}, which drops it).
- */
-export interface Repair {
-  /** Ready-to-apply document ops, in the `import`/`apply` JSONL op shape. */
-  readonly ops: readonly object[]
-  /** Literal command lines to run, verbatim. */
-  readonly commands: readonly string[]
-}
+import type { Repair } from '../../ports/repair.ts'
+
+export type { Repair }
 
 // ---------------------------------------------------------------------------
 // Partial — the best-effort recovered skeleton

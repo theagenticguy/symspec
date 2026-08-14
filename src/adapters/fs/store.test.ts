@@ -34,11 +34,9 @@ import {
   DOC_PATH_CONVENTION,
   DOC_PATH_ENV_VAR,
   DocStore,
-  docStoreLayer,
   makeDocPath,
-  parseDocumentText,
-  serializeDocument,
-} from './store.ts'
+} from '../../ports/doc-store.ts'
+import { docStoreLayer, parseDocumentText, serializeDocument } from './store.ts'
 
 // ---------------------------------------------------------------------------
 // Harness

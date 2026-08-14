@@ -16,13 +16,14 @@
 
 import { Effect, Layer, type Schema } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { DocPath, DocStore, makeDocPath } from '../../adapters/fs/store.ts'
 import {
   emptyDocument,
   type LoadedDocument,
   type RequirementsDocument,
 } from '../../domain/requirements/document.ts'
-import { ErrDocNotFound } from '../runtime/errors.ts'
+import { DocPath, DocStore, makeDocPath } from '../../ports/doc-store.ts'
+import { ErrDocNotFound } from '../../ports/errors.ts'
+import { StreamSource } from '../../ports/stream.ts'
 import {
   type AnyOperation,
   fieldMetadata,
@@ -40,7 +41,6 @@ import {
   updateOp,
   waiveOp,
 } from './mutation.ts'
-import { StreamSource } from './stream.ts'
 
 // ---------------------------------------------------------------------------
 // The harness

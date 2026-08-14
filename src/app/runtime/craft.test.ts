@@ -22,8 +22,7 @@
 
 import { Effect, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { embedderLayerOf, stubEmbedder } from '../../adapters/embedding/embedder.ts'
-import { DocPath, DocStore, makeDocPath } from '../../adapters/fs/store.ts'
+import { stubEmbedder } from '../../adapters/embedding/embedder.ts'
 import { solverServiceLayer } from '../../adapters/z3/solver-service.ts'
 import type { Requirement as DonorRequirement } from '../../domain/engine/core/schema.ts'
 import { detectAmbiguity } from '../../domain/engine/formal/ambiguity.ts'
@@ -34,13 +33,15 @@ import {
   type Requirement,
   type RequirementsDocument,
 } from '../../domain/requirements/document.ts'
+import { DocPath, DocStore, makeDocPath } from '../../ports/doc-store.ts'
+import { embedderLayerOf } from '../../ports/embedder.ts'
+import { ErrDocNotFound } from '../../ports/errors.ts'
+import { StreamSource } from '../../ports/stream.ts'
 import { type CheckPayload, checkOp } from '../operations/check.ts'
 import { applyOpDefinition } from '../operations/mutation.ts'
 import { parseOp } from '../operations/parse.ts'
-import { StreamSource } from '../operations/stream.ts'
 import { lookupCode } from './catalog.ts'
 import { ANTI_PATTERNS, CRAFT_SECTIONS, craftCodes, craftContents, renderCraft } from './craft.ts'
-import { ErrDocNotFound } from './errors.ts'
 import { runOperation } from './operation.ts'
 
 // ---------------------------------------------------------------------------

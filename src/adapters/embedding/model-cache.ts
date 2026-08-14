@@ -30,6 +30,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { DownloadReport } from '../../ports/model-download.ts'
 
 /**
  * The pinned model: `Xenova/bge-base-en-v1.5` at a frozen commit. Single-file
@@ -182,30 +183,6 @@ export async function ensureModelAssets(allowRemote: boolean): Promise<ModelAsse
     ensureAsset(dir, ASSETS.tokenizerConfig, allowRemote),
   ])
   return { modelPath, tokenizerPath, tokenizerConfigPath }
-}
-
-/** One asset's line in a {@link DownloadReport}. */
-export interface AssetReport {
-  /** Cache filename. */
-  readonly name: string
-  /** Size in bytes (the pinned expectation). */
-  readonly bytes: number
-  /** Whether this asset was already cached-and-valid before this call. */
-  readonly cached: boolean
-}
-
-/** The structured result of a {@link downloadModelAssets} run (the `download-model` envelope). */
-export interface DownloadReport {
-  /** The pinned model id (`repo`). */
-  readonly model: string
-  /** The frozen HF revision every asset is pinned to. */
-  readonly revision: string
-  /** Absolute cache directory the assets live in. */
-  readonly cacheDir: string
-  /** Per-asset cached/fetched status. */
-  readonly assets: readonly AssetReport[]
-  /** True when every asset was already present (nothing was downloaded). */
-  readonly alreadyComplete: boolean
 }
 
 /**

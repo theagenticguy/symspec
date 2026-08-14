@@ -61,8 +61,7 @@
  * `semantic-tier-skipped`, exactly as the absence of an embedder always was.
  */
 
-import { Context, Effect, Layer, Scope } from 'effect'
-import { ErrEmbedModelMissing } from '../../app/runtime/errors.ts'
+import { Effect, Layer, Scope } from 'effect'
 // STATIC, not dynamic, and deliberately so. The transplanted `embed.ts` is
 // interface-only — a type, a five-line `cosine`, and the model-id constant — so
 // importing it eagerly costs nothing. The EXPENSIVE things (`model-cache.ts`,
@@ -76,18 +75,8 @@ import { ErrEmbedModelMissing } from '../../app/runtime/errors.ts'
 // the ONNX loader; now that the loader lives here, the lazy import buys nothing but
 // cannot be removed without editing a verbatim tier. The correct trade is the warning.
 import { EMBED_MODEL, type Embedder } from '../../domain/engine/formal/embed.ts'
-
-/** The env var that enables the deterministic TEST stub. */
-export const EMBED_STUB_ENV = 'SYMSPEC_EMBED_STUB'
-
-/** The env var that allows a first-use model download. */
-export const EMBED_ALLOW_REMOTE_ENV = 'SYMSPEC_EMBED_ALLOW_REMOTE'
-
-/**
- * The pinned model, re-exported from the transplanted interface so the loader, the
- * error text, and any future `download-model` surface quote ONE string.
- */
-export { EMBED_MODEL } from '../../domain/engine/formal/embed.ts'
+import { EMBED_ALLOW_REMOTE_ENV, EMBED_STUB_ENV, EmbedderService } from '../../ports/embedder.ts'
+import { ErrEmbedModelMissing } from '../../ports/errors.ts'
 
 // ---------------------------------------------------------------------------
 // The stub
@@ -254,37 +243,6 @@ const loadRealEmbedder = async (allowRemote: boolean): Promise<Embedder> => {
   }
 }
 
-// ---------------------------------------------------------------------------
-// The service
-// ---------------------------------------------------------------------------
-
-/**
- * What a consumer of the semantic tier may do.
- *
- * ONE member, and it is an Effect for the eager-Layer reason in the module header:
- * a plain `Embedder` value here would load the model on every command.
- */
-export interface EmbedderShape {
-  /**
-   * Load (or reuse) the embedder.
-   *
-   * Memoized via `Effect.cached`: the FIRST caller pays the model load, every later
-   * one is free. Fails with `ERR_EMBED_MODEL_MISSING` when the model is absent and
-   * remote loading is off — the tier fails CLOSED rather than silently skipping.
-   */
-  readonly load: Effect.Effect<Embedder, ErrEmbedModelMissing>
-  /** Whether this embedder is the deterministic TEST stub. Exposed so a caller can
-   * DISCLOSE that the run's cosines are meaningless rather than leaving an agent to
-   * infer it from an env var it cannot see. */
-  readonly isStub: boolean
-}
-
-/** The service key. `Context.Service` — v4's class-style key; there is no
- * `Context.Tag`. */
-export class EmbedderService extends Context.Service<EmbedderService, EmbedderShape>()(
-  'symspec/EmbedderService',
-) {}
-
 /**
  * Wrap ANY loader failure in the typed error, so the contract holds regardless of
  * where the failure came from.
@@ -349,17 +307,3 @@ export const embedderServiceLayer: Layer.Layer<EmbedderService> = Layer.effect(E
     return EmbedderService.of({ load, isStub: useStub })
   }),
 )
-
-/**
- * A Layer supplying a CALLER-PROVIDED embedder — the test seam.
- *
- * Distinct from the stub: the stub is a hash function chosen for determinism, while
- * this takes a hand-authored vector table so a test can assert what happens at a
- * SPECIFIC cosine (just above the threshold, just below it, at the noise floor).
- * That is how a threshold gets tested at all, since the stub's cosines are
- * deliberately meaningless.
- */
-export const embedderLayerOf = (embedder: Embedder): Layer.Layer<EmbedderService> =>
-  Layer.succeed(EmbedderService)(
-    EmbedderService.of({ load: Effect.succeed(embedder), isStub: false }),
-  )

@@ -23,6 +23,7 @@ import {
   REACHABILITY_FND_CODES,
   ReachabilityFndCodeMeta,
 } from '../../domain/reachability/reachability-codes.ts'
+import { descriptionOf, ERR_CLASSES, tagOf } from '../../ports/errors.ts'
 import {
   allCodeStrings,
   allCodes,
@@ -32,7 +33,6 @@ import {
   lookupCode,
   nearestCodesAll,
 } from './catalog.ts'
-import { descriptionOf, ERR_CLASSES, tagOf } from './errors.ts'
 
 // ---------------------------------------------------------------------------
 // Coverage: all 81, in family order

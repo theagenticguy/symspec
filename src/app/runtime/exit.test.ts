@@ -9,17 +9,15 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { failure, ok } from './envelope.ts'
 import {
   EXIT_CLEAN,
   EXIT_CODES,
   EXIT_FINDINGS_FAILURE,
   EXIT_INCONCLUSIVE,
   EXIT_OPERATIONAL_ERROR,
-  exitCodeForEnvelope,
-  hasErrorSeverityFinding,
-  hasFailedStrictGate,
-} from './exit.ts'
+} from '../../ports/exit.ts'
+import { failure, ok } from './envelope.ts'
+import { exitCodeForEnvelope, hasErrorSeverityFinding, hasFailedStrictGate } from './exit.ts'
 
 const finding = (severity: string) => ({ code: 'FND_X', severity })
 

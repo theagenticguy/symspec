@@ -26,7 +26,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { allOperations } from '../../app/operations/index.ts'
 import { allCodes, lookupCode } from '../../app/runtime/catalog.ts'
-import { runnable } from '../../app/runtime/command-form.ts'
+import { runnable } from '../../ports/command-form.ts'
 import type { CheckFinding, CoverageDemotion } from '../engine/pipeline/check.ts'
 import { type RepairContext, repairForDemotion } from './repair.ts'
 

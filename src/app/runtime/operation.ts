@@ -49,8 +49,8 @@
  */
 
 import { Effect, Schema } from 'effect'
+import type { OperationalError } from '../../ports/errors.ts'
 import type { NotError, OkEnvelope } from './envelope.ts'
-import type { OperationalError } from './errors.ts'
 
 // ---------------------------------------------------------------------------
 // The JSON-Schema view an operation's metadata is read through

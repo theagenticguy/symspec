@@ -67,8 +67,8 @@
  * an all-empty repair, so "there is a repair, it is nothing" never reaches an agent.
  */
 
-import { runnable } from '../../app/runtime/command-form.ts'
-import type { Repair } from '../../app/runtime/envelope.ts'
+import { runnable } from '../../ports/command-form.ts'
+import type { Repair } from '../../ports/repair.ts'
 import type { CheckFinding, CoverageDemotion } from '../engine/pipeline/check.ts'
 import type { Exclusion } from '../engine/pipeline/gate.ts'
 import type { DocumentOp } from '../requirements/ops.ts'

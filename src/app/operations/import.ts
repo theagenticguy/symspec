@@ -69,7 +69,6 @@
  */
 
 import { Effect, Schema } from 'effect'
-import { DOC_PATH_CONVENTION, DocPath, DocStore } from '../../adapters/fs/store.ts'
 import {
   type AntonymPair,
   DOC_VERSION,
@@ -88,10 +87,11 @@ import {
 } from '../../domain/requirements/document.ts'
 import { renderSentence } from '../../domain/requirements/render.ts'
 import { resolveId } from '../../domain/requirements/resolve.ts'
+import { DOC_PATH_CONVENTION, DocPath, DocStore } from '../../ports/doc-store.ts'
+import { ErrDocExists, ErrUsage } from '../../ports/errors.ts'
+import { StreamSource } from '../../ports/stream.ts'
 import { ok } from '../runtime/envelope.ts'
-import { ErrDocExists, ErrUsage } from '../runtime/errors.ts'
 import { defineOperation } from '../runtime/operation.ts'
-import { StreamSource } from './stream.ts'
 
 // ---------------------------------------------------------------------------
 // The op-record schema

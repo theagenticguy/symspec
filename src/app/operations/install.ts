@@ -30,6 +30,7 @@
  */
 
 import { Effect, type FileSystem, type Path, Schema } from 'effect'
+import { type ErrIo, ErrUsage } from '../../ports/errors.ts'
 import { buildSkillBody } from '../install/skill-body.ts'
 import {
   type AgentTarget,
@@ -43,7 +44,6 @@ import {
 } from '../install/targets.ts'
 import { type FileResult, removeManagedFile, writeManagedFile } from '../install/write-safety.ts'
 import { ok } from '../runtime/envelope.ts'
-import { type ErrIo, ErrUsage } from '../runtime/errors.ts'
 import { defineOperation } from '../runtime/operation.ts'
 
 // ---------------------------------------------------------------------------

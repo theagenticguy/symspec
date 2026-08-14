@@ -36,9 +36,8 @@ import {
   EMBED_STUB_ENV,
   EmbedderService,
   embedderLayerOf,
-  embedderServiceLayer,
-  stubEmbedder,
-} from './embedder.ts'
+} from '../../ports/embedder.ts'
+import { embedderServiceLayer, stubEmbedder } from './embedder.ts'
 
 // ---------------------------------------------------------------------------
 // 1. Laziness

@@ -34,7 +34,6 @@
  */
 
 import { Effect, Schema } from 'effect'
-import { DOC_PATH_CONVENTION, DocPath, DocStore } from '../../adapters/fs/store.ts'
 import { buildAntonymIndexWithDoc } from '../../domain/engine/formal/antonyms.ts'
 import { normalize } from '../../domain/engine/formal/atomize.ts'
 // STATIC. A dynamic import here bought nothing: `operations/parse.ts` imports
@@ -55,8 +54,7 @@ import {
 } from '../../domain/requirements/document.ts'
 import { type FoldResult, foldOps, type MutateOptions } from '../../domain/requirements/mutate.ts'
 import { type DocumentOp, decodeOp, RELATION_EDGE_OP } from '../../domain/requirements/ops.ts'
-import { catalogCounts } from '../runtime/catalog.ts'
-import { ok } from '../runtime/envelope.ts'
+import { DOC_PATH_CONVENTION, DocPath, DocStore } from '../../ports/doc-store.ts'
 import {
   ErrDuplicateId,
   ErrDuplicateKey,
@@ -64,9 +62,11 @@ import {
   ErrNullRequired,
   ErrUsage,
   type OperationalError,
-} from '../runtime/errors.ts'
+} from '../../ports/errors.ts'
+import { StreamSource } from '../../ports/stream.ts'
+import { catalogCounts } from '../runtime/catalog.ts'
+import { ok } from '../runtime/envelope.ts'
 import { defineOperation } from '../runtime/operation.ts'
-import { StreamSource } from './stream.ts'
 
 const lines = (...xs: readonly string[]): string => xs.join('\n')
 

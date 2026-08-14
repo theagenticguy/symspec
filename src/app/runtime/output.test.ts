@@ -14,13 +14,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { EXIT_CLEAN, EXIT_FINDINGS_FAILURE, EXIT_OPERATIONAL_ERROR } from '../../ports/exit.ts'
 import { API_VERSION, type Envelope, failure, ok } from './envelope.ts'
-import {
-  EXIT_CLEAN,
-  EXIT_FINDINGS_FAILURE,
-  EXIT_OPERATIONAL_ERROR,
-  exitCodeForEnvelope,
-} from './exit.ts'
+import { exitCodeForEnvelope } from './exit.ts'
 import {
   densifyValue,
   ELIDED_KEY,

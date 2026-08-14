@@ -11,7 +11,7 @@
 
 import { Effect, Schema } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { ErrIo } from './errors.ts'
+import { ErrIo } from '../../ports/errors.ts'
 import {
   buildManifest,
   defineOperation,

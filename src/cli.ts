@@ -49,10 +49,11 @@ import {
 } from './app/operations/index.ts'
 import { isErrorEnvelope } from './app/runtime/envelope.ts'
 import { toErrorEnvelope } from './app/runtime/errors.ts'
-import { EXIT_CLEAN, type ExitCode, exitCodeForEnvelope } from './app/runtime/exit.ts'
+import { exitCodeForEnvelope } from './app/runtime/exit.ts'
 import { fieldMetadata, flagName, type Operation, runOperation } from './app/runtime/operation.ts'
 import { type OutputFlags, renderOutput } from './app/runtime/output.ts'
 import { VERSION } from './app/runtime/version.ts'
+import { EXIT_CLEAN, type ExitCode } from './ports/exit.ts'
 
 // ---------------------------------------------------------------------------
 // Emitting an envelope

@@ -165,7 +165,7 @@
  */
 
 import { Effect } from 'effect'
-import { SolverService } from '../../adapters/z3/solver-service.ts'
+import { SolverService } from '../../ports/solver.ts'
 import type {
   Requirement,
   RequirementsDocument,

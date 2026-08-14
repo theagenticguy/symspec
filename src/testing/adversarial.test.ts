@@ -54,14 +54,15 @@
 
 import { Effect, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { embedderLayerOf, stubEmbedder } from '../adapters/embedding/embedder.ts'
-import { DocPath, DocStore, makeDocPath } from '../adapters/fs/store.ts'
+import { stubEmbedder } from '../adapters/embedding/embedder.ts'
 import { solverServiceLayer } from '../adapters/z3/solver-service.ts'
 import { type CheckPayload, checkOp } from '../app/operations/check.ts'
-import { ErrDocNotFound } from '../app/runtime/errors.ts'
 import { runOperation } from '../app/runtime/operation.ts'
 import type { RequirementsDoc as DonorDoc } from '../domain/engine/core/schema.ts'
 import { emptyDocument, type RequirementsDocument } from '../domain/requirements/document.ts'
+import { DocPath, DocStore, makeDocPath } from '../ports/doc-store.ts'
+import { embedderLayerOf } from '../ports/embedder.ts'
+import { ErrDocNotFound } from '../ports/errors.ts'
 import { evalRoundCases } from './eval-rounds.ts'
 
 // ---------------------------------------------------------------------------

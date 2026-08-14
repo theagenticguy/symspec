@@ -50,10 +50,10 @@ import { Effect, Schema } from 'effect'
 import { type BatchParseResult, parseBatch } from '../../domain/engine/parse/batch.ts'
 import type { ParseResult } from '../../domain/engine/parse/result.ts'
 import { type AddOp, opLine } from '../../domain/requirements/ops.ts'
+import { ErrIo, ErrUsage } from '../../ports/errors.ts'
+import { StreamSource } from '../../ports/stream.ts'
 import { ok, type Repair } from '../runtime/envelope.ts'
-import { ErrIo, ErrUsage } from '../runtime/errors.ts'
 import { defineOperation } from '../runtime/operation.ts'
-import { StreamSource } from './stream.ts'
 
 const lines = (...xs: readonly string[]): string => xs.join('\n')
 

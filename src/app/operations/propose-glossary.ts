@@ -38,12 +38,12 @@
  */
 
 import { Effect, Schema } from 'effect'
-import { EmbedderService } from '../../adapters/embedding/embedder.ts'
-import { DocPath, DocStore } from '../../adapters/fs/store.ts'
 import { toDonorDoc } from '../../domain/compat.ts'
 import { DEFAULT_SEMANTIC_THRESHOLD } from '../../domain/engine/formal/semantic.ts'
 import { buildGlossaryPlan, type GlossaryPlan } from '../../domain/glossary/glossary-plan.ts'
 import { opLine } from '../../domain/requirements/ops.ts'
+import { DocPath, DocStore } from '../../ports/doc-store.ts'
+import { EmbedderService } from '../../ports/embedder.ts'
 import { ok } from '../runtime/envelope.ts'
 import { defineOperation } from '../runtime/operation.ts'
 

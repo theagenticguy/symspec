@@ -50,15 +50,15 @@ import {
   REACHABILITY_FND_CODES,
   ReachabilityFndCodeMeta,
 } from '../../domain/reachability/reachability-codes.ts'
-import { catalogCounts, lookupCode, nearestCodesAll } from '../runtime/catalog.ts'
-import { API_VERSION, ok } from '../runtime/envelope.ts'
-import { ErrNotFound, errCodeCatalog } from '../runtime/errors.ts'
+import { ErrNotFound, errCodeCatalog } from '../../ports/errors.ts'
 import {
   EXIT_CLEAN,
   EXIT_FINDINGS_FAILURE,
   EXIT_INCONCLUSIVE,
   EXIT_OPERATIONAL_ERROR,
-} from '../runtime/exit.ts'
+} from '../../ports/exit.ts'
+import { catalogCounts, lookupCode, nearestCodesAll } from '../runtime/catalog.ts'
+import { API_VERSION, ok } from '../runtime/envelope.ts'
 import {
   type AnyOperation,
   buildManifest,
@@ -88,6 +88,7 @@ import {
 import { parseOp } from './parse.ts'
 import { proposeGlossaryOp } from './propose-glossary.ts'
 
+export { StreamSource } from '../../ports/stream.ts'
 export { checkOp } from './check.ts'
 export { initOp, listOp, showOp } from './document.ts'
 export { importOp } from './import.ts'
@@ -108,7 +109,6 @@ export {
 } from './mutation.ts'
 export { parseOp } from './parse.ts'
 export { proposeGlossaryOp } from './propose-glossary.ts'
-export { StreamSource, streamSourceLayer } from './stream.ts'
 
 /**
  * The exit-code table the manifest publishes, single-sourced from the exit

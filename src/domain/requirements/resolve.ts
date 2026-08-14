@@ -32,7 +32,7 @@
  * as safe to REFERENCE as a UUID — but the stored form is always the UUID.
  */
 
-import { ErrNotFound } from '../../app/runtime/errors.ts'
+import { ErrNotFound } from '../../ports/errors.ts'
 import type { Requirement, RequirementsDocument } from './document.ts'
 
 /**

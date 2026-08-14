@@ -24,9 +24,8 @@
 
 import { Effect, Layer, type Schema } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { embedderLayerOf, stubEmbedder } from '../../adapters/embedding/embedder.ts'
-import { DocPath, DocStore, makeDocPath, type SaveInput } from '../../adapters/fs/store.ts'
-import { SolverService, solverServiceLayer } from '../../adapters/z3/solver-service.ts'
+import { stubEmbedder } from '../../adapters/embedding/embedder.ts'
+import { solverServiceLayer } from '../../adapters/z3/solver-service.ts'
 import {
   DOC_VERSION,
   emptyDocument,
@@ -34,13 +33,12 @@ import {
   type Requirement,
   type RequirementsDocument,
 } from '../../domain/requirements/document.ts'
-import { ErrDocNotFound, type OperationalError } from '../runtime/errors.ts'
-import {
-  EXIT_CLEAN,
-  EXIT_FINDINGS_FAILURE,
-  EXIT_INCONCLUSIVE,
-  exitCodeForEnvelope,
-} from '../runtime/exit.ts'
+import { DocPath, DocStore, makeDocPath, type SaveInput } from '../../ports/doc-store.ts'
+import { embedderLayerOf } from '../../ports/embedder.ts'
+import { ErrDocNotFound, type OperationalError } from '../../ports/errors.ts'
+import { EXIT_CLEAN, EXIT_FINDINGS_FAILURE, EXIT_INCONCLUSIVE } from '../../ports/exit.ts'
+import { SolverService } from '../../ports/solver.ts'
+import { exitCodeForEnvelope } from '../runtime/exit.ts'
 import { runOperation } from '../runtime/operation.ts'
 import {
   type CheckPayload,

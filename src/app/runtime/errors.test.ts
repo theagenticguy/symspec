@@ -9,7 +9,6 @@
 
 import { Effect, Runtime } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { isErrorEnvelope } from './envelope.ts'
 import {
   descriptionOf,
   ERR_CLASSES,
@@ -26,9 +25,11 @@ import {
   nearestCodes,
   type OperationalError,
   tagOf,
-  toErrorEnvelope,
-} from './errors.ts'
-import { EXIT_OPERATIONAL_ERROR, exitCodeForEnvelope } from './exit.ts'
+} from '../../ports/errors.ts'
+import { EXIT_OPERATIONAL_ERROR } from '../../ports/exit.ts'
+import { isErrorEnvelope } from './envelope.ts'
+import { toErrorEnvelope } from './errors.ts'
+import { exitCodeForEnvelope } from './exit.ts'
 
 /**
  * The shipped, append-only ERR_* order — transplanted from v4's

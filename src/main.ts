@@ -52,8 +52,8 @@ import { Effect, Layer, Logger } from 'effect'
 import { embedderServiceLayer } from './adapters/embedding/embedder.ts'
 import { modelDownloadLayer } from './adapters/embedding/model-download.ts'
 import { storeLayer } from './adapters/fs/store.ts'
+import { streamSourceLayer } from './adapters/stdin/stream.ts'
 import { solverServiceLayer } from './adapters/z3/solver-service.ts'
-import { streamSourceLayer } from './app/operations/index.ts'
 import { cli } from './cli.ts'
 
 /** Everything the operations require, over the platform services. */

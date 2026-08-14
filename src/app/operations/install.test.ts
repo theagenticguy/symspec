@@ -29,6 +29,7 @@ import { NodeServices } from '@effect/platform-node'
 import { Effect } from 'effect'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { REACHABILITY_FND_CODES } from '../../domain/reachability/reachability-codes.ts'
+import type { OperationalError } from '../../ports/errors.ts'
 import { buildSkillBody } from '../install/skill-body.ts'
 import {
   AUTO_FALLBACK_TARGET,
@@ -42,7 +43,6 @@ import {
 } from '../install/targets.ts'
 import { catalogCounts } from '../runtime/catalog.ts'
 import { CRAFT_SECTIONS } from '../runtime/craft.ts'
-import type { OperationalError } from '../runtime/errors.ts'
 import { exitCodeForEnvelope } from '../runtime/exit.ts'
 import { runOperation } from '../runtime/operation.ts'
 import { SCOPE, SCOPE_ESSENTIAL } from '../runtime/scope.ts'

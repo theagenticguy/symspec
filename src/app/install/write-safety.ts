@@ -31,7 +31,7 @@
  */
 
 import { Effect, FileSystem, Path } from 'effect'
-import { ErrIo } from '../runtime/errors.ts'
+import { ErrIo } from '../../ports/errors.ts'
 
 /** What a single file write/remove did — surfaced per file in the envelope. */
 export type FileAction = 'created' | 'updated' | 'unchanged' | 'removed'

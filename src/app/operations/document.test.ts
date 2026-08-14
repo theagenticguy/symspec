@@ -22,7 +22,6 @@
 
 import { Effect, Layer, Schema } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { DocPath, DocStore, makeDocPath, type SaveInput } from '../../adapters/fs/store.ts'
 import {
   DOC_VERSION,
   emptyDocument,
@@ -37,7 +36,8 @@ import {
   resolveId,
   resolveRef,
 } from '../../domain/requirements/resolve.ts'
-import { ErrDocNotFound, type OperationalError } from '../runtime/errors.ts'
+import { DocPath, DocStore, makeDocPath, type SaveInput } from '../../ports/doc-store.ts'
+import { ErrDocNotFound, type OperationalError } from '../../ports/errors.ts'
 import { type Operation, runOperation } from '../runtime/operation.ts'
 import { initOp, listOp, showOp } from './document.ts'
 

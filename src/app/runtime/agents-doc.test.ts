@@ -19,17 +19,17 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { allOperations, currentManifest } from '../operations/index.ts'
-import { GENERATED_BANNER, renderAgentsDoc } from './agents-doc.ts'
-import { allCodes } from './catalog.ts'
-import { CRAFT_SECTIONS } from './craft.ts'
-import { API_VERSION } from './envelope.ts'
 import {
   EXIT_CLEAN,
   EXIT_FINDINGS_FAILURE,
   EXIT_INCONCLUSIVE,
   EXIT_OPERATIONAL_ERROR,
-} from './exit.ts'
+} from '../../ports/exit.ts'
+import { allOperations, currentManifest } from '../operations/index.ts'
+import { GENERATED_BANNER, renderAgentsDoc } from './agents-doc.ts'
+import { allCodes } from './catalog.ts'
+import { CRAFT_SECTIONS } from './craft.ts'
+import { API_VERSION } from './envelope.ts'
 import { SCOPE_KEYS, scopeParagraphs } from './scope.ts'
 import { VERSION } from './version.ts'
 

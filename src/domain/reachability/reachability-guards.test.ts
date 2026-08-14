@@ -46,7 +46,8 @@
 import { Duration, Effect, Fiber, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { parseDocumentText, serializeDocument } from '../../adapters/fs/store.ts'
-import { SolverService, solverServiceLayer } from '../../adapters/z3/solver-service.ts'
+import { solverServiceLayer } from '../../adapters/z3/solver-service.ts'
+import { SolverService } from '../../ports/solver.ts'
 import { toDonorDoc } from '../compat.ts'
 import {
   DOC_VERSION,
@@ -407,7 +408,7 @@ describe('V14/V21 GUARD — undeclared params and the interrupt escape', () => {
         Effect.provide(Layer.fresh(solverServiceLayer)),
       ),
     )
-    const { interruptibleSolve } = await import('../../adapters/z3/solver-service.ts')
+    const { interruptibleSolve } = await import('../../ports/solver.ts')
     expect(solve).toBe(interruptibleSolve)
   })
 })

@@ -28,9 +28,9 @@
  */
 
 import { Effect, Schema } from 'effect'
-import { ModelDownload } from '../../adapters/embedding/model-download.ts'
+import type { ErrEmbedModelMissing } from '../../ports/errors.ts'
+import { ModelDownload } from '../../ports/model-download.ts'
 import { ok } from '../runtime/envelope.ts'
-import type { ErrEmbedModelMissing } from '../runtime/errors.ts'
 import { defineOperation } from '../runtime/operation.ts'
 
 /** One asset's outcome. `cached` is what makes a no-op distinguishable from a fetch. */

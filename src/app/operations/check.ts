@@ -59,9 +59,6 @@
  */
 
 import { Effect, Schema } from 'effect'
-import { EmbedderService } from '../../adapters/embedding/embedder.ts'
-import { DocPath, DocStore } from '../../adapters/fs/store.ts'
-import { SolverService } from '../../adapters/z3/solver-service.ts'
 import { type BudgetHint, budgetHintFor } from '../../domain/advice/budget-hint.ts'
 import { repairForDemotion } from '../../domain/advice/repair.ts'
 import { toDonorDoc } from '../../domain/compat.ts'
@@ -80,9 +77,12 @@ import type { Exclusion } from '../../domain/engine/pipeline/gate.ts'
 import { type ReachabilityReport, runReachability } from '../../domain/reachability/reachability.ts'
 import { projectReachability } from '../../domain/reachability/reachability-report.ts'
 import type { DocumentDiagnostic } from '../../domain/requirements/document.ts'
-import { runnableInProse } from '../runtime/command-form.ts'
+import { runnableInProse } from '../../ports/command-form.ts'
+import { DocPath, DocStore } from '../../ports/doc-store.ts'
+import { EmbedderService } from '../../ports/embedder.ts'
+import { ErrSolverInconclusive, ErrUsage } from '../../ports/errors.ts'
+import { SolverService } from '../../ports/solver.ts'
 import { ok, type Repair } from '../runtime/envelope.ts'
-import { ErrSolverInconclusive, ErrUsage } from '../runtime/errors.ts'
 import { defineOperation } from '../runtime/operation.ts'
 
 // ---------------------------------------------------------------------------

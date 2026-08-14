@@ -42,7 +42,8 @@
 
 import { Effect } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { SolverService, solverServiceLayer } from '../adapters/z3/solver-service.ts'
+import { solverServiceLayer } from '../adapters/z3/solver-service.ts'
+import { SolverService } from '../ports/solver.ts'
 import { toDonorDoc, toDonorRequirement } from './compat.ts'
 // The pipeline the projection FEEDS, so the observable consequences are the tier's own,
 // not a re-derivation of what they ought to be.

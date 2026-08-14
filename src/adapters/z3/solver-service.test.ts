@@ -53,12 +53,8 @@
 import { Duration, Effect, Fiber, Layer } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { resetZ3, type Z3Context, type Z3Module } from '../../domain/engine/formal/backend.ts'
-import {
-  interruptibleSolve,
-  SOLVER_CONCURRENCY,
-  SolverService,
-  solverServiceLayer,
-} from './solver-service.ts'
+import { interruptibleSolve, SOLVER_CONCURRENCY, SolverService } from '../../ports/solver.ts'
+import { solverServiceLayer } from './solver-service.ts'
 
 // ---------------------------------------------------------------------------
 // Genuinely slow queries

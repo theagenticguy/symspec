@@ -27,12 +27,11 @@ import { Effect, type Layer, type Schema } from 'effect'
 import { afterEach, describe, expect, it } from 'vitest'
 import { modelCacheDir } from '../../adapters/embedding/model-cache.ts'
 import {
-  type DownloadReport,
-  type ModelDownload,
   modelDownloadFailingWith,
   modelDownloadOf,
 } from '../../adapters/embedding/model-download.ts'
-import type { OperationalError } from '../runtime/errors.ts'
+import type { OperationalError } from '../../ports/errors.ts'
+import type { DownloadReport, ModelDownload } from '../../ports/model-download.ts'
 import { runOperation } from '../runtime/operation.ts'
 import { currentManifest, downloadModelOp } from './index.ts'
 import type { ModelDownloadPayload } from './model.ts'

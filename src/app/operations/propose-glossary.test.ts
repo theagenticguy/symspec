@@ -10,13 +10,14 @@
 
 import { Effect, Layer, type Schema } from 'effect'
 import { describe, expect, it } from 'vitest'
-import { EmbedderService, embedderLayerOf } from '../../adapters/embedding/embedder.ts'
-import { DocPath, DocStore, makeDocPath } from '../../adapters/fs/store.ts'
 import type { Embedder } from '../../domain/engine/formal/embed.ts'
 import { DOC_VERSION, type RequirementsDocument } from '../../domain/requirements/document.ts'
 import { decodeOp } from '../../domain/requirements/ops.ts'
-import { ErrDocNotFound, ErrEmbedModelMissing, type OperationalError } from '../runtime/errors.ts'
-import { EXIT_CLEAN, exitCodeForEnvelope } from '../runtime/exit.ts'
+import { DocPath, DocStore, makeDocPath } from '../../ports/doc-store.ts'
+import { EmbedderService, embedderLayerOf } from '../../ports/embedder.ts'
+import { ErrDocNotFound, ErrEmbedModelMissing, type OperationalError } from '../../ports/errors.ts'
+import { EXIT_CLEAN } from '../../ports/exit.ts'
+import { exitCodeForEnvelope } from '../runtime/exit.ts'
 import { runOperation } from '../runtime/operation.ts'
 import { type GlossaryProposalPayload, proposeGlossaryOp } from './propose-glossary.ts'
 

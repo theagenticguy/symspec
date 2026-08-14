@@ -27,28 +27,10 @@
  * catalog for no agent-facing gain.
  */
 
-import { Context, Effect, Layer } from 'effect'
-import { ErrEmbedModelMissing } from '../../app/runtime/errors.ts'
-import { EMBED_ALLOW_REMOTE_ENV } from './embedder.ts'
-import type { DownloadReport } from './model-cache.ts'
-
-export type { DownloadReport }
-
-/** The pre-warm capability: fetch every pinned asset, or fail with the typed error. */
-export interface ModelDownloadShape {
-  /**
-   * Force-fetch the pinned assets into the cache and report what happened.
-   *
-   * Idempotent: an already-complete cache is a no-op that reports
-   * `alreadyComplete: true`, which is how a caller tells a real fetch from a second run.
-   */
-  readonly run: Effect.Effect<DownloadReport, ErrEmbedModelMissing>
-}
-
-/** The service key. `Context.Service` — v4's class-style key; there is no `Context.Tag`. */
-export class ModelDownload extends Context.Service<ModelDownload, ModelDownloadShape>()(
-  'symspec/ModelDownload',
-) {}
+import { Effect, Layer } from 'effect'
+import { EMBED_ALLOW_REMOTE_ENV } from '../../ports/embedder.ts'
+import { ErrEmbedModelMissing } from '../../ports/errors.ts'
+import { type DownloadReport, ModelDownload } from '../../ports/model-download.ts'
 
 /**
  * Every failure becomes the typed error, because they all mean one thing to a caller.

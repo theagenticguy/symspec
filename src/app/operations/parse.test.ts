@@ -22,9 +22,9 @@ import { parseBatch } from '../../domain/engine/parse/batch.ts'
 import { parseLine } from '../../domain/engine/parse/result.ts'
 import type { Tier2Loader } from '../../domain/engine/parse/tier2.ts'
 import { decodeOp } from '../../domain/requirements/ops.ts'
+import { StreamSource } from '../../ports/stream.ts'
 import { runOperation } from '../runtime/operation.ts'
 import { type ParsePayload, parseOp } from './parse.ts'
-import { StreamSource } from './stream.ts'
 
 // ---------------------------------------------------------------------------
 // The corpus

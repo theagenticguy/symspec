@@ -29,7 +29,7 @@
  * document.
  */
 
-import type { Repair } from '../../app/runtime/envelope.ts'
+import type { Repair } from '../../ports/repair.ts'
 import type { DocumentOp } from '../requirements/ops.ts'
 import type { ConstraintResult, ReachabilityReport } from './reachability.ts'
 import type { ReachabilityFndCode } from './reachability-codes.ts'

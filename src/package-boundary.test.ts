@@ -117,3 +117,99 @@ describe('no module reaches outside the package', () => {
     expect(statSync(target).isFile()).toBe(true)
   })
 })
+
+// ---------------------------------------------------------------------------
+// The rings
+// ---------------------------------------------------------------------------
+
+/** The ring a source file belongs to, from its path under `src/`. */
+const ringOf = (relPath: string): string => {
+  const [head] = relPath.replace(/^src[/\\]/, '').split(/[/\\]/)
+  return head === 'domain' ||
+    head === 'ports' ||
+    head === 'adapters' ||
+    head === 'app' ||
+    head === 'testing'
+    ? head
+    : 'root'
+}
+
+/** Production files only — tests wire every ring together by design. */
+const prodFiles = (): readonly string[] =>
+  tsFiles(join(PKG_ROOT, 'src')).filter((f) => !f.endsWith('.test.ts'))
+
+/** Source with comments removed, so prose about an API is not an import of it. */
+const withoutComments = (source: string): string =>
+  source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+
+describe('the rings hold', () => {
+  /**
+   * Which ring may import which, pinned as an exact table.
+   *
+   * The direction is the hexagon's: `domain` (the proof core and its tiers)
+   * names only itself and the contract; `ports` is the contract — service
+   * shapes, error and exit vocabulary, the repair wire shape; `adapters` own
+   * the real I/O behind each port; `app` is the use cases and never names an
+   * adapter — only `main.ts` (root, the composition root) wires layers.
+   * Widening a row is a review decision, not an accident.
+   */
+  const ALLOWED: Readonly<Record<string, readonly string[]>> = {
+    domain: ['domain', 'ports'],
+    ports: ['ports', 'domain'],
+    adapters: ['adapters', 'ports', 'domain'],
+    app: ['app', 'ports', 'domain'],
+    testing: ['testing', 'domain', 'ports'],
+    root: ['root', 'app', 'adapters', 'ports', 'domain', 'testing'],
+  }
+
+  it('every production import stays within its ring adjacency', () => {
+    const crossings: string[] = []
+    for (const file of prodFiles()) {
+      const from = ringOf(relative(PKG_ROOT, file))
+      for (const specifier of relativeSpecifiers(readFileSync(file, 'utf8'))) {
+        const to = ringOf(relative(PKG_ROOT, resolve(dirname(file), specifier)))
+        if (!(ALLOWED[from] ?? []).includes(to)) {
+          crossings.push(`${relative(PKG_ROOT, file)} (${from}) -> ${specifier} (${to})`)
+        }
+      }
+    }
+    expect(crossings).toEqual([])
+  })
+
+  it('adapters are wired by the composition root alone', () => {
+    // The stronger corollary, asserted separately because it is the claim a
+    // reader most wants: swap an adapter and the blast radius is `main.ts`.
+    const importers: string[] = []
+    for (const file of prodFiles()) {
+      if (ringOf(relative(PKG_ROOT, file)) === 'adapters') continue
+      for (const specifier of relativeSpecifiers(readFileSync(file, 'utf8'))) {
+        const target = relative(PKG_ROOT, resolve(dirname(file), specifier))
+        if (ringOf(target) === 'adapters') importers.push(relative(PKG_ROOT, file))
+      }
+    }
+    expect([...new Set(importers)]).toEqual([join('src', 'main.ts')])
+  })
+
+  it('the domain and the contract do no I/O — no node builtin, no env, no fetch', () => {
+    // The property that makes a verdict a function of (document, tables, model)
+    // and nothing else. Comments are stripped first: prose ABOUT `process.env`
+    // is how the rule gets explained, and must not trip the rule.
+    const impure: string[] = []
+    for (const file of prodFiles()) {
+      const ring = ringOf(relative(PKG_ROOT, file))
+      if (ring !== 'domain' && ring !== 'ports') continue
+      const code = withoutComments(readFileSync(file, 'utf8'))
+      for (const pattern of [
+        /\bfrom\s+'node:/,
+        /\bimport\(\s*'node:/,
+        /\bprocess\.env\b/,
+        /\bfetch\s*\(/,
+      ]) {
+        if (pattern.test(code)) {
+          impure.push(`${relative(PKG_ROOT, file)} matches ${pattern}`)
+        }
+      }
+    }
+    expect(impure).toEqual([])
+  })
+})

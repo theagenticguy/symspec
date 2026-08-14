@@ -23,7 +23,6 @@
  */
 
 import { Effect, Schema } from 'effect'
-import { DOC_PATH_CONVENTION, DocPath, DocStore } from '../../adapters/fs/store.ts'
 import {
   DOC_VERSION,
   type DocumentDiagnostic,
@@ -31,8 +30,9 @@ import {
   type Requirement,
 } from '../../domain/requirements/document.ts'
 import { requireRequirement } from '../../domain/requirements/resolve.ts'
+import { DOC_PATH_CONVENTION, DocPath, DocStore } from '../../ports/doc-store.ts'
+import { ErrDocExists, type ErrNotFound } from '../../ports/errors.ts'
 import { ok } from '../runtime/envelope.ts'
-import { ErrDocExists, type ErrNotFound } from '../runtime/errors.ts'
 import { defineOperation } from '../runtime/operation.ts'
 
 // ---------------------------------------------------------------------------
