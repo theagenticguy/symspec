@@ -22,12 +22,6 @@
 
 import { Console, Data, Effect, Option, Runtime, Schema } from 'effect'
 import { Argument, Command, Flag } from 'effect/unstable/cli'
-import { isErrorEnvelope } from './kernel/envelope.ts'
-import { toErrorEnvelope } from './kernel/errors.ts'
-import { EXIT_CLEAN, type ExitCode, exitCodeForEnvelope } from './kernel/exit.ts'
-import { fieldMetadata, flagName, type Operation, runOperation } from './kernel/operation.ts'
-import { type OutputFlags, renderOutput } from './kernel/output.ts'
-import { VERSION } from './kernel/version.ts'
 import {
   addOp,
   antonymOp,
@@ -52,7 +46,13 @@ import {
   updateOp,
   versionOp,
   waiveOp,
-} from './operations/index.ts'
+} from './app/operations/index.ts'
+import { isErrorEnvelope } from './app/runtime/envelope.ts'
+import { toErrorEnvelope } from './app/runtime/errors.ts'
+import { EXIT_CLEAN, type ExitCode, exitCodeForEnvelope } from './app/runtime/exit.ts'
+import { fieldMetadata, flagName, type Operation, runOperation } from './app/runtime/operation.ts'
+import { type OutputFlags, renderOutput } from './app/runtime/output.ts'
+import { VERSION } from './app/runtime/version.ts'
 
 // ---------------------------------------------------------------------------
 // Emitting an envelope

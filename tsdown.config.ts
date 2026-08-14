@@ -39,19 +39,18 @@ export default defineConfig({
   inputOptions(options) {
     // `onLog`, not the deprecated `onwarn`.
     options.onLog = (level, log, defaultHandler) => {
-      // ONE warning is suppressed, by exact module, and it is structurally unfixable:
-      // `donor/formal/semantic.ts` lazy-imports `embed.ts` per call, and `src/donor/**` is
-      // frozen. `formal/embedder.ts` imports `embed.ts` statically and deliberately — the
-      // file is interface-only (a type, `cosine`, and the model id), while the expensive
-      // things stay dynamic inside the loader. So the lazy import buys nothing and cannot
-      // be removed without editing vendored code.
+      // ONE warning is suppressed, by exact module: `domain/engine/formal/semantic.ts`
+      // lazy-imports `embed.ts` per call, while `adapters/embedding/embedder.ts` imports
+      // it statically and deliberately — the file is interface-only (a type, `cosine`,
+      // and the model id), and the expensive things stay dynamic inside the loader. So
+      // the engine's lazy import buys nothing at bundle time, harmlessly.
       //
       // Matched on the MODULE, not just the code, so a new ineffective dynamic import —
       // which would be a real finding about our own laziness — still reports. A blanket
       // suppression by code is how this warning stops meaning anything.
       if (
         log.code === 'INEFFECTIVE_DYNAMIC_IMPORT' &&
-        String(log.message).includes('src/donor/formal/embed.ts')
+        String(log.message).includes('src/domain/engine/formal/embed.ts')
       ) {
         return
       }

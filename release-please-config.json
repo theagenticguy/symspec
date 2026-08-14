@@ -6,7 +6,7 @@
   "packages": {
     ".": {
       "extra-files": [
-        { "type": "generic", "path": "src/kernel/version.ts" },
+        { "type": "generic", "path": "src/app/runtime/version.ts" },
         { "type": "generic", "path": "README.md" },
         { "type": "generic", "path": "AGENTS.md" }
       ]

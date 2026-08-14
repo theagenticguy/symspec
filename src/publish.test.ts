@@ -28,8 +28,8 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { VERSION } from './kernel/version.ts'
-import { currentManifest } from './operations/index.ts'
+import { currentManifest } from './app/operations/index.ts'
+import { VERSION } from './app/runtime/version.ts'
 
 const read = (relative: string): string =>
   readFileSync(fileURLToPath(new URL(`../${relative}`, import.meta.url)), 'utf8')
@@ -421,15 +421,15 @@ describe('the README is a PACKAGE readme, greenfield-first and honest', () => {
       'check:agents',
       'src/publish.test.ts',
       'src/cli.test.ts',
-      'src/kernel/agents-doc.test.ts',
-      'src/formal/repair.test.ts',
+      'src/app/runtime/agents-doc.test.ts',
+      'src/domain/advice/repair.test.ts',
     ]) {
       expect(readme, gate).toContain(gate)
     }
     // The cited gates EXIST. Checked in the OTHER files, because a literal named here is
     // present by virtue of being written here — `toContain` on this file would pass for a
     // describe block that had already been renamed away.
-    expect(read('src/kernel/agents-doc.test.ts')).toContain(
+    expect(read('src/app/runtime/agents-doc.test.ts')).toContain(
       "describe('the committed AGENTS.md matches the generator'",
     )
     expect(read('src/cli.test.ts')).toContain('drift — manifest summaries vs root --help')
@@ -484,7 +484,7 @@ describe('the release config bumps every place the version appears', () => {
   it('lists every file that carries the version, and no others', () => {
     // `package.json` is handled natively by `release-type: node`, so it is correctly ABSENT
     // from `extra-files` — listing it would be redundant, not harmful.
-    expect([...extraFiles].sort()).toEqual(['AGENTS.md', 'README.md', 'src/kernel/version.ts'])
+    expect([...extraFiles].sort()).toEqual(['AGENTS.md', 'README.md', 'src/app/runtime/version.ts'])
   })
 
   it('finds the annotation ON THE SAME LINE as the version, in every configured file', () => {

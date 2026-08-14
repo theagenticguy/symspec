@@ -17,13 +17,13 @@ any secret.
    `publish` job in the same workflow run publishes to npm with provenance.
 
 The version lives in **four** files and every one of them is asserted to agree:
-`package.json`, `src/kernel/version.ts`, `README.md`, and the generated `AGENTS.md`. The
+`package.json`, `src/app/runtime/version.ts`, `README.md`, and the generated `AGENTS.md`. The
 three beyond `package.json` are updated through `extra-files` in
 `release-please-config.json`, each marked with an `x-release-please-version` comment on the
 SAME line as the version — the updater is a per-line substring match, so the comment syntax
 does not matter but the line does.
 
-`AGENTS.md` is generated, so its annotation is emitted by `src/kernel/agents-doc.ts`. Edit
+`AGENTS.md` is generated, so its annotation is emitted by `src/app/runtime/agents-doc.ts`. Edit
 it there or `pnpm check:agents` reverts it on the next run.
 
 ## Cutting a specific version

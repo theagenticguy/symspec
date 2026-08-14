@@ -20,7 +20,7 @@ jobs:
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       # @v5, not the @v4 the action's own README still shows: v4 runs on the deprecated
-      # node20 runtime. The version lives in FOUR files (package.json, src/kernel/version.ts,
+      # node20 runtime. The version lives in FOUR files (package.json, src/app/runtime/version.ts,
       # README.md, and the generated AGENTS.md) and `extra-files` in
       # release-please-config.json keeps them in step — every one of them is asserted to
       # agree, so a partial bump reds the release PR's own CI.

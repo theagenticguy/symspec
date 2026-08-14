@@ -10,9 +10,8 @@ export default defineConfig({
     // embedder so the suite — and every SPAWNED CLI test, which inherits this env —
     // exercises the always-on tier without the model.
     //
-    // Carried over from the donor's config for the same reason, and worth restating:
-    // the stub is NOT a fallback. Without this variable a missing model still fails
-    // closed with ERR_EMBED_MODEL_MISSING, which `formal/embedder.test.ts` asserts by
+    // The stub is NOT a fallback. Without this variable a missing model still fails
+    // closed with ERR_EMBED_MODEL_MISSING, which `adapters/embedding/embedder.test.ts` asserts by
     // deleting the variable for the duration of one case. Tests that need real
     // similarity SEMANTICS inject a hand-authored vector table instead, since the
     // stub's cosines are meaningless by design.

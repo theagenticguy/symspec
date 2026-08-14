@@ -14,8 +14,8 @@
 
 import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { renderAgentsDoc } from '../src/kernel/agents-doc.ts'
-import { currentManifest } from '../src/operations/index.ts'
+import { currentManifest } from '../src/app/operations/index.ts'
+import { renderAgentsDoc } from '../src/app/runtime/agents-doc.ts'
 
 const doc = renderAgentsDoc(currentManifest())
 

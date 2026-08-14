@@ -29,13 +29,17 @@
  */
 
 import { Effect, Layer } from 'effect'
-import { emptyDocument, type Requirement, type RequirementsDocument } from '../src/core/document.ts'
-import { DocPath, DocStore, makeDocPath } from '../src/core/store.ts'
-import { embedderLayerOf, stubEmbedder } from '../src/formal/embedder.ts'
-import { solverServiceLayer } from '../src/formal/solver-service.ts'
-import { ErrDocNotFound } from '../src/kernel/errors.ts'
-import { runOperation } from '../src/kernel/operation.ts'
-import { type CheckPayload, checkOp } from '../src/operations/check.ts'
+import { embedderLayerOf, stubEmbedder } from '../src/adapters/embedding/embedder.ts'
+import { DocPath, DocStore, makeDocPath } from '../src/adapters/fs/store.ts'
+import { solverServiceLayer } from '../src/adapters/z3/solver-service.ts'
+import { type CheckPayload, checkOp } from '../src/app/operations/check.ts'
+import { ErrDocNotFound } from '../src/app/runtime/errors.ts'
+import { runOperation } from '../src/app/runtime/operation.ts'
+import {
+  emptyDocument,
+  type Requirement,
+  type RequirementsDocument,
+} from '../src/domain/requirements/document.ts'
 
 const TS = '2026-01-01T00:00:00.000Z'
 

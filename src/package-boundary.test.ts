@@ -3,7 +3,7 @@
  *
  * ## What this guards, and why a regex would not do
  *
- * `src/donor/**` is the engine tier this package's `check` runs on top of:
+ * `src/domain/engine/**` is the engine tier this package's `check` runs on top of:
  * `src/operations/check.ts` calls its `runCheck`, so what resolves from there is shipped
  * behavior.
  *
@@ -67,7 +67,7 @@ describe('no module reaches outside the package', () => {
     // Without this, deleting `src/` would make every assertion below pass.
     const files = tsFiles(join(PKG_ROOT, 'src'))
     expect(files.length).toBeGreaterThan(100)
-    expect(files.some((f) => f.includes(`${sep}donor${sep}`))).toBe(true)
+    expect(files.some((f) => f.includes(`${sep}engine${sep}`))).toBe(true)
   })
 
   it('resolves every relative import inside the package root', () => {
@@ -86,23 +86,23 @@ describe('no module reaches outside the package', () => {
   })
 
   it('keeps the engine tier self-contained — it imports no greenfield module', () => {
-    // The dependency runs ONE way. `src/formal/**` and `src/operations/**` build on
-    // `src/donor/**`; the reverse would couple the proof core to the CLI surface, so a
-    // greenfield refactor could silently change what a verdict means.
-    const donorRoot = join(PKG_ROOT, 'src', 'donor')
+    // The dependency runs ONE way. The greenfield tiers build on
+    // `src/domain/engine/**`; the reverse would couple the proof core to the CLI surface,
+    // so a greenfield refactor could silently change what a verdict means.
+    const engineRoot = join(PKG_ROOT, 'src', 'domain', 'engine')
     const leaking: string[] = []
-    for (const file of tsFiles(donorRoot)) {
+    for (const file of tsFiles(engineRoot)) {
       for (const specifier of relativeSpecifiers(readFileSync(file, 'utf8'))) {
         const target = resolve(dirname(file), specifier)
-        if (relative(donorRoot, target).startsWith('..')) {
+        if (relative(engineRoot, target).startsWith('..')) {
           leaking.push(`${relative(PKG_ROOT, file)} -> ${specifier}`)
         }
       }
     }
-    // `core/ops.ts` is the one crossing, and it is the op VOCABULARY rather than an
+    // `requirements/ops.ts` is the one crossing, and it is the op VOCABULARY rather than an
     // implementation: the tier proposes ops, so it has to name their shape. Pinned as an
     // exact list so a second crossing is a review decision and not an accident.
-    expect(leaking).toEqual(['src/donor/parse/result.ts -> ../../core/ops.ts'])
+    expect(leaking).toEqual(['src/domain/engine/parse/result.ts -> ../../requirements/ops.ts'])
   })
 
   it('ships a `dist` that the bin actually points at', () => {

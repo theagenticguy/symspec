@@ -93,10 +93,14 @@
  */
 
 import { Effect, Layer } from 'effect'
-import { DOC_VERSION, type Requirement, type RequirementsDocument } from '../src/core/document.ts'
-import { runReachability } from '../src/formal/reachability.ts'
-import { projectReachability } from '../src/formal/reachability-report.ts'
-import { solverServiceLayer } from '../src/formal/solver-service.ts'
+import { solverServiceLayer } from '../src/adapters/z3/solver-service.ts'
+import { runReachability } from '../src/domain/reachability/reachability.ts'
+import { projectReachability } from '../src/domain/reachability/reachability-report.ts'
+import {
+  DOC_VERSION,
+  type Requirement,
+  type RequirementsDocument,
+} from '../src/domain/requirements/document.ts'
 
 // ---------------------------------------------------------------------------
 // The committed budget

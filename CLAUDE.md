@@ -48,10 +48,10 @@ The test needs a NEGATIVE guard: assert the stale literal is ABSENT. Asserting t
 correct number passes just as happily for a hardcoded copy, which is how the second and
 third instances survived a fix to the first.
 
-## `src/donor/**` is the engine tier — owned code, edited under its gates
+## `src/domain/engine/**` is the engine tier — owned code, edited under its gates
 
 That subtree is the v4-derived analysis core this tool's `check` actually runs on:
-`src/operations/check.ts` calls its `runCheck`. An edit there changes a shipped
+`src/app/operations/check.ts` calls its `runCheck`. An edit there changes a shipped
 proof claim, so the bar is the sabotage rule below, applied without exception:
 break the behavior, watch a gate go red (the pinned red-team rounds, the
 generated-defect harness, or a suite assertion), and record the sabotage in the
@@ -62,9 +62,9 @@ nothing greenfield beyond the pinned `core/ops.ts` crossing, so a greenfield
 refactor never forces an engine edit.
 
 New finding codes still go in files owned by their tier, unioned by
-`kernel/catalog.ts` — see `src/formal/reachability-codes.ts`. Cross-cutting
-shaping still goes at the boundary — see `src/formal/compat.ts`. Both are
-modularity, not access control.
+`app/runtime/catalog.ts` — see `src/domain/reachability/reachability-codes.ts`.
+Cross-cutting shaping still goes at the boundary — see `src/domain/compat.ts`.
+Both are modularity, not access control.
 
 ## Releasing
 

@@ -49,12 +49,12 @@
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Effect, Layer, Logger } from 'effect'
+import { embedderServiceLayer } from './adapters/embedding/embedder.ts'
+import { modelDownloadLayer } from './adapters/embedding/model-download.ts'
+import { storeLayer } from './adapters/fs/store.ts'
+import { solverServiceLayer } from './adapters/z3/solver-service.ts'
+import { streamSourceLayer } from './app/operations/index.ts'
 import { cli } from './cli.ts'
-import { storeLayer } from './core/store.ts'
-import { embedderServiceLayer } from './formal/embedder.ts'
-import { modelDownloadLayer } from './formal/model-download.ts'
-import { solverServiceLayer } from './formal/solver-service.ts'
-import { streamSourceLayer } from './operations/index.ts'
 
 /** Everything the operations require, over the platform services. */
 const appLayer = Layer.provideMerge(

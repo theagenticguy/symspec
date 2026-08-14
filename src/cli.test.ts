@@ -50,7 +50,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { Manifest } from './kernel/operation.ts'
+import type { Manifest } from './app/runtime/operation.ts'
 
 const BUNDLE = fileURLToPath(new URL('../dist/cli.mjs', import.meta.url))
 
@@ -590,7 +590,7 @@ describe('the document lifecycle end to end', () => {
     await Promise.all(workDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
   })
 
-  const FIXTURES = fileURLToPath(new URL('./operations/__fixtures__', import.meta.url))
+  const FIXTURES = fileURLToPath(new URL('./app/operations/__fixtures__', import.meta.url))
 
   it('init creates a real file that list then reads', () => {
     const dir = work()
