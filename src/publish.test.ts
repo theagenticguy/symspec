@@ -408,10 +408,35 @@ describe('the README is a PACKAGE readme, greenfield-first and honest', () => {
     // convenience and skip the reason to trust it: the refusal happens ABOVE the similarity
     // threshold, which is the one fact that shows cosine is not deciding.
     expect(section).toContain('opposition-candidate')
-    expect(section).toContain('0.809')
+    expect(section).toContain('0.811')
     expect(section).toContain('above the 0.72')
     // And the non-vacuity signal, so "nothing to merge" is distinguishable from "did not look".
     expect(section).toContain('pairsCompared')
+    // NEGATIVE GUARD on the re-measurement. The section claims every number is measured on
+    // this build; the previous fixture's cosine must be GONE, not merely joined by the new
+    // one. A positive-only check passes on prose carrying both.
+    expect(section).not.toContain('0.809')
+  })
+
+  it('shows the GUARD half, and that it is never applyable', () => {
+    const section = readme.slice(
+      readme.indexOf('## Designing the vocabulary in one pass'),
+      readme.indexOf('## Honest scope'),
+    )
+    // The slot that decides whether anything is compared at all.
+    expect(section).toContain('guardClasses')
+    expect(section).toContain('unlocks')
+    // The reason to trust reading it: the biggest suggestions are NOT in the pipeable ops.
+    expect(section).toContain('never appear in `opsJsonl`')
+    // And the hazard direction, stated rather than implied. Matched against whitespace-
+    // collapsed prose, because a reflow that only moved a line break must not fail a claim
+    // about CONTENT.
+    const flowed = section.replace(/\s+/g, ' ')
+    expect(flowed).toContain('prove a conflict your document does not contain')
+    // NEGATIVE GUARD: the pre-change claim that the pass partitions only responses must be
+    // gone. Asserting the new sentence alone would pass on a section carrying both.
+    expect(section).not.toContain('a partition of the\nresponse phrasings')
+    expect(section).not.toContain('partition of the response phrasings')
   })
 
   it('names the gates that make the no-drift claim checkable', () => {

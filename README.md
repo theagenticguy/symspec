@@ -487,17 +487,21 @@ reading the source.
 ## Designing the vocabulary in one pass
 
 Aligning vocabulary is the highest-leverage habit here, and doing it one pair at a time is
-tedious. `symspec propose-glossary` reads the whole document and proposes a partition of the
-response phrasings, meaning which phrasings name one thing. It returns a plan and writes nothing.
+tedious. `symspec propose-glossary` reads the whole document and proposes a partition of its
+phrasings, meaning which phrasings name one thing. It covers both slot families: the responses,
+and the triggers and preconditions that decide which requirements get compared at all. It
+returns a plan and writes nothing.
 
-Every number below is measured on this build, over five requirements across two systems.
+Every number below is measured on this build, over five requirements across two systems, each
+with its own trigger.
 
 ```console
-$ symspec propose-glossary --field data.summary,data.corpus
-{"data":{"summary":"1 class(es) proposing 1 alias(es), and 1 class(es) withheld for review.
- Compared 4 same-system pair(s) across 5 distinct response phrasing(s) at threshold 0.72.",
- "corpus":{"requirements":5,"systems":2,"responseNodes":5,"embedded":5,
-           "pairsCompared":4,"alreadyUnified":0}}}                              # exit 0
+$ symspec propose-glossary --field data.corpus
+{"data":{"corpus":{"requirements":5,"systems":2,
+                   "responseNodes":5,"guardNodes":5,"embedded":10,
+                   "pairsCompared":8,"responsePairsCompared":4,"guardPairsCompared":4,
+                   "alreadyUnified":0,"guardPhrasesFolded":0,
+                   "crossSlotPhrases":0,"oppositionSignals":1}}}                # exit 0
 ```
 
 `pairsCompared` shows that it looked. An empty plan with a positive `pairsCompared` means your
@@ -508,7 +512,7 @@ Here is what it proposes, as ops that `apply` consumes directly.
 ```console
 $ symspec propose-glossary --field data.classes.0
 {"canonical":"issue a login credential","aliases":["issue a session token"],
- "minCosine":0.749,"transitive":false}
+ "minCosine":0.75,"transitive":false}
 ```
 
 Here is what it declines to propose.
@@ -516,10 +520,10 @@ Here is what it declines to propose.
 ```console
 $ symspec propose-glossary --field data.unresolved.0
 {"reason":"opposition-candidate","pairs":[{"signal":"same-object-different-verb",
- "verbs":["close","seal"],"cosine":0.809}]}
+ "verbs":["close","seal"],"cosine":0.811}]}
 ```
 
-`close the vault` and `seal the vault` sit at cosine 0.809, which is above the 0.72 threshold, so
+`close the vault` and `seal the vault` sit at cosine 0.811, which is above the 0.72 threshold, so
 similarity alone would have merged them. The class is withheld anyway, because similarity cannot
 distinguish a paraphrase from an opposite. Antonyms embed close together. Merging these two would
 convert a provable contradiction into a claim of consistency, which is worse than missing the
@@ -534,18 +538,58 @@ paraphrases `b` and `b` opposes `c`, then merging `a` with `c` is the same mista
 removed. The unresolved entry returns both readings along with the consequence of each, and does
 not choose between them.
 
-Apply the confident half and the gradient moves.
+### The guards matter more, and are never applied for you
+
+A response merge makes two phrasings comparable. A guard merge decides whether the two
+requirements are ever compared at all, because a context group is keyed on trigger and
+precondition atoms and the solver asserts one group at a time. Two requirements whose triggers
+are paraphrases are never live together, so their responses are never checked against each other.
+
+```console
+$ symspec propose-glossary --field data.guardClasses.0
+{"canonical":"the user authenticates","aliases":["the user signs in"],
+ "minCosine":0.873,"unlocks":["22222222-...-0001","22222222-...-0002"],"withheldBy":[]}
+```
+
+`unlocks` is the payoff stated outright: committing this makes those two requirements comparable
+for the first time. It is also exactly the set a wrong merge would compare wrongly, which is why
+guard classes carry no `ops` and never appear in `opsJsonl`. A wrong response merge only hides a
+conflict; a wrong guard merge asserts two different conditions are one and can prove a conflict
+your document does not contain. No antonym op undoes that, because antonyms apply to responses
+only. So the plan hands you a runnable `symspec glossary` command and the consequence of running
+it, and stops there.
+
+When the two guards look like different conditions, the plan says so and puts doing nothing
+first:
+
+```console
+$ symspec propose-glossary --field data.guardClasses
+{"withheldBy":[{"signal":"single-token-difference",
+                "phrases":["the shift begins","the shift ends"]}],
+ "remedies":[{"kind":"leave-distinct"},{"kind":"realign-guards"},{"kind":"as-synonyms"}]}
+```
+
+`the shift ends` and `the shift begins` differ by one token, and one token is usually the point.
+Neither verb is in the antonym table, so nothing but that shape catches it.
+
+### The gradient
+
+Apply the confident half and the gradient moves. Align a guard and it moves again, by as much.
 
 ```console
 $ symspec check --field data.progress.atomsUncompared
-{"data":{"progress":{"atomsUncompared":7}}}
+{"data":{"progress":{"atomsUncompared":10}}}
 
 $ symspec propose-glossary --field data.opsJsonl > plan.jsonl   # then edit the JSON out
 $ symspec apply --ops plan.jsonl --field data.summary
 {"data":{"summary":{"total":1,"ok":1,"failed":0,"noop":0}}}                      # exit 0
 
 $ symspec check --field data.progress.atomsUncompared
-{"data":{"progress":{"atomsUncompared":5}}}
+{"data":{"progress":{"atomsUncompared":8}}}
+
+$ symspec glossary "the user authenticates" "the user signs in"  # the guard, by hand
+$ symspec check --field data.progress.atomsUncompared
+{"data":{"progress":{"atomsUncompared":6}}}
 ```
 
 Running it again proposes nothing further, because the committed table folds those phrasings onto

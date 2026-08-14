@@ -158,7 +158,17 @@ when NOTHING was cross-compared at all.
    `systemName` string. The candidate-pair filter skips pairs that span different
    systems outright, so "scheduler" vs "job scheduler" halves your coverage for free.
 2. **Name each trigger once.** Copy the trigger string verbatim between requirements
-   that react to the same event. Context groups are keyed on it.
+   that react to the same event. Context groups are keyed on it, and the solver asserts
+   one group at a time — so two requirements whose triggers are paraphrases are never
+   live together and their responses are never compared at all. If you inherited a spec
+   that already paraphrases its triggers, `symspec propose-glossary` reports the guard
+   alignments under `data.guardClasses`, each naming in `unlocks` which requirements the
+   alignment would make comparable. Those are SUGGESTIONS ONLY and never appear in
+   `data.ops`: a wrong response merge merely hides a conflict, while a wrong guard merge
+   asserts two different conditions are one and can prove a conflict the document does
+   not contain. Read the pair; when the two guards are mutually exclusive, leaving them
+   distinct is the correct answer, and no antonym op can help because antonyms apply to
+   responses only.
 3. **Fix one verb per action, and one noun per object.** Write a short list before you
    write requirements: start/stop, enqueue/dequeue, grant/revoke, open/close. Then use
    only those. Paraphrase is the enemy here, not repetition — a spec that reads
