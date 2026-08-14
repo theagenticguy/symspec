@@ -48,21 +48,23 @@ The test needs a NEGATIVE guard: assert the stale literal is ABSENT. Asserting t
 correct number passes just as happily for a hardcoded copy, which is how the second and
 third instances survived a fix to the first.
 
-## `src/donor/**` is FROZEN — never edit it
+## `src/donor/**` is the engine tier — owned code, edited under its gates
 
-That subtree is the vendored tier this tool's `check` actually runs on:
-`src/operations/check.ts` calls its `runCheck`. Editing it changes a shipped proof
-claim in code that gets none of the review a change to `src/formal/**` attracts.
+That subtree is the v4-derived analysis core this tool's `check` actually runs on:
+`src/operations/check.ts` calls its `runCheck`. An edit there changes a shipped
+proof claim, so the bar is the sabotage rule below, applied without exception:
+break the behavior, watch a gate go red (the pinned red-team rounds, the
+generated-defect harness, or a suite assertion), and record the sabotage in the
+commit message. If no gate fails, the edit is uncovered — write the test first.
 
-There is no external copy left to diff against, so the freeze is enforced rather
-than assumed: `src/package-boundary.test.ts` resolves every import specifier and
-fails if one escapes the package, pins the single legitimate crossing as an exact
-list, and `knip.jsonc` ignores the subtree because frozen code has unused exports
-by design.
+`src/package-boundary.test.ts` keeps the dependency one-way: the engine imports
+nothing greenfield beyond the pinned `core/ops.ts` crossing, so a greenfield
+refactor never forces an engine edit.
 
-Adding to it is never the answer. New finding codes go in a greenfield file that
-`kernel/catalog.ts` unions in — see `src/formal/reachability-codes.ts`. New
-behavior goes at the boundary — see `src/formal/compat.ts`.
+New finding codes still go in files owned by their tier, unioned by
+`kernel/catalog.ts` — see `src/formal/reachability-codes.ts`. Cross-cutting
+shaping still goes at the boundary — see `src/formal/compat.ts`. Both are
+modularity, not access control.
 
 ## Releasing
 

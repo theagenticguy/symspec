@@ -442,11 +442,11 @@ describe('the plan discloses what it did and did not do', () => {
 /**
  * `oppositionShape` and `isNegatingPrefixPair` re-derive `fuseNegatingPrefix` and
  * `isNegatingPrefixPair` from `donor/formal/semantic.ts`, which are plain `function`s and
- * therefore unreachable. A copy of frozen logic drifts unless something compares them, and
+ * therefore unreachable. A copy drifts unless something compares them, and
  * the only comparable surface is the original's OBSERVABLE behavior — whether
  * `findOppositionCandidates` fires on a pair.
  */
-describe('the re-derived shape check agrees with the frozen original', () => {
+describe('the re-derived shape check agrees with the engine original', () => {
   /**
    * Pairs the donor's OTHER gates do not short-circuit.
    *
@@ -480,7 +480,7 @@ describe('the re-derived shape check agrees with the frozen original', () => {
 
     expect(oursFired, `expected ${expected} for ${a} vs ${b}`).toBe(expected)
     // The differential itself: the two implementations must not disagree.
-    expect(oursFired, 'the re-derived shape check DRIFTED from the frozen original').toBe(
+    expect(oursFired, 'the re-derived shape check DRIFTED from the engine original').toBe(
       donorFired,
     )
   })
@@ -513,18 +513,18 @@ describe('the re-derived shape check agrees with the frozen original', () => {
   })
 
   /**
-   * A RECALL GAP in the frozen lemmatizer, pinned so it is a known quantity.
+   * A RECALL GAP in the engine lemmatizer, pinned so it is a known quantity.
    *
    * `deInflectHead` strips two characters from a `-zes` ending, so "energizes" lemmatizes to
    * `energiz` rather than `energize` — and `de_energize` vs `energiz` is not a prefix pair.
    * The 3sg form of a `-ze` verb therefore does NOT pair with its `de-` opposite, while the
    * base form does. `donor/formal/semantic.ts` names this exact case as one that works.
    *
-   * Left as-is: the lemmatizer is frozen, and the failure direction is a MISSED suggestion
-   * in a propose-only tier, which is the honest direction. Asserted rather than silently
-   * inherited, so a future lemmatizer change shows up here as an improvement.
+   * The failure direction is a MISSED suggestion in a propose-only tier, which is the
+   * honest direction. Asserted rather than silently inherited, so a lemmatizer fix
+   * shows up here as an improvement.
    */
-  it('MISSES a 3sg `-zes` verb against its de- opposite (frozen lemmatizer)', () => {
+  it('MISSES a 3sg `-zes` verb against its de- opposite (engine lemmatizer)', () => {
     expect(oppositionShape(normalize('energizes the coil'))).toEqual(['energiz', 'the_coil'])
     expect(isNegatingPrefixPair('de_energize', 'energiz')).toBe(false)
   })

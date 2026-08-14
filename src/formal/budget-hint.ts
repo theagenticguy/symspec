@@ -218,7 +218,7 @@ const atomsOf = (report: CheckReport): number =>
  * Read off the DEMOTIONS rather than the budget object, because the budget lives
  * inside `runCheck` and never escapes it — the demotion's `action` prose is the only
  * surface that carries the count, and re-deriving it would mean threading the ledger
- * through the FROZEN tier. The count is parsed
+ * through the engine tier's whole call chain. The count is parsed
  * from the exact sentence the pipeline builds (`leaving N unit(s) of work unrun`), and
  * a parse miss yields `0`, which is honest: the hint then scales on the completed
  * fraction alone.

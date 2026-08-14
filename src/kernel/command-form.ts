@@ -5,7 +5,7 @@
  * verb, so `glossary`, `antonym` and `waive` take their arguments POSITIONALLY:
  * `symspec glossary <canonical> <alias>`.
  *
- * The frozen vendored tier spells those three with an `add` — `symspec glossary add
+ * The engine tier spells those three with an `add` — `symspec glossary add
  * "a" "b"` — because that is `import`'s v2 op-stream side-table grammar
  * (`operations/import.ts` parses exactly that form off a stream). Two grammars share a
  * spelling and only one of them is a shell command: run the `add` form and `add` binds

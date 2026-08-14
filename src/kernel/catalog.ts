@@ -293,7 +293,7 @@ const FND_TIER = {
  * formal tier's unbounded half: it runs Z3 over the document's declared semantics.
  *
  * A separate table from {@link FND_TIER} rather than an extension of it, because the two
- * families have different PROVENANCE: `FND_TIER` is keyed on the donor's frozen
+ * families have different PROVENANCE: `FND_TIER` is keyed on the engine's
  * `FND_CODES` (whose `satisfies` bound makes it exhaustive over a transplanted list), and
  * widening that key would break the exhaustiveness guarantee that makes it useful.
  */
@@ -412,7 +412,7 @@ const reachabilityRows = (): readonly CodeEntry[] =>
  */
 export const allCodes = (): readonly CodeEntry[] => [
   ...errRows(),
-  // The two FND sources in provenance order: the donor's frozen 30, then v5's own 5.
+  // The two FND sources in provenance order: the engine's transplanted 30, then v5's own 5.
   // Both report `family: 'FND'`, so an agent sees ONE finding-code vocabulary and cannot
   // tell (or need to tell) which file the bytes live in.
   ...fndRows(),

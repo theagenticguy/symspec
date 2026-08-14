@@ -9,11 +9,11 @@
  * whole loop branches on — reads as "your approach is wrong" when the truth is "the
  * command you were handed does not exist".
  *
- * Three of the discharges reach an agent through the FROZEN vendored tier's finding
+ * Three of the discharges reach an agent through the engine tier's finding
  * messages, which spell them `glossary add` / `antonym add` / `waive add`. That is
  * `import`'s v2 op-stream side-table grammar, not a CLI invocation: every one of those
  * operations takes its arguments as positionals, so `add` binds to the first positional
- * and the command fails. The messages cannot be edited, so `repair.ts` normalizes on
+ * and the command fails. The spellings live at eight build sites, so `repair.ts` normalizes on
  * read, and this file is what keeps that true as messages are added.
  *
  * The sweep is deliberately STATIC and whole-tree rather than driven off a live `check`.
@@ -105,7 +105,7 @@ const invalidReason = (command: string): string | undefined => {
 }
 
 // ---------------------------------------------------------------------------
-// The normalizer, on the exact strings the frozen tier emits
+// The normalizer, on the exact strings the engine tier emits
 // ---------------------------------------------------------------------------
 
 describe('the nested-verb spelling is rewritten to the positional form', () => {
@@ -155,7 +155,7 @@ describe('the nested-verb spelling is rewritten to the positional form', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * A finding whose message carries the frozen tier's own spelling, verbatim.
+ * A finding whose message carries the engine tier's own spelling, verbatim.
  *
  * Copied from `donor/formal/quantity-alias.ts` and `donor/formal/semantic.ts` rather
  * than paraphrased: the point is to prove the boundary handles what those files really

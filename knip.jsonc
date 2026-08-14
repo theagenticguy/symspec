@@ -5,14 +5,7 @@
   // reports the duplicate as a configuration hint.
   "entry": ["scripts/*.ts"],
 
-  // MANDATORY, not convenience. `src/donor/**` is the vendored tier `check` runs on,
-  // and frozen code has unused exports BY DESIGN — `toEncodable`, `encodeIncluded`,
-  // `certifiedToFndCode` and friends exist because the tier they came from used them.
-  // Letting knip prune them is exactly the drift the freeze exists to prevent, and the
-  // prune would look like a tidy-up in review.
-  "ignore": ["src/donor/**"],
-
-  // Loaded through a variable dynamic import inside the tier, which no static analysis
+  // Loaded through a variable dynamic import inside the engine tier, which no static analysis
   // resolves. Declared because the tier needs them at runtime.
   "ignoreDependencies": ["wink-nlp", "wink-eng-lite-web-model"],
 

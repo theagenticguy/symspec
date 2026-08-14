@@ -364,8 +364,8 @@ const fromFindingMessage = (
  * a legitimate no-op. So validity is enforced at the one seam every extracted command
  * passes through, rather than trusted at each of the eight messages that build one.
  *
- * The messages themselves are the frozen vendored tier and cannot be edited, so
- * normalizing on read is also the only place the fix can go. Deduplication happens
+ * The messages are the engine tier's shipped wording, spread across eight build
+ * sites, so normalizing on read keeps the flat-surface fact in one place. Deduplication happens
  * AFTER the rewrite, so two spellings of one command collapse to one entry.
  */
 const extractSymspecCommands = (message: string): readonly string[] => {

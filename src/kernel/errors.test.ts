@@ -31,9 +31,9 @@ import {
 import { EXIT_OPERATIONAL_ERROR, exitCodeForEnvelope } from './exit.ts'
 
 /**
- * The frozen, shipped ERR_* order — transplanted from the donor's
+ * The shipped, append-only ERR_* order — transplanted from v4's
  * `src/core/__tests__/codes.test.ts` snapshot and extended with the two codes
- * the donor appended after that test was written (`ERR_EMBED_MODEL_MISSING`,
+ * v4 appended after that test was written (`ERR_EMBED_MODEL_MISSING`,
  * `ERR_DUPLICATE_KEY`), which is exactly the append the guard is designed to
  * permit.
  *

@@ -11,10 +11,9 @@
  *
  * Two places the conversion could go, and only one is defensible:
  *
- * - INSIDE the tier — translate at each of the ~40 files' call sites. That edits 40
- *   files of FROZEN vendored code, turning a tree nobody touches into a tree with 40
- *   hand-made exceptions. Every future question about the tier then starts with "is
- *   this the tier's behavior or ours?".
+ * - INSIDE the tier — translate at each of the ~40 files' call sites. That scatters
+ *   the format bridge across 40 engine files, and every future question about the
+ *   tier then starts with "is this the tier's behavior or the bridge's?".
  * - AT THE BOUNDARY — one function, here. The tier stays untouched, and there is
  *   exactly one place where a v3 document becomes the v2 view it reads.
  *
@@ -86,7 +85,7 @@ export const toDonorRequirement = (r: DocumentRequirement): DonorRequirement => 
   status: r.status,
   // Edge arrays are `readonly` in v3 and mutable in the tier's type. Copied rather than
   // cast: the tier does not mutate them today, but sharing the array would make a future
-  // mutation inside frozen code reach back into the caller's document — an aliasing bug
+  // mutation inside the engine reach back into the caller's document — an aliasing bug
   // in the most confusing possible place.
   derives: [...r.derives],
   satisfies: [...r.satisfies],

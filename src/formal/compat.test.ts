@@ -241,7 +241,7 @@ describe('compat — every projected field the tier reads', () => {
     const document = docOf(req({ id: A, derives: [B] }), req({ id: B }))
     const projected = toDonorDoc(document)
     expect(projected.requirements[A]?.derives).toEqual([B])
-    // A SHARED array would let a future mutation inside the frozen tier reach back into
+    // A SHARED array would let a future mutation inside the engine tier reach back into
     // the caller's v3 document — an aliasing bug in the most confusing possible place.
     expect(projected.requirements[A]?.derives).not.toBe(document.requirements[A]?.derives)
   })

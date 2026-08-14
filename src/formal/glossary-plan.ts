@@ -61,7 +61,7 @@ import { DEFAULT_SEMANTIC_THRESHOLD } from '../donor/formal/semantic.ts'
 import { encodeIncluded } from '../donor/pipeline/check.ts'
 
 // ---------------------------------------------------------------------------
-// The opposition shape — a NECESSARY duplicate of frozen privates
+// The opposition shape — a duplicate of engine privates, differential-guarded
 // ---------------------------------------------------------------------------
 
 /**
@@ -69,10 +69,10 @@ import { encodeIncluded } from '../donor/pipeline/check.ts'
  * negating-prefix token back onto the verb it modifies.
  *
  * A re-derivation of `fuseNegatingPrefix` in `donor/formal/semantic.ts`, which is a plain
- * `function` and therefore unreachable from outside that module. Duplicating frozen logic
- * is a drift risk, so `glossary-plan.test.ts` pins this against the ORIGINAL'S OBSERVABLE
- * BEHAVIOR — whether `findOppositionCandidates` fires — rather than against a comment
- * claiming the two agree.
+ * `function` and therefore unreachable from outside that module. A duplicate drifts
+ * unless something compares them, so `glossary-plan.test.ts` pins this against the
+ * ORIGINAL'S OBSERVABLE BEHAVIOR — whether `findOppositionCandidates` fires — rather
+ * than against a comment claiming the two agree.
  *
  * `normalize` turns "de-energize the coil" into `de_energize_the_coil`, whose first token
  * is just `de`; reassembling the head as `de_energize` is what lets it compare against
@@ -240,7 +240,7 @@ export interface BuildGlossaryPlanOptions {
 /**
  * Disjoint-set over sorted string keys.
  *
- * `donor/formal/graph.ts` has one, module-private inside frozen code, so it cannot be
+ * `donor/formal/graph.ts` has one, module-private, so it cannot be
  * imported. Fifteen lines is cheaper than any alternative.
  *
  * The root is always the smaller index, so the PARTITION does not depend on the order edges

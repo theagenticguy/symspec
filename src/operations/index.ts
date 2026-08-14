@@ -164,7 +164,7 @@ const manifestEnvelope = () =>
       // description corpus. See `Manifest` for why publishing only ERR_* was a gap
       // rather than a scope choice.
       errorCodes: errCodeCatalog(),
-      // BOTH FND sources, in provenance order — the donor's frozen 30 then v5's own 5.
+      // BOTH FND sources, in provenance order — the engine's transplanted 30 then v5's own 5.
       // Published as ONE `findingCodes` array because an agent switches on a code, not on
       // which file it came from.
       findingCodes: [

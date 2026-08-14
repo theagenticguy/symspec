@@ -3,10 +3,9 @@
  *
  * ## Why these are not in `donor/formal/codes.ts`
  *
- * Because `src/donor/**` is FROZEN. It is the vendored tier `operations/check.ts` runs on
- * top of, so an edit there changes shipped behavior in code this package does not own and
- * does not review as its own. Owning a new family here costs one union in
- * `kernel/catalog.ts`; appending to the frozen tree costs the freeze.
+ * Codes live with the tier that emits them. That file is the engine's catalog — the
+ * transplanted 30, closed over what the engine's pipeline fires — and this tier is
+ * greenfield, so its codes are owned here and unioned in `kernel/catalog.ts`.
  *
  * So the split is by PROVENANCE rather than by kind. The transplanted 30 `FND_*` codes
  * stay where they are; these are v5's own, and `kernel/catalog.ts` unions them so

@@ -12,7 +12,7 @@
  *    `totalBytes` and the pinned identity intact;
  * 2. the FAILURE MAPPING — a failed fetch becomes `ERR_EMBED_MODEL_MISSING` at exit 2,
  *    carrying remedies that name a switch which is not already on;
- * 3. `modelCacheDir()`'s PRECEDENCE, which is the one part of the frozen module that is a
+ * 3. `modelCacheDir()`'s PRECEDENCE, which is the one part of the cache module that is a
  *    pure function of the environment and the one thing a user has to be able to predict;
  * 4. the command's PRESENCE in the manifest, which is what makes it discoverable — the
  *    bidirectional CLI-vs-manifest drift tests in `cli.test.ts` then cover `--help` for

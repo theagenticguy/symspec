@@ -5,7 +5,8 @@
  *
  * `donor/formal/model-cache.ts` already implements the fetch: `downloadModelAssets()`
  * force-fetches all three pinned assets, sha256-verifies each, and reports which were
- * already cached. That function is FROZEN vendored code, so the seam cannot go inside it.
+ * already cached. The seam goes above that call, not inside it — the project rule for
+ * anything with a network cost, so a test never depends on the fetch's interior.
  *
  * It also cannot be tested by pre-seeding a cache directory. `readIfValid` verifies the
  * pinned digest, and a sha256 preimage cannot be fabricated — so stub bytes in a temp
@@ -13,7 +14,7 @@
  * Any test that tried it would either download the model in CI or fail with a network
  * error, and neither is a test of this operation.
  *
- * So the seam goes ABOVE the frozen call: one service with one effect, the real Layer
+ * So the seam goes ABOVE the expensive call: one service with one effect, the real Layer
  * wrapping `downloadModelAssets()`, and {@link modelDownloadOf} supplying a hand-authored
  * report. Same three-part shape as `EmbedderService` and `SolverService`, for the same
  * reason — the expensive thing is reached only by the operation that needs it.

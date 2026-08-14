@@ -271,7 +271,7 @@ describe('explain — AC-A-3: every code through the operation', () => {
       expect(env.suggestions.join(' ')).toContain('GTWR_R7_VAGUE')
       expect(env.repair?.commands).toEqual(['symspec explain --code GTWR_R7_VAGUE'])
       // And it says how many codes exist, so an agent knows the corpus size. 36 FND_*:
-      // the donor's frozen 30 plus the 6 `FND_REACHABILITY_*`. Read from
+      // the engine's transplanted 30 plus the 6 `FND_REACHABILITY_*`. Read from
       // `catalogCounts()` at runtime rather than hardcoded in the message, which is why
       // this number moves on its own when the vocabulary grows.
       expect(env.suggestions.join(' ')).toContain('36 FND_*')

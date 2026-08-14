@@ -38,9 +38,8 @@ import { descriptionOf, ERR_CLASSES, tagOf } from './errors.ts'
 describe('the unified catalog spans all three code families', () => {
   it('holds exactly 21 ERR_* / 36 FND_* / 24 GTWR_* = 81', () => {
     // 36 FND_*: the transplanted 30, plus 6 `FND_REACHABILITY_*`. The two live in
-    // different files because `src/donor/**` is FROZEN — appending a code there would edit
-    // vendored code this package does not own. They report the same `family`, because an
-    // agent switches on a code and not on provenance.
+    // different files because codes live with the tier that emits them. They report the
+    // same `family`, because an agent switches on a code and not on provenance.
     expect(catalogCounts()).toEqual({ ERR: 21, FND: 36, GTWR: 24, total: 81 })
   })
 
@@ -68,7 +67,7 @@ describe('the unified catalog spans all three code families', () => {
     expect(rows.slice(21, 57).map((r) => r.family)).toEqual(Array(36).fill('FND'))
     expect(rows.slice(57).map((r) => r.family)).toEqual(Array(24).fill('GTWR'))
     // The per-family order is the shipped append-only order, unreordered — and WITHIN the
-    // FND family, provenance order: the frozen transplanted list, then the greenfield's.
+    // FND family, provenance order: the transplanted list, then the greenfield's.
     expect(rows.slice(21, 51).map((r) => r.code)).toEqual([...FND_CODES])
     expect(rows.slice(51, 57).map((r) => r.code)).toEqual([...REACHABILITY_FND_CODES])
     expect(rows.slice(57).map((r) => r.code)).toEqual([...GTWR_CODES])

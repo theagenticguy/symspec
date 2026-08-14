@@ -3,11 +3,11 @@
  *
  * ## What this guards, and why a regex would not do
  *
- * `src/donor/**` is a vendored copy of the tier this package's `check` runs on top of. It
- * is FROZEN: `src/operations/check.ts` calls its `runCheck`, so an edit there changes
- * shipped behavior with none of the review a change to `src/formal/**` would attract.
+ * `src/donor/**` is the engine tier this package's `check` runs on top of:
+ * `src/operations/check.ts` calls its `runCheck`, so what resolves from there is shipped
+ * behavior.
  *
- * The failure mode this file exists to catch is quieter than an edit, though. A test or a
+ * The failure mode this file exists to catch is quiet. A test or a
  * script that reaches OUTSIDE the package — `../../../somewhere` — compiles, passes, and
  * then breaks the moment the package is consumed on its own, because the thing it reached
  * for was never in the tarball. That is a whole class of green-locally / broken-published,
@@ -19,8 +19,8 @@
  * fine from `src/a/b/c.ts` and escapes from `src/a.ts`, and the same literal means
  * different things in different files.
  *
- * Doc comments are deliberately NOT scanned. Several frozen files reference donor paths in
- * prose, and those files must not be edited to satisfy a test.
+ * Doc comments are deliberately NOT scanned. Prose references a path to talk about it,
+ * not to load it, so a comment can never break an install.
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
@@ -49,7 +49,7 @@ const tsFiles = (dir: string): readonly string[] => {
  * The relative specifiers a module imports — static and dynamic, type-only included.
  *
  * Matches at statement position (`from '…'` / `import('…')`), which is what keeps the
- * prose mentions of `../../../core/store.ts` inside the frozen files from registering.
+ * prose mentions of `../../../core/store.ts` inside engine doc comments from registering.
  */
 const relativeSpecifiers = (source: string): readonly string[] => {
   const found: string[] = []
@@ -85,10 +85,10 @@ describe('no module reaches outside the package', () => {
     expect(escaping).toEqual([])
   })
 
-  it('keeps the vendored tier self-contained — it imports no greenfield module', () => {
+  it('keeps the engine tier self-contained — it imports no greenfield module', () => {
     // The dependency runs ONE way. `src/formal/**` and `src/operations/**` build on
-    // `src/donor/**`; the reverse would make the frozen tree un-freezable, because a
-    // greenfield refactor would force an edit inside it.
+    // `src/donor/**`; the reverse would couple the proof core to the CLI surface, so a
+    // greenfield refactor could silently change what a verdict means.
     const donorRoot = join(PKG_ROOT, 'src', 'donor')
     const leaking: string[] = []
     for (const file of tsFiles(donorRoot)) {

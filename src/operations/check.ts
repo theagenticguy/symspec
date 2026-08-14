@@ -3,11 +3,10 @@
  *
  * ## What this operation is, structurally
  *
- * A thin Effect shell over the vendored pipeline (`../donor/pipeline/check.ts`), plus two
- * v5 additions its report shape does not carry. The pipeline itself is untouched on
- * purpose: `src/donor/**` is FROZEN, so every behavioral claim this tool makes about a
- * proof comes from code no one here has edited. That is the whole reason the boundary
- * exists — this file adds only at the seam, and never inside.
+ * A thin Effect shell over the engine pipeline (`../donor/pipeline/check.ts`), plus two
+ * v5 additions its report shape does not carry. The boundary keeps one property: every
+ * behavioral claim this tool makes about a proof comes from the engine's own verdict —
+ * this file adds only at the seam, and never rewrites a verdict inside it.
  *
  * The shell's four jobs:
  *
@@ -24,8 +23,8 @@
  * ## Why the whole run is ONE Effect.promise and not per-tier Effects
  *
  * `runCheck` is a plain `async` function that internally calls seven solver tiers.
- * Effect-izing its interior would mean editing the frozen tier — the one thing this
- * boundary exists to avoid. So the whole run is wrapped once, and the interruption
+ * Effect-izing its interior would thread a framework through the whole proof core for
+ * no behavioral gain. So the whole run is wrapped once, and the interruption
  * discipline is satisfied differently but soundly:
  *
  * - the Layer OWNS the module, so the process can always be brought to a clean
@@ -105,8 +104,8 @@ export const MAX_TEMPORAL_BOUND = 200
  * A `false` here would mean the process outlives the check — a server, a watch
  * mode, a batch runner — and then an interrupted `runCheck` would leave the WASM
  * module wedged for every subsequent request. The fix at that point is to route
- * each tier through `SolverService.solve`, which requires Effect-izing the FROZEN tier
- * and therefore giving up the freeze. Recorded as a value so that trade is a deliberate
+ * each tier through `SolverService.solve`, which means Effect-izing the engine's
+ * interior. Recorded as a value so that trade is a deliberate
  * decision rather than a surprise.
  */
 export const CHECK_IS_TERMINAL = true
@@ -860,7 +859,7 @@ export const checkOp = defineOperation({
             ...(f.evidence !== undefined
               ? // The tier's `Evidence` shape is an atom table plus an unsat core, which a
                 // reachability invariant is not. Cast at this ONE boundary rather than
-                // widening a type inside the frozen tree.
+                // widening a type every engine solver then has to satisfy.
                 { evidence: f.evidence as unknown as NonNullable<CheckFinding['evidence']> }
               : {}),
           }),
