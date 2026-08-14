@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.1.0](https://github.com/theagenticguy/symspec/compare/v1.0.1...v1.1.0) (2026-08-14)
+
+
+### Features
+
+* **adversarial:** restore the searcher, and close two bug classes with swept gates ([0f446e0](https://github.com/theagenticguy/symspec/commit/0f446e03db584734b93a71781914b4a8007fa1b0))
+* **propose-glossary:** design the vocabulary across the whole document, not pair by pair ([a0b910e](https://github.com/theagenticguy/symspec/commit/a0b910e722f64d4f9ab45dba745e875376f3845b))
+
+
+### Bug Fixes
+
+* **engine:** the two defects the freeze kept as footnotes, red-first ([ed16eb9](https://github.com/theagenticguy/symspec/commit/ed16eb93695d660cb190f2c956a31be108d1034c))
+* **repair:** every command the tool tells you to run, runs — and the README says why ([90b8c10](https://github.com/theagenticguy/symspec/commit/90b8c10f769bef1dbcbd4ee52c638ed4a46b4b57))
+
+
+### Performance Improvements
+
+* **repair-test:** read each source file once, not once per assertion ([428d155](https://github.com/theagenticguy/symspec/commit/428d15592e71527fcf01f6888861bc87faabff1a))
+
 ## [1.0.1](https://github.com/theagenticguy/symspec/compare/v1.0.0...v1.0.1) (2026-08-12)
 
 
