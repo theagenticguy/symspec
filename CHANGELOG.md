@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/theagenticguy/symspec/compare/v1.0.0...v1.0.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **scope:** the honest-scope corpus now covers reachability, and reaches the manifest ([#8](https://github.com/theagenticguy/symspec/issues/8)) ([180ef60](https://github.com/theagenticguy/symspec/commit/180ef609146f3d8c5446bd6c0a414c655976c591))
+
 ## [1.0.0](https://github.com/theagenticguy/symspec/compare/v1.0.0-alpha.0...v1.0.0) (2026-08-12)
 
 
