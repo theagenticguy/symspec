@@ -674,6 +674,219 @@ describe('every structurally-opposed pair is reported, not only the ones a class
 })
 
 // ---------------------------------------------------------------------------
+// GUARD-slot vocabulary — suggested, never applied
+// ---------------------------------------------------------------------------
+
+describe('guard vocabulary is proposed and NEVER applyable', () => {
+  /** Two trigger phrasings for one condition, differing in more than one token. */
+  const alignableDoc = () =>
+    docOf([
+      req('door service', 'latch the bolt', 'the operator closes the panel'),
+      req('door service', 'log the event', 'the panel is shut by the operator'),
+    ])
+  const ALIGNABLE = {
+    'latch the bolt': [1, 0],
+    'log the event': [0, 1],
+    'the operator closes the panel': [1, 0.05],
+    'the panel is shut by the operator': [1, 0.08],
+  } as const
+
+  it('proposes a guard alignment with NO ops field to apply', async () => {
+    const plan = await buildGlossaryPlan(toEngineDoc(alignableDoc()), tableEmbedder(ALIGNABLE))
+    expect(plan.guardClasses.length, JSON.stringify(plan.guardClasses)).toBeGreaterThan(0)
+    const suggested = plan.guardClasses.find((g) => g.withheldBy.length === 0)
+    expect(suggested, JSON.stringify(plan.guardClasses)).toBeDefined()
+    expect(suggested?.vocabulary).toBe('guard')
+    // The embargo, as a property over the whole plan rather than over this fixture.
+    expect(plan.ops).toEqual([])
+    expect(JSON.stringify(plan.guardClasses)).not.toContain('"op":')
+  })
+
+  /**
+   * The payoff, and the reason a guard suggestion is reviewable at all: it names the
+   * comparisons the merge unlocks — which is also exactly the set a WRONG merge would
+   * compare wrongly.
+   */
+  it('names the requirements the alignment would newly make comparable', async () => {
+    // ONE document, read twice. `req` mints a fresh id per call, so building the fixture
+    // again would compare this plan against a different document's ids.
+    const doc = alignableDoc()
+    const plan = await buildGlossaryPlan(toEngineDoc(doc), tableEmbedder(ALIGNABLE))
+    const suggested = plan.guardClasses.find((g) => g.withheldBy.length === 0)
+    expect(suggested?.unlocks.length, JSON.stringify(suggested)).toBe(2)
+    // Real ids from the document, not indices or atom bodies.
+    const ids = Object.keys(doc.requirements)
+    for (const id of suggested?.unlocks ?? []) expect(ids).toContain(id)
+  })
+
+  it('reports the AUTHOR`s guard phrasing, never a copula-stripped body', async () => {
+    const plan = await buildGlossaryPlan(toEngineDoc(alignableDoc()), tableEmbedder(ALIGNABLE))
+    const phrases = plan.guardClasses.flatMap((g) => [g.canonical, ...g.aliases])
+    expect(phrases.length).toBeGreaterThan(0)
+    for (const p of phrases) {
+      expect(p, `${JSON.stringify(p)} looks like an atom body, not a phrase`).not.toMatch(/_/)
+    }
+  })
+
+  /**
+   * Two triggers one token apart are the same sentence with one thing changed, and that one
+   * thing is usually the point. `ends`/`begins` are not in the antonym table, so nothing but
+   * `single-token-difference` catches this — and if it merged, the identical opposite-polarity
+   * responses would prove a contradiction the document does not contain.
+   */
+  it('WITHHOLDS two guards that differ by exactly one token', async () => {
+    const doc = docOf([
+      req('vault service', 'seal the vault', 'the shift ends'),
+      req('vault service', 'lock the door', 'the shift begins'),
+    ])
+    const plan = await buildGlossaryPlan(
+      toEngineDoc(doc),
+      tableEmbedder({
+        'seal the vault': [1, 0],
+        'lock the door': [0, 1],
+        'the shift ends': [1, 0.02],
+        'the shift begins': [1, 0.03],
+      }),
+    )
+    const withheld = plan.guardClasses.filter((g) => g.withheldBy.length > 0)
+    expect(withheld.length, JSON.stringify(plan.guardClasses)).toBeGreaterThan(0)
+    expect(withheld.flatMap((g) => g.withheldBy.map((w) => w.signal))).toContain(
+      'single-token-difference',
+    )
+    // A withheld class makes no claim about what it would unlock.
+    expect(withheld[0]?.unlocks).toEqual([])
+  })
+
+  it('WITHHOLDS a negated guard against its affirmative twin', async () => {
+    const doc = docOf([
+      req('vault service', 'seal the vault', 'the operator is present'),
+      req('vault service', 'lock the door', 'the operator is not present'),
+    ])
+    const plan = await buildGlossaryPlan(
+      toEngineDoc(doc),
+      tableEmbedder({
+        'seal the vault': [1, 0],
+        'lock the door': [0, 1],
+        'the operator is present': [1, 0.02],
+        'the operator is not present': [1, 0.03],
+      }),
+    )
+    const signals = plan.guardClasses.flatMap((g) => g.withheldBy.map((w) => w.signal))
+    expect(signals, JSON.stringify(plan.guardClasses)).toContain('negated-token')
+  })
+
+  /**
+   * `symspec antonym` is gated to `resp` in `atomize`, so it provably cannot change a guard
+   * atom. Offering it would hand an agent a command that runs clean and fixes nothing.
+   */
+  it('never offers an antonym remedy for a guard, because none can work', async () => {
+    const doc = docOf([
+      req('vault service', 'seal the vault', 'the shift ends'),
+      req('vault service', 'lock the door', 'the shift begins'),
+    ])
+    const plan = await buildGlossaryPlan(
+      toEngineDoc(doc),
+      tableEmbedder({
+        'seal the vault': [1, 0],
+        'lock the door': [0, 1],
+        'the shift ends': [1, 0.02],
+        'the shift begins': [1, 0.03],
+      }),
+    )
+    for (const g of plan.guardClasses) {
+      expect(g.remedies.map((r) => r.kind)).not.toContain('as-antonyms')
+      for (const r of g.remedies) expect(r.ops).toEqual([])
+      // Safest first when withheld: doing nothing is the correct read of mutually
+      // exclusive guards.
+      if (g.withheldBy.length > 0) expect(g.remedies[0]?.kind).toBe('leave-distinct')
+    }
+  })
+
+  it('pools trigger and precondition vocabulary into ONE node per body', async () => {
+    // A `pre` and a `trig` with the SAME text are two ATOMS (the kind is in the atom name)
+    // but ONE glossary key, because `glossaryIndex` is keyed on the body alone. Keyed by atom
+    // name they would surface as two nodes at cosine 1.0 whose proposed alias equals its own
+    // canonical — which `applyGlossary` refuses with ERR_USAGE, failing the fold rather than
+    // merely reading oddly. So the guard key drops the kind, and this is what proves it.
+    const shared = 'the vault is sealed'
+    const stateReq = (systemResponse: string) => {
+      seq += 1
+      const id = `bbbbbbbb-0000-4000-8000-${String(seq).padStart(12, '0')}`
+      return [
+        id,
+        {
+          id,
+          patternType: 'state-driven' as const,
+          systemName: 'audit service',
+          systemResponse,
+          preCondition: shared,
+          negated: false,
+          sentence: `While ${shared}, the audit service shall ${systemResponse}.`,
+          priority: 'medium' as const,
+          status: 'draft' as const,
+          createdAt: TS,
+          updatedAt: TS,
+          derives: [],
+          satisfies: [],
+          verifies: [],
+          refines: [],
+        },
+      ] as const
+    }
+    const doc = docOf([
+      req('audit service', 'log the access', shared),
+      stateReq('notify the auditor'),
+    ])
+
+    const plan = await buildGlossaryPlan(
+      toEngineDoc(doc),
+      tableEmbedder({
+        'log the access': [1, 0],
+        'notify the auditor': [0, 1],
+        [shared]: [1, 0.02],
+      }),
+    )
+    // ONE guard node for the shared body, not one per kind.
+    expect(plan.corpus.guardNodes, JSON.stringify(plan.corpus)).toBe(1)
+    expect(plan.corpus.guardPhrasesFolded).toBe(1)
+    // A single node cannot form a class, so nothing self-aliasing is proposed.
+    expect(plan.guardClasses).toEqual([])
+  })
+
+  it('reports both slot families as looked-at, even on an empty document', async () => {
+    const plan = await buildGlossaryPlan(toEngineDoc(docOf([])), tableEmbedder({}))
+    expect(plan.vocabularies).toEqual(['response', 'guard'])
+    // The applyable half is still response-only, so nothing an agent branches on moved.
+    expect(plan.vocabulary).toBe('response')
+    expect(plan.guardClasses).toEqual([])
+  })
+
+  it('counts guard pairs separately, and the total is their sum', async () => {
+    const plan = await buildGlossaryPlan(toEngineDoc(alignableDoc()), tableEmbedder(ALIGNABLE))
+    expect(plan.corpus.pairsCompared).toBe(
+      plan.corpus.responsePairsCompared + plan.corpus.guardPairsCompared,
+    )
+    expect(plan.corpus.guardPairsCompared).toBeGreaterThan(0)
+    // `crossSlotPhrases` is defined even when nothing collides, so "no withhold fired" is
+    // distinguishable from "the check did not run".
+    expect(plan.corpus.crossSlotPhrases).toBe(0)
+  })
+
+  it('is deterministic and order-independent over guards too', async () => {
+    const rows = Object.entries(alignableDoc().requirements)
+    const forward = await buildGlossaryPlan(
+      toEngineDoc(docOf(rows as never)),
+      tableEmbedder(ALIGNABLE),
+    )
+    const reversed = await buildGlossaryPlan(
+      toEngineDoc(docOf([...rows].reverse() as never)),
+      tableEmbedder(ALIGNABLE),
+    )
+    expect(JSON.stringify(forward.guardClasses)).toBe(JSON.stringify(reversed.guardClasses))
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Dedup, determinism, and disclosure
 // ---------------------------------------------------------------------------
 
@@ -695,8 +908,10 @@ describe('the pass embeds each distinct phrasing exactly once', () => {
     })
     const plan = await buildGlossaryPlan(toEngineDoc(doc), embedder)
     expect(embedder.calls.length, 'one batched call, not one per pair').toBe(1)
-    expect(embedder.calls[0]?.length).toBe(plan.corpus.responseNodes)
-    expect(plan.corpus.embedded).toBe(plan.corpus.responseNodes)
+    // ONE call over BOTH slot families. Responses first, so the response slice keeps the
+    // indices the rest of the pass already used.
+    expect(embedder.calls[0]?.length).toBe(plan.corpus.responseNodes + plan.corpus.guardNodes)
+    expect(plan.corpus.embedded).toBe(plan.corpus.responseNodes + plan.corpus.guardNodes)
     // The dedup is real: fewer nodes than requirements, and the difference is reported.
     expect(plan.corpus.responseNodes).toBeLessThan(plan.corpus.requirements)
     expect(plan.corpus.alreadyUnified).toBeGreaterThan(0)

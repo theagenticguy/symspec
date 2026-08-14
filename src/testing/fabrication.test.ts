@@ -159,9 +159,15 @@ describe('applying a whole-document glossary plan FABRICATES nothing', () => {
   it('the corpus is NON-VACUOUS — the pass looked at every fixture', async () => {
     for (const testCase of fabricationCases()) {
       const plan = await buildGlossaryPlan(toEngineDoc(testCase.doc), tableEmbedder(testCase.table))
-      // It embedded every node it found...
-      expect(plan.corpus.embedded, testCase.id).toBe(plan.corpus.responseNodes)
-      expect(plan.corpus.responseNodes, `${testCase.id} produced no nodes`).toBeGreaterThan(0)
+      // It embedded every node it found, across BOTH slot families...
+      expect(plan.corpus.embedded, testCase.id).toBe(
+        plan.corpus.responseNodes + plan.corpus.guardNodes,
+      )
+      expect(
+        plan.corpus.responseNodes,
+        `${testCase.id} produced no response nodes`,
+      ).toBeGreaterThan(0)
+      expect(plan.corpus.guardNodes, `${testCase.id} produced no guard nodes`).toBeGreaterThan(0)
       // ...and it compared something, so "fabricated nothing" is not "never ran".
       expect(
         plan.corpus.pairsCompared + plan.corpus.alreadyUnified,

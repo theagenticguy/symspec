@@ -181,6 +181,19 @@ describe('the envelope an agent branches on', () => {
     expect(data.opsJsonl).toBe('')
   })
 
+  it('reports guard alignments, and says they are NOT in ops', async () => {
+    // The biggest suggestions the plan makes are the ones an agent piping `opsJsonl` will not
+    // receive, so the one line a reader sees has to say so.
+    const data = await expectOk(paraphraseDoc())
+    expect(data.corpus.guardNodes).toBeGreaterThan(0)
+    expect(data.summary).toContain(
+      `${data.corpus.guardNodes} distinct trigger/precondition phrasing(s)`,
+    )
+    // Both slot families were read; only one is applyable.
+    expect(data.vocabularies).toEqual(['response', 'guard'])
+    expect(data.vocabulary).toBe('response')
+  })
+
   it('says when the floor filtered an opposition out, rather than staying silent', async () => {
     // `oppositionSignals` counts BEFORE the floor. Without surfacing it, "no oppositions"
     // would be indistinguishable from "some were judged unrelated" — the same

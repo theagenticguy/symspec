@@ -53,8 +53,10 @@ import {
   type AntonymEntry,
   buildAntonymIndexWithDoc,
 } from '../engine/formal/antonyms.ts'
-import { glossaryIndex, normalize } from '../engine/formal/atomize.ts'
+import { GUARD_KINDS, glossaryIndex, normalize, renderAtom } from '../engine/formal/atomize.ts'
+import { contextAtomsOf, planContextGroups } from '../engine/formal/contradiction.ts'
 import type { Embedder } from '../engine/formal/embed.ts'
+import type { EncodedRequirement } from '../engine/formal/encode.ts'
 import { deInflectHead } from '../engine/formal/lemma.ts'
 import {
   DEFAULT_OPPOSITION_COSINE_FLOOR,
@@ -110,15 +112,35 @@ export const isNegatingPrefixPair = (a: string, b: string): boolean => {
 // ---------------------------------------------------------------------------
 
 /**
- * Which slot kind the plan reads.
+ * Which slot family a class was proposed from.
  *
- * A literal rather than a boolean so widening it later is an ADDITIVE, detectable change.
- * Only `response` today, and deliberately: `glossaryIndex` is consulted for every atom
- * kind, so an entry proposed from TRIGGER vocabulary would silently merge responses too —
- * and merging trigger phrasings changes context grouping, i.e. which pairs the
- * contradiction tier compares at all. No existing propose tier takes that step.
+ * A literal rather than a boolean, so widening it is an ADDITIVE, detectable change — which
+ * is what happened: `guard` joined `response`.
+ *
+ * ## Why guards were parked, and what actually unparked them
+ *
+ * The recorded reason was that `glossaryIndex` is consulted for every atom kind, so an entry
+ * proposed from trigger vocabulary would silently merge responses too. That is true only on
+ * EXACT normalized-text identity, and the glossary lookup runs before the copula strip: a
+ * guard clause is a state or event clause (`the vault is sealed` → `vault_is_sealed`) while
+ * a response is an action clause (`seal the vault` → `seal_the_vault`), so the two key
+ * spaces barely intersect in well-formed EARS. The `cross-slot-collision` withhold closes
+ * that hole anyway, because it is cheap and provably sound, but it is a DEFENSIVE guard
+ * rather than a common case.
+ *
+ * The hazard that is real is the other one: merging two guard phrasings changes CONTEXT
+ * GROUPING. `planContextGroups` keys a group on a requirement's sorted `trig`+`pre` atoms
+ * and `findContradictions` asserts one group at a time, so two requirements whose guards are
+ * paraphrases are never live together and their responses are never compared. Aligning the
+ * guards is therefore the single highest-leverage thing an author can do — and committing
+ * the alignment WRONGLY asserts two different conditions are one, which can prove a conflict
+ * the document does not contain.
+ *
+ * That asymmetry is why a guard class is suggest-only: `GuardClass` carries no `ops` field at
+ * all, so "an agent cannot apply this mechanically" is a type error rather than a review
+ * comment.
  */
-export type GlossaryVocabulary = 'response'
+export type GlossaryVocabulary = 'response' | 'guard'
 
 /** Which deterministic signal says a pair might be opposites rather than synonyms. */
 export type OppositionSignal =
@@ -129,15 +151,66 @@ export type OppositionSignal =
   /** Same object remainder, different verb — genuinely undecidable without a human. */
   | 'same-object-different-verb'
 
+/**
+ * Which deterministic signal says two GUARD phrasings may be different conditions.
+ *
+ * A separate vocabulary from {@link OppositionSignal}, because the response signals do not
+ * transfer. `oppositionShape` splits a leading verb from an object, which is the right shape
+ * for an action clause and the wrong one for a state clause: on `the user signs in` it yields
+ * head `user`, so `same-object-different-verb` degenerates into "same tail, different
+ * subject" — noise — while the real guard opposition (`the door is locked` against `the door
+ * is unlocked`) lives in the predicate tail and is missed entirely.
+ *
+ * These are deliberately OVER-EAGER. In this direction over-eagerness only ever withholds a
+ * suggestion, and the alternative is a merge that regroups contexts and can manufacture an
+ * error-severity contradiction. So a guard merge is proposed only when the two phrasings
+ * differ in MORE THAN ONE token — which is exactly the regime where cosine adds information
+ * and where an opposition is unlikely to be expressible by a single word.
+ */
+export type GuardSignal =
+  /** The token multisets differ by exactly one negator (`not`, `never`, `no`). */
+  | 'negated-token'
+  /** Some aligned token pair relates by a `de-`/`un-`/`dis-` prefix (locked/unlocked). */
+  | 'negating-prefix-token'
+  /** Some aligned token pair sits in the antonym table at OPPOSITE polarity. */
+  | 'antonym-token'
+  /** The bodies differ in exactly one token position — the guard analogue of same-object. */
+  | 'single-token-difference'
+  /**
+   * A phrase in this class also occurs as a RESPONSE, and `glossaryIndex` is kind-blind, so
+   * the entry would rewrite response atoms too.
+   *
+   * Defensive rather than common: it needs exact normalized-text identity between a state or
+   * event clause and an action clause, and the glossary lookup runs before the copula strip,
+   * so `the vault is sealed` (`vault_is_sealed`) and `seal the vault` (`seal_the_vault`) do
+   * not collide. Kept because it is two set lookups and the failure it prevents is silent.
+   */
+  | 'cross-slot-collision'
+
 /** Why a class was withheld from `ops`. */
 export type UnresolvedReason =
   | 'opposition-candidate'
   | 'existing-canonical-conflict'
   | 'cross-system-conflict'
   | 'canonical-is-existing-alias'
+  /**
+   * A phrase in this class also occurs in the OTHER slot family, and `glossaryIndex` is
+   * kind-blind — so committing the entry would rewrite atoms in that family too, changing
+   * which requirements the contradiction tier compares. Defensive: it requires exact
+   * normalized-text identity across an action clause and a state clause, which well-formed
+   * EARS rarely produces.
+   */
+  | 'cross-slot-collision'
 
 /** What picking a remedy does to the document. */
-export type RemedyKind = 'as-synonyms' | 'as-antonyms' | 'realign-objects'
+export type RemedyKind =
+  | 'as-synonyms'
+  | 'as-antonyms'
+  | 'realign-objects'
+  /** Reword one GUARD so both name the same condition. The fix that actually works. */
+  | 'realign-guards'
+  /** Do nothing. Correct for mutually exclusive guards, and the safe default. */
+  | 'leave-distinct'
 
 /** One way to resolve an ambiguous class, with its consequence stated. */
 export interface Remedy {
@@ -240,6 +313,73 @@ export interface OppositionPair {
   readonly remedies: readonly Remedy[]
 }
 
+/** One reason a guard class must not be committed as written. */
+export interface GuardWithhold {
+  readonly signal: GuardSignal
+  /** The AUTHOR's two guard phrasings, sorted. */
+  readonly phrases: readonly [string, string]
+  /**
+   * The differing tokens, when they can be named from the author's own wording.
+   *
+   * Omitted rather than guessed: the guard shape body is copula-stripped, so a token could
+   * in principle be reported that the author never wrote. Present only when the token occurs
+   * verbatim in the representative phrase.
+   */
+  readonly tokens?: readonly [string, string]
+  /** DISCLOSED. Never used to decide. */
+  readonly cosine: number
+}
+
+/**
+ * A GUARD-slot alignment — trigger and precondition vocabulary, proposed and never applied.
+ *
+ * ## No `ops` field, on purpose
+ *
+ * A wrong response merge MASKS a conflict, costing recall. A wrong guard merge asserts two
+ * genuinely different conditions are one, puts two requirements into a single context group,
+ * and can prove a contradiction the document does not contain — the tool's own fabrication,
+ * at error severity, gating exit 1. That is the hazard class the antonym table sits in, and
+ * the answer there is the same: emit a structural candidate with both readings and a runnable
+ * command, never an applyable record. `--field data.opsJsonl > plan.jsonl | symspec apply` is
+ * exactly a bare command, and `consequence` is a warning aimed at a reader who is not there.
+ *
+ * Leaving the field off entirely — rather than setting it to `[]` — is what makes the
+ * embargo checkable by `tsc` instead of by review.
+ *
+ * ## The decide tier is LOOSER here, which forces the choice
+ *
+ * `applyGlossary` checks empty fields, self-alias, alias-already-owned, and the one-hop
+ * chain. It has no slot awareness and no system awareness at all. So the propose tier holds
+ * guards the decide tier does not re-validate, and under
+ * `.erpaval/solutions/architecture/decide-tier-must-carry-every-guard-the-propose-tier-has.md`
+ * it must not hand out a machine-applyable record whose safety rests on a document-scale
+ * precondition nothing re-checks when the next requirement is added.
+ */
+export interface GuardClass {
+  readonly vocabulary: 'guard'
+  readonly system: string
+  readonly canonical: string
+  readonly aliases: readonly string[]
+  readonly members: readonly GlossaryMember[]
+  readonly minCosine: number
+  readonly weakestPair: readonly [string, string]
+  readonly transitive: boolean
+  /**
+   * The requirement ids that would newly become CO-ACTIVE in one context group.
+   *
+   * The payoff, stated per class. Computed by re-encoding with the candidate entry and
+   * diffing `planContextGroups` — pure, Z3-free, and the same composition the fabrication
+   * gate uses to show what a guard merge costs. This is what makes a guard suggestion
+   * reviewable rather than a bare similarity claim: it names the comparisons the merge
+   * unlocks, which is also exactly the set a wrong merge would compare wrongly.
+   */
+  readonly unlocks: readonly string[]
+  /** Non-empty means DO NOT commit this as written. */
+  readonly withheldBy: readonly GuardWithhold[]
+  /** Ordered safest-first. `realign-guards` is the one that actually works. */
+  readonly remedies: readonly Remedy[]
+}
+
 /** A class withheld from `ops`, with the choice that would unblock it. */
 export interface UnresolvedClass {
   readonly reason: UnresolvedReason
@@ -258,11 +398,44 @@ export interface GlossaryCorpus {
   readonly requirements: number
   readonly systems: number
   readonly responseNodes: number
-  /** Must equal `responseNodes`, or the dedup is broken. */
+  /**
+   * Distinct GUARD bodies — `trig` and `pre` pooled, the kind dropped from the key.
+   *
+   * Pooled because the glossary key space is the BODY while the atom space is
+   * `(scope, kind, body)`: a committed entry cannot distinguish a trigger from a
+   * precondition, so a per-kind partition could produce two classes claiming one body under
+   * two different canonicals — a cross-kind instance of `cross-system-conflict`, invisible to
+   * the reconciliation counter. Pooling makes node identity match the granularity the decide
+   * tier acts at. Aligning a trigger with a precondition does NOT merge their atoms; the kind
+   * is in the atom name.
+   *
+   * `feat` is admitted by the filter but never occurs today — `encode` pushes only `pre`,
+   * `trig`, and `resp`, and `feat` comes solely from the temporal mapper. Asserted, so the
+   * day that changes is loud.
+   */
+  readonly guardNodes: number
+  /** Must equal `responseNodes + guardNodes`, or the dedup is broken. */
   readonly embedded: number
+  /** Total; equals `responsePairsCompared + guardPairsCompared`. */
   readonly pairsCompared: number
-  /** Raw phrases the CURRENT tables already folded onto a shared atom. */
+  readonly responsePairsCompared: number
+  readonly guardPairsCompared: number
+  /**
+   * Raw RESPONSE phrases the current tables already folded onto a shared atom.
+   *
+   * Response-only on purpose. Its published meaning is "how much the committed glossary is
+   * already doing", and for guards the number would be dominated by verbatim trigger
+   * repetition — which is the authoring habit the craft guide explicitly instructs. Folding
+   * that in would make a good habit read as table work.
+   */
   readonly alreadyUnified: number
+  /** The guard analogue, counted separately for the reason above. */
+  readonly guardPhrasesFolded: number
+  /**
+   * Phrases occurring in BOTH slot families, so "no cross-slot withhold fired" is
+   * distinguishable from "the check did not run".
+   */
+  readonly crossSlotPhrases: number
   /**
    * Pairs carrying a deterministic opposition signal, BEFORE the cosine floor.
    *
@@ -274,7 +447,18 @@ export interface GlossaryCorpus {
 
 /** The whole plan. */
 export interface GlossaryPlan {
+  /**
+   * The slot family the applyable `ops` rewrite. Permanently `'response'` while guard
+   * alignment is suggest-only, so nothing an agent branches on changes meaning — see
+   * {@link vocabularies} for what the pass READ.
+   */
   readonly vocabulary: GlossaryVocabulary
+  /**
+   * The slot families the pass looked at. Fixed rather than data-dependent, so an empty
+   * document still reports that it examined both — the same found-nothing/did-not-look
+   * discipline `pairsCompared` follows.
+   */
+  readonly vocabularies: readonly GlossaryVocabulary[]
   readonly threshold: number
   /**
    * The topical-relatedness floor below which a non-morphological opposition is not
@@ -289,6 +473,11 @@ export interface GlossaryPlan {
   /** Sorted weakest-first, so the likeliest-wrong reads first. */
   readonly classes: readonly ProposedClass[]
   readonly unresolved: readonly UnresolvedClass[]
+  /**
+   * GUARD-slot alignments — the highest-leverage suggestions the plan makes, and the only
+   * ones that are never applyable. Weakest-first, withheld ones last.
+   */
+  readonly guardClasses: readonly GuardClass[]
   /**
    * Every structurally-opposed pair in the document, whether or not a merge threatened it.
    * Never in `ops` — no op resolves an opposition.
@@ -347,13 +536,32 @@ const partition = (size: number, edges: readonly (readonly [number, number])[]):
 // ---------------------------------------------------------------------------
 
 interface Node {
+  readonly vocabulary: GlossaryVocabulary
+  /**
+   * The grouping key. For a response this is the atom NAME; for a guard the kind is dropped,
+   * because a `trig` and a `pre` with the same text are two atoms but ONE glossary key.
+   *
+   * Keying guards by the atom name instead would surface them as two nodes with identical
+   * bodies at cosine 1.0, and the emitted op would have `canonical === alias` — which
+   * `applyGlossary` refuses with `ERR_USAGE`, failing the apply harness rather than merely
+   * looking odd.
+   */
   readonly atom: string
+  /**
+   * The REAL scoped atom names this node pooled, sorted.
+   *
+   * Separate from {@link atom} because that is a grouping key, and for a guard it is
+   * synthetic — the kind is stripped, so it is not a name `check` ever prints. A payload field
+   * documented as "the scoped atom name" must carry a name that exists in the document, so
+   * `asMember` reports from here. For a response the two coincide.
+   */
+  readonly atomNames: readonly string[]
   readonly system: string
   readonly phrase: string
   readonly phrases: readonly string[]
   readonly requirementIds: readonly string[]
   /**
-   * `normalize(phrase)` — the AUTHOR'S wording, for the shape checks.
+   * `normalize(phrase)` — the AUTHOR'S wording, and the key `glossaryIndex` looks up.
    *
    * Deliberately NOT the atom name's body. The atom body is post-canonicalization: an
    * antonym class is re-based on its lexicographically smallest member, so "seal the
@@ -363,6 +571,33 @@ interface Node {
    * document. `findOppositionCandidates` reads the raw response for the same reason.
    */
   readonly body: string
+  /**
+   * The body the SHAPE checks read.
+   *
+   * For a response, identical to {@link body} — unchanged behavior. For a guard, the atom
+   * body, which is the normalized phrase minus at most one copula token. That substitution is
+   * legitimate for guards specifically because they get no antonym re-basing (`atomize` gates
+   * that to `resp`), so the guard atom body only ever REMOVES: every token in it appears
+   * verbatim in the author's phrase, which is what keeps a reported token honest. Comparing
+   * stripped bodies is also what makes the check copula-insensitive without re-deriving the
+   * engine's private `stripCopula`.
+   */
+  readonly shapeBody: string
+}
+
+/** What one `encodeIncluded` pass yields: both node families, their keys, and the counters. */
+interface NodeScan {
+  readonly responses: Node[]
+  readonly guards: Node[]
+  readonly alreadyUnified: number
+  readonly guardPhrasesFolded: number
+  /** Normalized slot texts per family — the two sets the cross-slot withhold intersects. */
+  readonly responseKeys: ReadonlySet<string>
+  readonly guardKeys: ReadonlySet<string>
+  /** The encoded requirement count, so the corpus does not re-encode the document. */
+  readonly requirements: number
+  /** True if any guard row carried kind `feat`. Never today; asserted so a change is loud. */
+  readonly sawFeatureSlot: boolean
 }
 
 /**
@@ -385,54 +620,260 @@ const antonymIndexOf = (doc: Doc): ReadonlyMap<string, AntonymEntry> => {
 }
 
 /**
- * Collapse the document's response atoms into nodes.
+ * Collapse the document's atoms into nodes — responses and guards, in ONE pass.
  *
- * One node per distinct atom, carrying every raw phrase that landed on it — so
- * `alreadyUnified` can report how much the committed tables are already doing, which is
- * the number that tells a reader whether the glossary is working.
+ * One node per distinct key, carrying every raw phrase that landed on it, so the
+ * already-folded counters can report how much the committed tables are already doing. One
+ * `encodeIncluded` call because the counters must all describe ONE encoding, and because the
+ * corpus used to re-encode the document a second time just to count requirements.
  */
-const nodesOf = (doc: Doc): { readonly nodes: Node[]; readonly alreadyUnified: number } => {
+const nodesOf = (doc: Doc): NodeScan => {
   const systemById = new Map(listRequirements(doc).map((r) => [r.id, normalize(r.systemName)]))
-  const byAtom = new Map<
-    string,
-    { system: string; phrases: Set<string>; requirementIds: Set<string> }
-  >()
-  let rawPhrases = 0
-  for (const encoded of encodeIncluded(doc)) {
-    for (const row of encoded.atoms) {
-      if (row.kind !== 'resp') continue
-      rawPhrases += 1
-      const existing = byAtom.get(row.atom)
-      const entry = existing ?? {
-        system: systemById.get(encoded.id) ?? '',
-        phrases: new Set<string>(),
-        requirementIds: new Set<string>(),
+  type Bucket = {
+    system: string
+    phrases: Set<string>
+    requirementIds: Set<string>
+    atomNames: Set<string>
+  }
+  const buckets = new Map<string, { vocabulary: GlossaryVocabulary; bucket: Bucket }>()
+  const responseKeys = new Set<string>()
+  const guardKeys = new Set<string>()
+  let responseRawPhrases = 0
+  let guardRawPhrases = 0
+  let sawFeatureSlot = false
+  const encoded = encodeIncluded(doc)
+
+  for (const enc of encoded) {
+    for (const row of enc.atoms) {
+      const isGuard = GUARD_KINDS.has(row.kind)
+      if (row.kind !== 'resp' && !isGuard) continue
+      const scope = systemById.get(enc.id) ?? ''
+      if (row.kind === 'feat') sawFeatureSlot = true
+
+      // The GROUPING key. Responses keep the atom name. Guards drop the kind, because
+      // `glossaryIndex` is keyed on the body alone — see `Node.atom`.
+      const key = isGuard
+        ? `${scope}␟${row.atom.slice(renderAtom({ scope, kind: row.kind, body: '' }).length)}`
+        : row.atom
+      // A failed prefix strip can only ever UNDER-merge, never mis-merge.
+      const safeKey =
+        isGuard && !row.atom.startsWith(renderAtom({ scope, kind: row.kind, body: '' }))
+          ? `${scope}␟${row.atom}`
+          : key
+
+      if (isGuard) {
+        guardRawPhrases += 1
+        guardKeys.add(normalize(row.slotText))
+      } else {
+        responseRawPhrases += 1
+        responseKeys.add(normalize(row.slotText))
       }
-      entry.phrases.add(row.slotText)
-      entry.requirementIds.add(encoded.id)
-      if (existing === undefined) byAtom.set(row.atom, entry)
+
+      const existing = buckets.get(safeKey)
+      const entry = existing ?? {
+        vocabulary: (isGuard ? 'guard' : 'response') as GlossaryVocabulary,
+        bucket: {
+          system: scope,
+          phrases: new Set<string>(),
+          requirementIds: new Set<string>(),
+          atomNames: new Set<string>(),
+        },
+      }
+      entry.bucket.phrases.add(row.slotText)
+      entry.bucket.requirementIds.add(enc.id)
+      entry.bucket.atomNames.add(row.atom)
+      if (existing === undefined) buckets.set(safeKey, entry)
     }
   }
-  const nodes = [...byAtom.entries()]
-    .map(([atom, entry]) => {
-      const phrases = [...entry.phrases].sort()
-      const phrase = phrases[0] ?? ''
-      return {
-        atom,
-        system: entry.system,
-        phrase,
-        phrases,
-        requirementIds: [...entry.requirementIds].sort(),
-        body: normalize(phrase),
-      }
-    })
-    .sort((a, b) => a.atom.localeCompare(b.atom))
-  return { nodes, alreadyUnified: rawPhrases - nodes.length }
+
+  const build = (which: GlossaryVocabulary): Node[] =>
+    [...buckets.entries()]
+      .filter(([, v]) => v.vocabulary === which)
+      .map(([atom, v]) => {
+        const phrases = [...v.bucket.phrases].sort()
+        const phrase = phrases[0] ?? ''
+        const body = normalize(phrase)
+        return {
+          vocabulary: which,
+          atom,
+          atomNames: [...v.bucket.atomNames].sort(),
+          system: v.bucket.system,
+          phrase,
+          phrases,
+          requirementIds: [...v.bucket.requirementIds].sort(),
+          body,
+          // Guards read the copula-stripped atom body; responses read the author's wording.
+          shapeBody: which === 'guard' ? (atom.split('␟')[1] ?? body) : body,
+        }
+      })
+      .sort((a, b) => a.atom.localeCompare(b.atom))
+
+  const responses = build('response')
+  const guards = build('guard')
+  return {
+    responses,
+    guards,
+    alreadyUnified: responseRawPhrases - responses.length,
+    guardPhrasesFolded: guardRawPhrases - guards.length,
+    responseKeys,
+    guardKeys,
+    requirements: encoded.length,
+    sawFeatureSlot,
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Ambiguity
 // ---------------------------------------------------------------------------
+
+/**
+ * Every pair of requirement ids that is CO-ACTIVE in some context group.
+ *
+ * A requirement is live in a group when every one of its guard atoms is asserted there, which
+ * is precisely the condition `findContradictions` creates by `add()`ing the group's context
+ * atoms. So this set is the set of pairs the contradiction tier can compare at all — and
+ * `planContextGroups` is imported rather than re-derived, for the same reason the node set
+ * comes from `encodeIncluded`: a second implementation of the grouping rule could drift from
+ * the one that decides.
+ *
+ * Pure and Z3-free. `contradiction.ts` imports `getContext`, but `backend.ts` reaches
+ * `z3-solver` through `await import(...)`, so nothing here boots the WASM module.
+ */
+const coactivePairs = (encoded: readonly EncodedRequirement[]): Set<string> => {
+  const out = new Set<string>()
+  for (const group of planContextGroups(encoded)) {
+    const asserted = new Set(group.contextAtoms)
+    const live = encoded
+      .filter((e) => {
+        const context = contextAtomsOf(e)
+        return context.length > 0 && context.every((a) => asserted.has(a))
+      })
+      .map((e) => e.id)
+      .sort()
+    for (let i = 0; i < live.length; i++) {
+      for (let j = i + 1; j < live.length; j++) out.add(`${live[i]}|${live[j]}`)
+    }
+  }
+  return out
+}
+
+/**
+ * The requirement ids that would newly become co-active if this guard class were committed.
+ *
+ * The payoff of a guard alignment, computed by actually doing it: re-encode with the candidate
+ * entry appended to the document's glossary and diff the co-active sets. Deterministic, pure,
+ * and it never mutates the caller's document.
+ */
+const unlocksFor = (doc: Doc, canonical: string, aliases: readonly string[]): readonly string[] => {
+  if (aliases.length === 0) return []
+  const before = coactivePairs(encodeIncluded(doc))
+  const after = coactivePairs(
+    encodeIncluded({
+      ...doc,
+      glossary: [...(doc.glossary ?? []), { canonical, aliases: [...aliases] }],
+    }),
+  )
+  const ids = new Set<string>()
+  for (const pair of after) {
+    if (before.has(pair)) continue
+    for (const id of pair.split('|')) ids.add(id)
+  }
+  return [...ids].sort()
+}
+
+/** Tokens that flip a guard's sense outright. */
+const NEGATOR_TOKENS: ReadonlySet<string> = new Set(['not', 'never', 'no'])
+
+/**
+ * The deterministic signals that say two GUARD phrasings may be different conditions.
+ *
+ * Returns every signal that fires, not the first — a reader deciding whether to reword one of
+ * two triggers wants all the evidence, and the cost of an extra line is a suggestion declined
+ * rather than a contradiction manufactured.
+ *
+ * Reads `shapeBody` (the copula-stripped atom body), so "the door is locked" and "the door
+ * locked" are one condition here, matching what `atomize` already did to them.
+ */
+const guardSignalsFor = (
+  a: Node,
+  b: Node,
+  antonyms: ReadonlyMap<string, AntonymEntry>,
+): readonly GuardSignal[] => {
+  const ta = a.shapeBody.split('_').filter((t) => t !== '')
+  const tb = b.shapeBody.split('_').filter((t) => t !== '')
+  const found = new Set<GuardSignal>()
+
+  // A single negator's worth of difference, in either direction.
+  const negatorsOf = (t: readonly string[]) => t.filter((x) => NEGATOR_TOKENS.has(x)).length
+  const strip = (t: readonly string[]) => t.filter((x) => !NEGATOR_TOKENS.has(x)).join('_')
+  if (negatorsOf(ta) !== negatorsOf(tb) && strip(ta) === strip(tb)) found.add('negated-token')
+
+  // Positionally aligned token pairs — only meaningful at equal length.
+  if (ta.length === tb.length) {
+    let differing = 0
+    for (let i = 0; i < ta.length; i++) {
+      const x = ta[i] as string
+      const y = tb[i] as string
+      if (x === y) continue
+      differing += 1
+      if (isNegatingPrefixPair(deInflectHead(x), deInflectHead(y))) {
+        found.add('negating-prefix-token')
+      }
+      const ex = antonyms.get(deInflectHead(x))
+      const ey = antonyms.get(deInflectHead(y))
+      if (ex !== undefined && ey !== undefined && ex.canonical === ey.canonical) {
+        found.add('antonym-token')
+      }
+    }
+    // The guard analogue of `same-object-different-verb`: one token apart is not a paraphrase,
+    // it is the same sentence with one thing changed — and that one thing is usually the point.
+    if (differing === 1) found.add('single-token-difference')
+  }
+  return [...found].sort()
+}
+
+/**
+ * The remedies for a guard pair, ordered SAFEST FIRST.
+ *
+ * `as-antonyms` is never offered. Antonym unification is gated `args.kind === 'resp'` in
+ * `atomize`, so `symspec antonym a b` provably cannot change a guard atom: a guard opposition
+ * is unprovable by construction, and offering the op would hand an agent a command that runs
+ * clean and fixes nothing.
+ */
+const guardRemediesFor = (a: Node, b: Node, withheld: boolean): readonly Remedy[] => {
+  const leaveDistinct: Remedy = {
+    kind: 'leave-distinct',
+    ops: [],
+    commands: [],
+    consequence:
+      'These stay in separate context groups, so the contradiction tier never compares the ' +
+      'requirements they guard. That is CORRECT when the two conditions are mutually ' +
+      'exclusive, and it is the safe default.',
+  }
+  const realign: Remedy = {
+    kind: 'realign-guards',
+    ops: [],
+    commands: [
+      `symspec show ${a.requirementIds[0] ?? '<id>'}`,
+      `symspec show ${b.requirementIds[0] ?? '<id>'}`,
+    ],
+    consequence:
+      'Reword one guard so both name the same condition. That is what puts the requirements ' +
+      'in one context group, and it does it in the document rather than in a side table, so ' +
+      'the next reader sees why they are comparable.',
+  }
+  const asSynonyms: Remedy = {
+    kind: 'as-synonyms',
+    ops: [],
+    commands: [`symspec glossary ${quoted(a.phrase)} ${quoted(b.phrase)}`],
+    consequence:
+      'Both guards collapse onto one atom, so every requirement guarded by either becomes ' +
+      'live in one context group and their responses are compared for the first time. If the ' +
+      'two conditions are NOT the same, this proves a conflict the document does not contain — ' +
+      'no antonym op can undo it, because antonyms do not apply to guard slots.',
+  }
+  return withheld ? [leaveDistinct, realign, asSynonyms] : [realign, asSynonyms, leaveDistinct]
+}
 
 /** The deterministic opposition signal for a pair, or `undefined` when there is none. */
 const signalFor = (
@@ -536,15 +977,22 @@ export const buildGlossaryPlan = async (
   options: BuildGlossaryPlanOptions = {},
 ): Promise<GlossaryPlan> => {
   const threshold = options.threshold ?? DEFAULT_SEMANTIC_THRESHOLD
-  const { nodes, alreadyUnified } = nodesOf(doc)
+  const scan = nodesOf(doc)
+  const nodes = scan.responses
+  const guards = scan.guards
+  const alreadyUnified = scan.alreadyUnified
   const antonyms = antonymIndexOf(doc)
   const committed = glossaryIndex(doc.glossary ?? [])
   const canonicalSet = new Set((doc.glossary ?? []).map((g) => normalize(g.canonical)))
 
-  // ONE batched call, over distinct atoms rather than requirements. The existing pairwise
-  // tiers embed every requirement's response — including cross-system ones they then skip
-  // — and do not dedup despite a comment saying they do.
-  const vectors = nodes.length > 0 ? await embedder(nodes.map((n) => n.phrase)) : []
+  // ONE batched call, over distinct atoms rather than requirements, and over BOTH slot
+  // families at once. The existing pairwise tiers embed every requirement's response —
+  // including cross-system ones they then skip — and do not dedup despite a comment saying
+  // they do. Responses first, so the response slice keeps its existing indices.
+  const allPhrases = [...nodes.map((n) => n.phrase), ...guards.map((n) => n.phrase)]
+  const allVectors = allPhrases.length > 0 ? await embedder(allPhrases) : []
+  const vectors = allVectors.slice(0, nodes.length)
+  const guardVectors = allVectors.slice(nodes.length)
   const { cosine } = await import('../engine/formal/embed.ts')
 
   // Per system: atoms are system-scoped, so two systems using identical wording are
@@ -573,6 +1021,7 @@ export const buildGlossaryPlan = async (
     { readonly signal: OppositionSignal; readonly verbs: readonly [string, string] }
   >()
   let pairsCompared = 0
+  let guardPairsCompared = 0
   for (const bucket of [...bySystem.values()]) {
     for (let x = 0; x < bucket.length; x++) {
       for (let y = x + 1; y < bucket.length; y++) {
@@ -790,8 +1239,110 @@ export const buildGlossaryPlan = async (
     })
   }
 
+  // ---- GUARD classes: suggested, never applied ----------------------------
+  //
+  // The same clustering, over the pooled trigger/precondition nodes. What differs is the
+  // hazard direction, so what differs in the output is that there is no `ops` field to fill:
+  // a wrong guard merge regroups contexts and can PROVE a conflict the document does not
+  // contain, where a wrong response merge only hides one.
+  const guardClasses: GuardClass[] = []
+  {
+    const guardBySystem = new Map<string, number[]>()
+    for (const [i, node] of guards.entries()) {
+      const bucket = guardBySystem.get(node.system)
+      if (bucket === undefined) guardBySystem.set(node.system, [i])
+      else bucket.push(i)
+    }
+    const guardEdges: [number, number][] = []
+    const guardCosines = new Map<string, number>()
+    for (const bucket of [...guardBySystem.values()]) {
+      for (let x = 0; x < bucket.length; x++) {
+        for (let y = x + 1; y < bucket.length; y++) {
+          const i = bucket[x] as number
+          const j = bucket[y] as number
+          guardPairsCompared += 1
+          const vi = guardVectors[i]
+          const vj = guardVectors[j]
+          const score = vi !== undefined && vj !== undefined ? cosine(vi, vj) : 0
+          guardCosines.set(key(i, j), score)
+          if (score >= threshold) guardEdges.push([i, j])
+        }
+      }
+    }
+
+    const guardRoots = partition(guards.length, guardEdges)
+    const guardGroups = new Map<number, number[]>()
+    for (const [i, root] of guardRoots.entries()) {
+      const bucket = guardGroups.get(root)
+      if (bucket === undefined) guardGroups.set(root, [i])
+      else bucket.push(i)
+    }
+
+    for (const indices of [...guardGroups.values()].sort(
+      (a, b) => (a[0] as number) - (b[0] as number),
+    )) {
+      if (indices.length < 2) continue
+      const members = indices.map((i) => guards[i] as Node)
+      const chosen = pickCanonical(members, new Set(), committed)
+      const aliases = aliasesFor(members, chosen.canonical)
+      if (aliases.length === 0) continue
+
+      const withheldBy: GuardWithhold[] = []
+      for (let x = 0; x < indices.length; x++) {
+        for (let y = x + 1; y < indices.length; y++) {
+          const i = indices[x] as number
+          const j = indices[y] as number
+          const a = guards[i] as Node
+          const b = guards[j] as Node
+          const score = Number((guardCosines.get(key(i, j)) ?? 0).toFixed(3))
+          for (const signal of guardSignalsFor(a, b, antonyms)) {
+            const phrases: readonly [string, string] =
+              a.phrase.localeCompare(b.phrase) <= 0 ? [a.phrase, b.phrase] : [b.phrase, a.phrase]
+            withheldBy.push({ signal, phrases, cosine: score })
+          }
+        }
+      }
+
+      const internal = pairwiseCosines(indices, guards, guardCosines, key)
+      // A cross-slot collision is the ONE case where the entry would reach outside the guard
+      // family, and `glossaryIndex` is kind-blind so nothing downstream would notice.
+      const collides = [...members.flatMap((m) => m.phrases)].some((p) =>
+        scan.responseKeys.has(normalize(p)),
+      )
+      if (collides) {
+        withheldBy.push({
+          signal: 'cross-slot-collision',
+          phrases: [chosen.canonical, aliases[0] as string],
+          cosine: internal.min,
+        })
+      }
+
+      guardClasses.push({
+        vocabulary: 'guard',
+        system: members[0]?.system ?? '',
+        canonical: chosen.canonical,
+        aliases,
+        members: members.map(asMember),
+        minCosine: internal.min,
+        weakestPair: internal.pair,
+        transitive: internal.min < threshold,
+        unlocks: withheldBy.length > 0 ? [] : unlocksFor(doc, chosen.canonical, aliases),
+        withheldBy,
+        remedies: guardRemediesFor(members[0] as Node, members[1] as Node, withheldBy.length > 0),
+      })
+    }
+  }
+
   classes.sort((a, b) => a.minCosine - b.minCosine || a.canonical.localeCompare(b.canonical))
   unresolved.sort((a, b) => a.reason.localeCompare(b.reason) || a.system.localeCompare(b.system))
+  // Suggestable first, then withheld; weakest-first within each, so the likeliest-wrong reads
+  // before the likeliest-right in both halves.
+  guardClasses.sort(
+    (a, b) =>
+      a.withheldBy.length - b.withheldBy.length ||
+      a.minCosine - b.minCosine ||
+      a.canonical.localeCompare(b.canonical),
+  )
   oppositions.sort(
     (a, b) =>
       a.system.localeCompare(b.system) ||
@@ -800,22 +1351,31 @@ export const buildGlossaryPlan = async (
   )
 
   return {
+    // The slot the applyable `ops` rewrite — guard alignment is suggest-only, so this stays
+    // `'response'` and no consumer branching on it changes meaning.
     vocabulary: 'response',
+    vocabularies: ['response', 'guard'],
     threshold,
     oppositionCosineFloor: DEFAULT_OPPOSITION_COSINE_FLOOR,
     canonicalRule: 'lexicographic-smallest-normalized-body',
     embedderIsStub: options.embedderIsStub ?? false,
     corpus: {
-      requirements: encodeIncluded(doc).length,
+      requirements: scan.requirements,
       systems: bySystem.size,
       responseNodes: nodes.length,
-      embedded: vectors.length,
-      pairsCompared,
+      guardNodes: guards.length,
+      embedded: allVectors.length,
+      pairsCompared: pairsCompared + guardPairsCompared,
+      responsePairsCompared: pairsCompared,
+      guardPairsCompared,
       alreadyUnified,
+      guardPhrasesFolded: scan.guardPhrasesFolded,
+      crossSlotPhrases: [...scan.guardKeys].filter((k) => scan.responseKeys.has(k)).length,
       oppositionSignals: signals.size,
     },
     classes,
     unresolved,
+    guardClasses,
     oppositions,
     ops: classes.flatMap((c) => c.ops),
   }
@@ -897,7 +1457,8 @@ const aliasesFor = (members: readonly Node[], canonical: string): string[] => {
 }
 
 const asMember = (n: Node): GlossaryMember => ({
-  atom: n.atom,
+  // A REAL atom name, never the synthetic guard grouping key — see `Node.atomNames`.
+  atom: n.atomNames[0] ?? n.atom,
   phrase: n.phrase,
   phrases: n.phrases,
   requirementIds: n.requirementIds,
@@ -971,6 +1532,14 @@ const messageFor = (
         `${phrases} cluster together, but the canonical this class would use is itself already ` +
         'an alias of something else. Alias resolution is ONE HOP, so the chain would silently ' +
         'never resolve. Point the existing entry at a canonical outside this class, then re-run.'
+      )
+    case 'cross-slot-collision':
+      return (
+        `${phrases} cluster together, but at least one of those phrasings also appears in the ` +
+        'OTHER slot family in this document. A glossary entry rewrites a phrase in EVERY slot — ' +
+        'the committed table has no slot scope — so merging these would also move atoms in that ' +
+        'family, changing which requirements the contradiction tier compares. The whole class is ' +
+        'withheld. Reword one side so the two slots do not share a phrase, then re-run.'
       )
   }
 }

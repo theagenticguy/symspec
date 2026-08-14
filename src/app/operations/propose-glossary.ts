@@ -121,6 +121,37 @@ const oppositionClause = (plan: GlossaryPlan): string => {
   )
 }
 
+/**
+ * The guard clause, appended to either branch below.
+ *
+ * Guard alignment is the highest-leverage thing the plan proposes — context groups are keyed
+ * on guard atoms, so two requirements whose triggers are paraphrases are never compared at
+ * all — and it is the only thing the plan proposes that is NEVER applyable. Both facts belong
+ * in the one line a reader sees, because an agent that pipes `opsJsonl` needs to know that
+ * the biggest suggestions are not in it.
+ */
+const guardClause = (plan: GlossaryPlan): string => {
+  const total = plan.guardClasses.length
+  if (total === 0) {
+    return plan.corpus.guardNodes > 0
+      ? ` Compared ${plan.corpus.guardPairsCompared} guard pair(s) across ` +
+          `${plan.corpus.guardNodes} distinct trigger/precondition phrasing(s): nothing to align.`
+      : ''
+  }
+  const withheld = plan.guardClasses.filter((g) => g.withheldBy.length > 0).length
+  const unlocks = new Set(plan.guardClasses.flatMap((g) => g.unlocks)).size
+  return (
+    ` ${total} guard alignment(s) across ${plan.corpus.guardNodes} trigger/precondition ` +
+    `phrasing(s)` +
+    (withheld > 0 ? `, ${withheld} of them WITHHELD as likely-different conditions` : '') +
+    (unlocks > 0
+      ? `; aligning the rest would make ${unlocks} requirement(s) comparable for the first time`
+      : '') +
+    '. Guard alignments are suggestions only and never appear in `ops`: a wrong one asserts two ' +
+    'different conditions are one and can prove a conflict the document does not contain.'
+  )
+}
+
 /** One line a human can read before deciding whether to read the rest. */
 const summarize = (plan: GlossaryPlan): string => {
   const merges = plan.ops.length
@@ -133,7 +164,8 @@ const summarize = (plan: GlossaryPlan): string => {
       `${plan.threshold}. The vocabulary is already distinct, or already unified — ` +
       `${plan.corpus.alreadyUnified} phrasing(s) were folded by the committed tables before ` +
       'this pass ran.' +
-      oppositionClause(plan)
+      oppositionClause(plan) +
+      guardClause(plan)
     )
   }
   const transitive = plan.classes.filter((c) => c.transitive).length
@@ -144,7 +176,8 @@ const summarize = (plan: GlossaryPlan): string => {
     (transitive > 0
       ? `; ${transitive} class(es) formed by CHAINING rather than direct similarity and are listed first.`
       : '.') +
-    oppositionClause(plan)
+    oppositionClause(plan) +
+    guardClause(plan)
   )
 }
 
