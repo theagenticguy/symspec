@@ -579,10 +579,19 @@ export const buildGlossaryPlan = async (
   // classes' aliases are now transitively merged ACROSS systems, on evidence that only
   // ever compared within one. Soundness of the resulting table is not the property that
   // matters here; provenance of the merge is.
+  //
+  // Counted over every FOLDED phrase, not each node's representative, because every folded
+  // phrase becomes an alias key (see `aliasesFor`). Counting representatives alone would
+  // leave a collision on a non-representative spelling invisible to this pass and then let
+  // `applyGlossary` fork the group by table order — the exact defect the reconciliation
+  // exists to catch, reachable through the phrasing the author happened not to write first.
   const claimingClasses = new Map<string, number>()
   for (const c of candidates) {
-    for (const m of c.members) {
-      const phrase = normalize(m.phrase)
+    // A node may fold two spellings onto one normalized key; that is ONE claim by this
+    // class, not two, so dedupe within the class before counting across classes.
+    const claimed = new Set<string>()
+    for (const m of c.members) for (const phrase of m.phrases) claimed.add(normalize(phrase))
+    for (const phrase of claimed) {
       claimingClasses.set(phrase, (claimingClasses.get(phrase) ?? 0) + 1)
     }
   }
@@ -591,25 +600,34 @@ export const buildGlossaryPlan = async (
   const unresolved: UnresolvedClass[] = []
   for (const c of candidates) {
     const chosen = pickCanonical(c.members, new Set(c.existingCanonicals), committed)
-    const aliases = c.members
-      .filter((m) => normalize(m.phrase) !== normalize(chosen.canonical))
-      .map((m) => m.phrase)
-      .sort()
-    const contested = c.members.some((m) => (claimingClasses.get(normalize(m.phrase)) ?? 0) > 1)
+    const aliases = aliasesFor(c.members, chosen.canonical)
+    // Contested on ANY folded phrase, matching what `claimingClasses` counted.
+    const contested = c.members.some((m) =>
+      m.phrases.some((p) => (claimingClasses.get(normalize(p)) ?? 0) > 1),
+    )
     const aliasUnderOther = c.members.some((m) => {
       const mapped = committed.get(normalize(m.phrase))
       return mapped !== undefined && mapped !== normalize(chosen.canonical)
     })
 
+    // MOST-SPECIFIC FIRST, and the order is load-bearing rather than cosmetic.
+    //
+    // `canonicalIsExistingAlias` is a strictly narrower condition than `aliasUnderOther`:
+    // the chosen canonical is always a MEMBER, so if it maps to something other than
+    // itself then that member maps to something other than the chosen canonical, which is
+    // `aliasUnderOther` by definition. Testing the general condition first therefore made
+    // the specific one unreachable for EVERY document — a dead branch no fixture could
+    // enter, which is why it had no test. The narrower reason carries the actionable
+    // detail (one-hop resolution would silently drop the merge), so it must be asked first.
     const reason: UnresolvedReason | undefined =
       c.pairs.length > 0
         ? 'opposition-candidate'
-        : c.existingCanonicals.length > 1 || aliasUnderOther
-          ? 'existing-canonical-conflict'
-          : contested
-            ? 'cross-system-conflict'
-            : c.canonicalIsExistingAlias
-              ? 'canonical-is-existing-alias'
+        : c.canonicalIsExistingAlias
+          ? 'canonical-is-existing-alias'
+          : c.existingCanonicals.length > 1 || aliasUnderOther
+            ? 'existing-canonical-conflict'
+            : contested
+              ? 'cross-system-conflict'
               : undefined
 
     if (reason !== undefined) {
@@ -704,6 +722,46 @@ const pickCanonical = (
     atom: chosen?.atom ?? '',
     forced: forced !== undefined,
   }
+}
+
+/**
+ * Every phrasing that must be aliased for the class to actually collapse — one per
+ * FOLDED PHRASE, not one per node.
+ *
+ * ## Why the node's representative is not enough
+ *
+ * `atomize` looks the glossary up on `normalize(rawText)` and does it FIRST, before
+ * de-inflection and before the copula strip. A node carries every raw phrase that landed
+ * on its atom, and de-inflection or a dropped copula is often what put them there — so a
+ * sibling's normalized form is NOT the representative's, and it misses a lookup keyed on
+ * the representative alone.
+ *
+ * Aliasing only the representative therefore SPLITS a group the tables already unified:
+ * the representative is rewritten to the canonical while its sibling keeps its own body
+ * and stays behind. An author who ran this pass to align their vocabulary would end with
+ * less alignment than they started with, and the tool would have caused it. Aliasing every
+ * folded phrase is the fix, and it is also strictly more robust — the fold is pinned by a
+ * committed record instead of re-derived by morphology on every run.
+ *
+ * Deduplicated by NORMALIZED key, because that is the key `glossaryIndex` holds and
+ * `applyGlossary` matches on: two raw spellings that normalize alike ("Issue a token." and
+ * "issue a token") need one entry, and emitting both would be a no-op the fold reports as
+ * a duplicate. The smallest raw spelling wins, the same tie-break `pickCanonical` uses, so
+ * the choice is order-independent.
+ */
+const aliasesFor = (members: readonly Node[], canonical: string): string[] => {
+  const canonicalKey = normalize(canonical)
+  const byKey = new Map<string, string>()
+  for (const m of members) {
+    for (const phrase of m.phrases) {
+      const key = normalize(phrase)
+      // The canonical's own spelling is not an alias of itself; `applyGlossary` refuses it.
+      if (key === canonicalKey) continue
+      const seen = byKey.get(key)
+      if (seen === undefined || phrase.localeCompare(seen) < 0) byKey.set(key, phrase)
+    }
+  }
+  return [...byKey.values()].sort()
 }
 
 const asMember = (n: Node): GlossaryMember => ({

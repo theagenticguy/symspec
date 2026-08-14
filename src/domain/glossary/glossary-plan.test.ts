@@ -27,6 +27,7 @@ import { toEngineDoc } from '../compat.ts'
 import { glossaryIndex, normalize } from '../engine/formal/atomize.ts'
 import type { Embedder } from '../engine/formal/embed.ts'
 import { findOppositionCandidates } from '../engine/formal/semantic.ts'
+import { encodeIncluded } from '../engine/pipeline/check.ts'
 import { DOC_VERSION, type RequirementsDocument } from '../requirements/document.ts'
 import { foldOps } from '../requirements/mutate.ts'
 import type { DocumentOp } from '../requirements/ops.ts'
@@ -153,6 +154,53 @@ const applyPlan = (document: RequirementsDocument, ops: readonly DocumentOp[]) =
   return folded.document
 }
 
+/**
+ * Every response phrase in the document, mapped to the atom it lands on.
+ *
+ * Read through `encodeIncluded` — the same function the planner derives its nodes from and
+ * the same one `check` compares — so the folding this reports is the folding the solver
+ * sees, not a re-derivation that could disagree.
+ */
+const responseFolding = (document: RequirementsDocument): Map<string, string> => {
+  const byPhrase = new Map<string, string>()
+  for (const encoded of encodeIncluded(toEngineDoc(document))) {
+    for (const row of encoded.atoms) {
+      if (row.kind === 'resp') byPhrase.set(row.slotText, row.atom)
+    }
+  }
+  return byPhrase
+}
+
+/**
+ * Applying a plan may MERGE atoms. It may never SPLIT a pair the current tables already
+ * unified.
+ *
+ * The failure this catches: `atomize` looks the glossary up on `normalize(rawText)` BEFORE
+ * de-inflection and before the copula strip, so a phrase folded onto a node by either of
+ * those misses the lookup entirely. Alias only the node's representative and that sibling
+ * keeps its own body and stays on the old atom, while the representative moves to the
+ * canonical — so two phrasings that shared an atom before the commit no longer share one
+ * after, and the author who ran `propose-glossary` to align their vocabulary has less
+ * alignment than they started with.
+ */
+const assertNothingSplits = (
+  before: ReadonlyMap<string, string>,
+  after: ReadonlyMap<string, string>,
+): void => {
+  const phrases = [...before.keys()]
+  for (let i = 0; i < phrases.length; i++) {
+    for (let j = i + 1; j < phrases.length; j++) {
+      const p = phrases[i] as string
+      const q = phrases[j] as string
+      if (before.get(p) !== before.get(q)) continue
+      expect(
+        after.get(p),
+        `${JSON.stringify(p)} and ${JSON.stringify(q)} shared atom ${before.get(p)} before the plan and SPLIT after it (${after.get(p)} vs ${after.get(q)})`,
+      ).toBe(after.get(q))
+    }
+  }
+}
+
 describe('applying the plan leaves a SOUND glossary index', () => {
   it('the clean case: three phrasings become one group', async () => {
     const doc = paraphraseDoc()
@@ -229,6 +277,134 @@ describe('applying the plan leaves a SOUND glossary index', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The withhold reasons, each reached by a fixture
+// ---------------------------------------------------------------------------
+
+describe('a class blocked by the committed table names WHICH way it is blocked', () => {
+  /**
+   * `canonical-is-existing-alias` — the reason that was UNREACHABLE.
+   *
+   * `canonicalIsExistingAlias` says the chosen canonical is itself an alias of something
+   * outside the class, so committing the class would build `a -> b -> c` and
+   * `glossaryIndex` resolves ONE HOP, leaving the merge the author thought they made
+   * silently undone.
+   *
+   * The chosen canonical is always a MEMBER, so whenever that holds, the member's own
+   * mapping differs from the chosen canonical — which is exactly `aliasUnderOther`, the
+   * test guarding `existing-canonical-conflict`. With that reason earlier in the ladder,
+   * this branch could never be entered by any document. Ordering the ladder
+   * most-specific-first is what makes it reachable, and this fixture is what proves it.
+   */
+  /**
+   * The two phrasings differ in their OBJECT, so `same-object-different-verb` does not
+   * fire and the class reaches the committed-table ladder at all. A same-object pair
+   * (`alpha the token` / `beta the token`) is quarantined as an opposition candidate long
+   * before any of these reasons is consulted.
+   */
+  it('reports canonical-is-existing-alias, not the more general conflict', async () => {
+    const doc = docOf(
+      [
+        req('ledger service', 'reconcile the ledger', 'the day closes'),
+        req('ledger service', 'settle the accounts', 'the day closes'),
+      ],
+      // `reconcile the ledger` — which the lexicographic rule picks as canonical — is
+      // already an alias of a phrase NO member of this class mentions.
+      { glossary: [{ canonical: 'zeta the batch', aliases: ['reconcile the ledger'] }] },
+    )
+    const plan = await buildGlossaryPlan(
+      toEngineDoc(doc),
+      tableEmbedder({ 'reconcile the ledger': [1, 0.05], 'settle the accounts': [1, 0.08] }),
+    )
+    expect(plan.ops).toEqual([])
+    expect(plan.unresolved.map((u) => u.reason)).toEqual(['canonical-is-existing-alias'])
+    assertIndexIsSound(applyPlan(doc, plan.ops))
+  })
+
+  /**
+   * `existing-canonical-conflict` — reachable before and after the reorder, and previously
+   * untested. Two members are each already a canonical of their own committed group, so
+   * there is no way to pick one without demoting the other.
+   */
+  it('reports existing-canonical-conflict when two members are both already canonical', async () => {
+    const doc = docOf(
+      [
+        req('ledger service', 'reconcile the ledger', 'the day closes'),
+        req('ledger service', 'settle the accounts', 'the day closes'),
+      ],
+      {
+        glossary: [
+          { canonical: 'reconcile the ledger', aliases: ['reconcile the books'] },
+          { canonical: 'settle the accounts', aliases: ['settle the balances'] },
+        ],
+      },
+    )
+    const plan = await buildGlossaryPlan(
+      toEngineDoc(doc),
+      tableEmbedder({ 'reconcile the ledger': [1, 0.05], 'settle the accounts': [1, 0.08] }),
+    )
+    expect(plan.ops).toEqual([])
+    const held = plan.unresolved.find((u) => u.reason === 'existing-canonical-conflict')
+    expect(held, JSON.stringify(plan.unresolved)).toBeDefined()
+    // The message must name BOTH canonicals, or the author cannot tell what to reconcile.
+    expect(held?.existingCanonicals).toEqual(['reconcile_the_ledger', 'settle_the_accounts'])
+    assertIndexIsSound(applyPlan(doc, plan.ops))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Applying a plan may merge atoms; it may never split them
+// ---------------------------------------------------------------------------
+
+describe('the plan never SPLITS a pair the tables already unified', () => {
+  /**
+   * `settle the accounts` and `settles the accounts` share one atom today, because
+   * `deInflectHead` folds the 3sg form. The class merges them onto `reconcile the ledger`,
+   * whose object DIFFERS, so no opposition signal quarantines it.
+   *
+   * Verbs chosen for two reasons: neither `settle` nor `reconcile` is in the seed antonym
+   * table, so no polarity re-basing muddies the atom; and the objects differ, so
+   * `same-object-different-verb` does not fire.
+   */
+  const ledgerDoc = () =>
+    docOf([
+      req('ledger service', 'reconcile the ledger', 'the day closes'),
+      req('ledger service', 'settle the accounts', 'the day closes'),
+      req('ledger service', 'settles the accounts', 'the batch lands'),
+    ])
+  const LEDGER_TABLE = {
+    'reconcile the ledger': [1, 0.05],
+    'settle the accounts': [1, 0.08],
+    'settles the accounts': [1, 0.08],
+  } as const
+
+  it('aliases every folded phrasing, not just the node`s representative', async () => {
+    const doc = ledgerDoc()
+    const before = responseFolding(doc)
+    // The premise: the two spellings really do share an atom before anything is applied.
+    expect(before.get('settle the accounts')).toBe(before.get('settles the accounts'))
+
+    const plan = await buildGlossaryPlan(toEngineDoc(doc), tableEmbedder(LEDGER_TABLE))
+    expect(plan.ops.length, JSON.stringify(plan)).toBeGreaterThan(0)
+
+    const applied = applyPlan(doc, plan.ops)
+    assertNothingSplits(before, responseFolding(applied))
+    assertIndexIsSound(applied)
+  })
+
+  it('holds for every fixture in this file, not just the one built for it', async () => {
+    for (const [table, build] of [
+      [PARAPHRASE_TABLE, paraphraseDoc],
+      [LEDGER_TABLE, ledgerDoc],
+    ] as const) {
+      const doc = build()
+      const before = responseFolding(doc)
+      const plan = await buildGlossaryPlan(toEngineDoc(doc), tableEmbedder(table))
+      assertNothingSplits(before, responseFolding(applyPlan(doc, plan.ops)))
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Ambiguity: never fabricate a merge across a suspected opposite
 // ---------------------------------------------------------------------------
 
@@ -268,13 +444,52 @@ describe('a suspected opposite quarantines its whole class', () => {
     expect(held, JSON.stringify(plan.unresolved)).toBeDefined()
     const kinds = new Set(held?.pairs.flatMap((p) => p.remedies.map((r) => r.kind)))
     // The tool must not pick. Both readings are offered, each saying what it costs.
-    expect(kinds.has('as-synonyms') || kinds.has('realign-objects')).toBe(true)
-    expect(kinds.has('as-antonyms') || kinds.has('realign-objects')).toBe(true)
+    //
+    // Asserted as an EXACT set rather than two disjunctions. `has(x) || has('realign-objects')`
+    // is satisfied by either half, so it passed without `realign-objects` ever appearing in
+    // any fixture — a shape that reads like it covers both remedies while pinning neither.
+    // The seed-antonym case below is where `realign-objects` is actually reached.
+    expect([...kinds].sort()).toEqual(['as-antonyms', 'as-synonyms'])
     for (const pair of held?.pairs ?? []) {
       for (const remedy of pair.remedies) {
         expect(remedy.consequence.length, `${remedy.kind} has no consequence`).toBeGreaterThan(20)
       }
     }
+  })
+
+  /**
+   * The `seed-antonym` signal and its `realign-objects` remedy — the branch that offers
+   * only TWO remedies and deliberately omits `as-antonyms`.
+   *
+   * `grant` and `revoke` already sit in one signed class (via grant/revoke, grant/deny,
+   * and deny's other pairs) at opposite polarity, so `symspec antonym grant revoke` would
+   * change nothing. The reason these did not unify is the OBJECT: `access` against
+   * `permission`. Offering an antonym op here would hand an agent a command that runs
+   * clean and fixes nothing.
+   */
+  it('offers realign-objects, and NO antonym op, when the table already relates the verbs', async () => {
+    const doc = docOf([
+      req('vault service', 'grant access', 'the badge scans'),
+      req('vault service', 'revoke permission', 'the badge scans'),
+    ])
+    const plan = await buildGlossaryPlan(
+      toEngineDoc(doc),
+      tableEmbedder({ 'grant access': [1, 0.05], 'revoke permission': [1, 0.08] }),
+    )
+    const held = plan.unresolved.find((u) => u.reason === 'opposition-candidate')
+    expect(held, JSON.stringify(plan.unresolved)).toBeDefined()
+    const pair = held?.pairs[0]
+    expect(pair?.signal).toBe('seed-antonym')
+
+    // Order matters: the remedy that actually works reads FIRST.
+    expect(pair?.remedies.map((r) => r.kind)).toEqual(['realign-objects', 'as-synonyms'])
+    // `realign-objects` is advice, not an op — there is no record that performs it.
+    expect(pair?.remedies[0]?.ops).toEqual([])
+    // And the synonym reading is offered only with the warning that it masks a known conflict.
+    expect(pair?.remedies[1]?.consequence).toContain('OPPOSITES')
+    // The commands must be runnable and must NOT include an inert antonym op.
+    expect(held?.commands.some((c) => c.startsWith('symspec antonym'))).toBe(false)
+    expect(plan.ops).toEqual([])
   })
 
   it('names the AUTHOR`s verbs, not the antonym class canonical', async () => {
