@@ -725,7 +725,7 @@ There are 24 operations. All of them are projections of one operations table, wh
 | Analysis | `check` |
 | Agent surface | `manifest`, `explain`, `version`, `install`, `download-model` |
 
-There are **81 stable codes** across three catalogs. `ERR_*` codes are operational failures,
+There are **83 stable codes** across three catalogs. `ERR_*` codes are operational failures,
 `FND_*` codes are check findings, and `GTWR_*` codes are lint rules from the INCOSE *Guide to
 Writing Requirements*. `symspec explain` resolves any of them. The catalogs are append-only, so a
 code's meaning never changes and a code is never removed. Agents branch on these codes, which is
@@ -742,7 +742,12 @@ why they are treated as API.
    bounds over LIA/LRA, plus an opt-in bounded-LTL temporal tier. Findings carry unsat-core
    evidence.
 5. **Semantic** proposes paraphrase and opposition candidates from a local pinned embedding
-   model. It never produces a verdict.
+   model, and questions committed vocabulary in the other direction: `FND_TERM_INCONSISTENT`
+   reports a `terms` or `glossary` entry applied in two requirements whose surrounding text is
+   unrelated, because one entry covering two concepts fuses them onto a single atom and hides a
+   conflict rather than proving one. `FND_ACRONYM_UNDEFINED` names an acronym in neither table.
+   It never produces a verdict, and these two never demote one either — a wording opinion must
+   not fail a build, so they leave `verified`, `--strict`, and the exit code untouched.
 6. **Reachability (unbounded)** runs Z3 Spacer over a declared state model, returning re-verified
    inductive invariants and counterexample traces that name requirements.
 

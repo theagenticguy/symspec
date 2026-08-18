@@ -598,6 +598,35 @@ describe('the README agrees with the tool about its own surface', () => {
 
   it('states the total code count across the three catalogs', () => {
     expect(readme).toContain(`**${codeCount} stable codes**`)
+    // The negative half, which this assertion lacked while the sibling three lines above
+    // spelled out in a comment exactly why it is needed. Adding two codes took the real
+    // count to 83 and left `**81 stable codes**` in the README with this test still green,
+    // because `toContain` cannot tell a live number from a stale one sitting beside it.
+    expect(readme).not.toContain(`**${codeCount - 1} stable codes**`)
+    expect(readme).not.toContain(`**${codeCount - 2} stable codes**`)
+  })
+
+  it('states the GtWR rule count the lint catalog actually holds', () => {
+    // Ungated until now, and it is the third count in this file. Gated individually rather
+    // than by extending `repair.test.ts`'s `HAND_TYPED_COUNT` sweep to Markdown: that sweep
+    // demands the number be INTERPOLATED, which a static README cannot do. The sweep's
+    // premise holds for generated surfaces (`AGENTS.md`, the installed skill) and not here,
+    // so the honest gate is a derived assertion with the same negative half.
+    expect(readme).toContain(`${manifestNow.lintCodes.length} INCOSE rules`)
+    expect(readme).not.toContain(`${manifestNow.lintCodes.length - 1} INCOSE rules`)
+    expect(readme).not.toContain(`${manifestNow.lintCodes.length + 1} INCOSE rules`)
+  })
+
+  it('does not ship a stale code count to the npm registry', () => {
+    // `package.json`'s `description` is the registry listing — the most-read sentence this
+    // package has and the only count with no gate at all. It said `81 stable codes` while
+    // the catalog held 83, and nothing anywhere would have failed: `publish.test.ts:109`
+    // checks the description's LENGTH and keywords, and the `HAND_TYPED_COUNT` sweep reads
+    // only `src/**/*.ts`.
+    const description = JSON.parse(read('package.json')).description as string
+    expect(description).toContain(`${codeCount} stable codes`)
+    expect(description).not.toContain(`${codeCount - 1} stable codes`)
+    expect(description).not.toContain(`${codeCount - 2} stable codes`)
   })
 
   it('lists EVERY operation in the operations TABLE, not merely somewhere', () => {
