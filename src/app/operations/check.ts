@@ -77,6 +77,7 @@ import type { Exclusion } from '../../domain/engine/pipeline/gate.ts'
 import { type ReachabilityReport, runReachability } from '../../domain/reachability/reachability.ts'
 import { projectReachability } from '../../domain/reachability/reachability-report.ts'
 import type { DocumentDiagnostic } from '../../domain/requirements/document.ts'
+import { runTerminology } from '../../domain/terminology/terminology.ts'
 import { runnableInProse } from '../../ports/command-form.ts'
 import { DocPath, DocStore } from '../../ports/doc-store.ts'
 import { EmbedderService } from '../../ports/embedder.ts'
@@ -247,6 +248,16 @@ export interface ReachabilitySummary {
  * `coverage.demotions[]` are ADDITIVE, so a consumer reading only the tier's fields sees
  * exactly what the tier decided, and the two v5 fields are separable from it by name.
  */
+/** The terminology tier's coverage counters, as published on the payload. */
+export interface TerminologySummary {
+  /** Committed vocabulary keys occurring in two or more requirements of one system. */
+  readonly keysExamined: number
+  /** Requirement pairs whose slot texts were compared by cosine. */
+  readonly pairsCompared: number
+  /** Distinct acronyms found in the document text, the shared common ones excluded. */
+  readonly acronymsExamined: number
+}
+
 export interface CheckPayload extends Omit<CheckReport, 'coverage'> {
   readonly coverage: Omit<CheckReport['coverage'], 'demotions'> & {
     readonly demotions: readonly RepairableDemotion[]
@@ -268,6 +279,19 @@ export interface CheckPayload extends Omit<CheckReport, 'coverage'> {
    * `../formal/reachability-report.ts` for how they become findings.
    */
   readonly reachability?: ReachabilitySummary
+  /**
+   * What the terminology tier EXAMINED — present ONLY when the semantic tier ran.
+   *
+   * Absent under `--semantic=false`, so the absence means "the tier did not run" and a
+   * zero means "it ran and had nothing to look at". Those are different facts with
+   * different remedies (supply an embedder vs commit some vocabulary), and reporting both
+   * as silence is the shape `FND_NO_PAIRS_CHECKED` exists to prevent.
+   *
+   * Counters only. The tier's findings travel in `findings[]` like every other tier's, and
+   * it contributes no demotion at all — see `../../domain/terminology/terminology-codes.ts`
+   * for why a vocabulary opinion must not become a gate.
+   */
+  readonly terminology?: TerminologySummary
   /** The resolved document path, so an agent can quote it in a follow-up. */
   readonly path: string
   /** The load's info-grade disclosures (V27 channel), surfaced on every read. */
@@ -823,6 +847,50 @@ export const checkOp = defineOperation({
       const reachabilityProjection =
         reachabilityRun !== undefined ? projectReachability(reachabilityRun, path) : undefined
 
+      // The TERMINOLOGY tier — set-level vocabulary consistency, propose-only.
+      //
+      // Runs HERE, at the app boundary, for the same reason `runReachability` does: it needs
+      // the greenfield document (both committed side tables) and the engine pipeline never
+      // sees that shape. `engine/pipeline/check.ts` is untouched.
+      //
+      // The position is load-bearing in one specific way. `FND_NO_PAIRS_CHECKED` — "nothing
+      // was compared across requirements, so this is NOT a consistency certificate" — is
+      // suppressed by the engine when any finding spans two or more requirement ids, and it
+      // is computed INSIDE `runCheck`, which has already returned. So a terminology finding
+      // physically cannot quiet that disclaimer. That matters because this tier compares
+      // requirements for VOCABULARY, never for consistency: letting it suppress the
+      // disclaimer would assert a comparison that never happened. The property is asserted
+      // in the suite rather than left to rest on this comment, so relocating the splice
+      // cannot silently take the disclaimer with it.
+      //
+      // Gated on the same `embedder` every other semantic detector is, so `--semantic=false`
+      // skips it under the EXISTING `semantic-tier-skipped` demotion. No second demotion
+      // reason for one fact.
+      const terminology =
+        embedder !== undefined
+          ? yield* Effect.tryPromise({
+              // No options. `--semantic-threshold` is deliberately NOT forwarded: it tunes
+              // recall-favoring paraphrase detection at 0.72, while this floor is
+              // precision-favoring at a measured 0.62. Forwarding one number into both would
+              // couple two opposite judgments through a single flag, and the calibration
+              // lesson's closing rule is that a shared value must not become a shared knob.
+              try: () => runTerminology(loaded.document, embedder),
+              // A propose-only vocabulary opinion must never be able to fail a check. The
+              // tier has no solver contact and its only fallible step is the embedder call
+              // — which already failed closed above, at `EmbedderService.load`, so reaching
+              // this catch means a genuine defect. Report it as an inconclusive check rather
+              // than swallowing it, because a silently-empty propose tier is exactly the
+              // "detector skipped by omission" shape the embedder load is ordered to prevent.
+              catch: (cause) =>
+                new ErrSolverInconclusive({
+                  error: `The terminology tier did not complete: ${cause instanceof Error ? cause.message : String(cause)}`,
+                  suggestions: [
+                    'Re-run with --semantic=false to skip the vocabulary tier; the formal verdict does not depend on it.',
+                  ],
+                }),
+            })
+          : undefined
+
       // Output shaping is applied AFTER the repairs are computed from the full
       // report, so a filter cannot strip a remedy. Presentation only: it never
       // touches `counts`, so the exit code is identical filtered or not.
@@ -865,6 +933,23 @@ export const checkOp = defineOperation({
           }),
         )
 
+      // Filtered by the SAME `--min-severity` rule as every other tier, so
+      // `--min-severity error` drops these exactly as it drops any other info finding.
+      // Tier `'formal'` because that is what `FND_SIMILAR_SEMANTIC` reports and this is the
+      // dual of it — one kind of claim, one tier.
+      const terminologyFindings: readonly CheckFinding[] = (terminology?.findings ?? [])
+        .filter((f) => severityAtLeast(f.severity, input.minSeverity))
+        .map(
+          (f): CheckFinding => ({
+            code: f.code,
+            severity: f.severity,
+            tier: 'formal' satisfies CheckTier,
+            requirementIds: [...f.requirementIds],
+            message: f.message,
+            suggestion: f.suggestion,
+          }),
+        )
+
       const reachabilityDemotions: readonly RepairableDemotion[] = (
         reachabilityProjection?.demotions ?? []
       ).map((d) => ({
@@ -879,11 +964,13 @@ export const checkOp = defineOperation({
       // `kernel/command-form.ts`), and a human reading `--pretty` copies the command out
       // of the message, not out of `repair.commands`. Normalizing one and not the other
       // would print two spellings of one command in adjacent fields of one envelope.
-      const allFindings = [...shaped.findings, ...reachabilityFindings].map((f) => ({
-        ...f,
-        message: runnableInProse(f.message),
-        ...(f.suggestion !== undefined ? { suggestion: runnableInProse(f.suggestion) } : {}),
-      }))
+      const allFindings = [...shaped.findings, ...reachabilityFindings, ...terminologyFindings].map(
+        (f) => ({
+          ...f,
+          message: runnableInProse(f.message),
+          ...(f.suggestion !== undefined ? { suggestion: runnableInProse(f.suggestion) } : {}),
+        }),
+      )
       const allDemotions = [
         ...withRepairs(
           full.coverage.demotions,
@@ -900,11 +987,17 @@ export const checkOp = defineOperation({
       // code keys on the same numbers the payload publishes. A reachability VIOLATED
       // finding is error-severity, so it drives exit 1 through the existing contract with
       // no new wiring — which is the whole reason it goes in `findings[]`.
+      //
+      // The terminology tier is counted here too, and it can only ever move `info`: its
+      // finding type declares `severity: 'info'` as a literal, so an `error` from it is a
+      // `tsc` failure rather than a runtime surprise. That is what makes "this tier cannot
+      // change the exit code" a checked property instead of a promise — `counts.error` is
+      // the only number `exitCodeForEnvelope` reads, and no term drift can reach it.
+      const spliced = [...reachabilityFindings, ...terminologyFindings]
       const counts = {
-        error:
-          shaped.counts.error + reachabilityFindings.filter((f) => f.severity === 'error').length,
-        warn: shaped.counts.warn + reachabilityFindings.filter((f) => f.severity === 'warn').length,
-        info: shaped.counts.info + reachabilityFindings.filter((f) => f.severity === 'info').length,
+        error: shaped.counts.error + spliced.filter((f) => f.severity === 'error').length,
+        warn: shaped.counts.warn + spliced.filter((f) => f.severity === 'warn').length,
+        info: shaped.counts.info + spliced.filter((f) => f.severity === 'info').length,
       }
 
       const payload: CheckPayload = {
@@ -960,6 +1053,16 @@ export const checkOp = defineOperation({
         ...(budgetHint !== undefined ? { budgetHint } : {}),
         ...(reachabilityRun !== undefined
           ? { reachability: summarizeReachability(reachabilityRun) }
+          : {}),
+        // Counters only, and ABSENT when the tier did not run — see `TerminologySummary`.
+        ...(terminology !== undefined
+          ? {
+              terminology: {
+                keysExamined: terminology.keysExamined,
+                pairsCompared: terminology.pairsCompared,
+                acronymsExamined: terminology.acronymsExamined,
+              },
+            }
           : {}),
       }
 

@@ -233,6 +233,7 @@ export type Atomize = (
 export function makeAtomize(
   glossary?: ReadonlyMap<string, string>,
   antonyms?: ReadonlyMap<string, AntonymEntry>,
+  terms?: ReadonlyMap<string, readonly string[]>,
 ): Atomize {
   return (kind, slotText, systemName, negated) => {
     const a = atomize({
@@ -242,6 +243,7 @@ export function makeAtomize(
       negated,
       ...(glossary !== undefined ? { glossary } : {}),
       ...(antonyms !== undefined ? { antonyms } : {}),
+      ...(terms !== undefined ? { terms } : {}),
     })
     return { atom: a.name, negated: a.negated, ref: a.ref }
   }
@@ -283,6 +285,17 @@ export interface AtomizeArgs {
    * `resp` slots, after the glossary rewrite.
    */
   antonyms?: ReadonlyMap<string, AntonymEntry>
+  /**
+   * Optional term index: committed NOUN-PHRASE substitutions, applied INSIDE the body.
+   *
+   * The compositional half of {@link glossary}. That map replaces a whole body; this one
+   * rewrites a token run within it, so one committed entry aligns a noun everywhere it appears
+   * — including in requirements written after the entry. Built by {@link termIndex} from the
+   * document's committed `terms`. Omitted ⇒ behavior is byte-identical to a term-free run.
+   *
+   * Consulted for EVERY slot kind, after the glossary rewrite and before the copula strip.
+   */
+  terms?: ReadonlyMap<string, readonly string[]>
 }
 
 /**
@@ -291,6 +304,92 @@ export interface AtomizeArgs {
  * {@link normalize} so a glossary authored in natural phrasing matches the
  * normalized slot body. A canonical mapped to itself is harmless (idempotent).
  */
+/**
+ * Build the token-sequence substitution table {@link atomize} consumes from a document's
+ * committed `terms`.
+ *
+ * Keyed on the underscore-joined NORMALIZED alias, valued as the canonical's TOKEN LIST — so
+ * the substitution below can splice tokens without re-splitting on every hit. Both sides run
+ * through {@link normalize}, exactly as {@link glossaryIndex} does, so a term authored in
+ * natural phrasing matches a normalized body.
+ *
+ * An alias that normalizes to nothing is dropped rather than stored: an empty key would match
+ * at every position.
+ */
+export function termIndex(
+  entries: ReadonlyArray<{ canonical: string; aliases: readonly string[] }>,
+): Map<string, readonly string[]> {
+  const index = new Map<string, readonly string[]>()
+  for (const { canonical, aliases } of entries) {
+    const canonTokens = normalize(canonical).split('_').filter(Boolean)
+    if (canonTokens.length === 0) continue
+    for (const alias of aliases) {
+      const key = normalize(alias)
+      if (key.length === 0) continue
+      index.set(key, canonTokens)
+    }
+  }
+  return index
+}
+
+/**
+ * Substitute committed terms inside a normalized body. Pure; returns `body` unchanged when
+ * the index is empty or nothing matches.
+ *
+ * ## The rule, in one sentence
+ *
+ * Scan the token list left to right; at each position take the LONGEST alias that matches a
+ * run of whole tokens starting there; write the canonical's tokens and continue AFTER them.
+ *
+ * Each clause is load-bearing:
+ *
+ * - **Whole tokens.** Matching is over the token list, never the joined string, so a term
+ *   `token` cannot rewrite the inside of `tokenizer`. Substring matching here would be the
+ *   lenient-normalization trap the propose/decide lesson was written about, arriving through a
+ *   committed table instead of a heuristic.
+ * - **Longest first.** With both `session_token` and `token` committed, the three-word phrase
+ *   wins at that position, so a more specific entry is never shadowed by a shorter one and the
+ *   result does not depend on table order.
+ * - **Continue after the tokens just written.** One pass, no re-entry: `a→b` plus `b→c` does
+ *   NOT chain to `c`. That makes the table one-hop, the same rule `glossaryIndex` follows, and
+ *   it is why {@link atomize} is confluent — there is exactly one output per input, with no
+ *   dependence on how many passes a reader imagines.
+ */
+function substituteTerms(body: string, index: ReadonlyMap<string, readonly string[]>): string {
+  if (index.size === 0 || body.length === 0) return body
+  const tokens = body.split('_')
+  // The longest alias in the table bounds the probe window, so a big table costs no more per
+  // position than its widest entry.
+  let widest = 1
+  for (const key of index.keys()) {
+    const width = key.split('_').length
+    if (width > widest) widest = width
+  }
+
+  const out: string[] = []
+  let i = 0
+  while (i < tokens.length) {
+    let hit: readonly string[] | undefined
+    let span = 0
+    for (let width = Math.min(widest, tokens.length - i); width >= 1; width--) {
+      const candidate = index.get(tokens.slice(i, i + width).join('_'))
+      if (candidate !== undefined) {
+        hit = candidate
+        span = width
+        break
+      }
+    }
+    if (hit === undefined) {
+      out.push(tokens[i] as string)
+      i += 1
+      continue
+    }
+    out.push(...hit)
+    i += span
+  }
+  return out.join('_')
+}
+
 export function glossaryIndex(
   entries: ReadonlyArray<{ canonical: string; aliases: readonly string[] }>,
 ): Map<string, string> {
@@ -408,6 +507,21 @@ export function atomize(args: AtomizeArgs): Atom {
   if (args.glossary !== undefined) {
     const canonical = args.glossary.get(body)
     if (canonical !== undefined) body = canonical
+  }
+
+  // Term substitution runs AFTER the whole-body glossary lookup and BEFORE the copula strip.
+  //
+  // After the glossary, because a committed glossary entry is keyed on the AUTHOR'S wording:
+  // rewriting terms first would mean every existing entry's key had to be written in
+  // canonical-term space, which no author does, so every committed entry would silently stop
+  // matching. Before the copula strip, because guard glossary entries are keyed pre-strip too —
+  // the two committed tables share one key space, and a term that only matched post-strip
+  // bodies would be a third.
+  //
+  // Applied to EVERY slot kind. A noun is a noun in a trigger and in a response, and a rule
+  // that fired per-kind would make one committed entry mean two things.
+  if (args.terms !== undefined) {
+    body = substituteTerms(body, args.terms)
   }
 
   // Copula strip applies only to GUARD slots (pre/trig/feat), AFTER the glossary

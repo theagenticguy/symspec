@@ -72,3 +72,50 @@ document the measured band, and single-source it into the manifest. Do not
 couple two thresholds just because they share a value today; if they encode
 different judgments (recall-favoring paraphrase vs precision-favoring
 relatedness), give each its own named constant and rationale.
+
+# Update (2026-08-18): the boilerplate confound, and when the posture INVERTS
+
+Building `FND_TERM_INCONSISTENT` (one committed vocabulary entry applied across two unrelated
+contexts) required a second calibration, and it added two facts this lesson did not have.
+
+**1. Shared boilerplate is a confound that inflates every score.** Measured over 28
+hand-labelled requirement pairs, comparing whole EARS sentences barely separates the two
+populations at all:
+
+| framing | one spelling two meanings | one meaning two requirements | overlap |
+| --- | --- | --- | --- |
+| the EARS sentence as written | 0.5077 .. 0.6992 | 0.6015 .. 0.8753 | +0.0977 |
+| the PARSED SLOTS joined | 0.4785 .. 0.6801 | 0.6458 .. 0.8665 | +0.0342 |
+| slots minus a 24-word stopword list | 0.4820 .. 0.6537 | 0.6354 .. 0.8645 | +0.0182 |
+
+`the system shall` appears in every requirement, so it pulls every pair up: two requirements
+sharing NO vocabulary at all score **0.6800** as sentences. Dropping it cuts the overlap by a
+factor of three. The move that matters is that the DOCUMENT ALREADY HAS THE SLOTS PARSED
+(`trigger` / `preCondition` / `systemResponse`), so the boilerplate is absent by construction
+and no lexicon is introduced. A stopword list buys a further 0.0160 and costs a
+hand-maintained lexicon that then needs per-entry reachability tests — not worth it.
+
+Generalizes: before tuning a threshold, ask what CONSTANT every input shares. A template, a
+prompt prefix, a boilerplate clause, a common suffix — anything present in all texts raises
+the floor and compresses the band you are trying to cut. Strip it using structure the data
+already carries, not a lexicon.
+
+**2. Favor-recall is a consequence, not a rule.** This lesson's own reasoning is that a miss
+hides a real paraphrased conflict behind distinct atoms, which is expensive for a consistency
+checker. When that premise changes, the conclusion must flip with it. A term-drift finding is
+`info`, non-demoting, and gates nothing (see
+[[a-propose-only-finding-that-must-not-demote-either]]), so a MISS costs a wording suggestion
+while a FALSE POSITIVE is pure noise on a signal an author can only act on by reading two
+requirements — and noise is what teaches an author to ignore a tier. So that floor is
+PRECISION-favoring: 0.62, giving 9/12 drift caught with 0/16 honest reuses split.
+
+The rule underneath both: **name which failure is expensive, then bias toward avoiding it.**
+"Propose-only means favor recall" is a shortcut that holds only while a miss hides something
+provable. Also: 0.64 catches the identical nine while leaving 0.0058 of margin under the
+honest-reuse minimum, and 0.62 leaves 0.0258 for the same recall — when two cuts give equal
+recall, take the one with more margin.
+
+And record the MISSES with the recall figure (`seal` 0.6507, `monitor` 0.6796, `port` 0.6801).
+A recall percentage without its misses is not a measurement, and the misses are what tell the
+next reader whether the band is weak or the corpus is small. Here it is genuinely weak: on a
+real end-to-end document the finding landed at 0.61 against a 0.62 floor.

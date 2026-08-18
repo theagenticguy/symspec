@@ -408,10 +408,54 @@ describe('the README is a PACKAGE readme, greenfield-first and honest', () => {
     // convenience and skip the reason to trust it: the refusal happens ABOVE the similarity
     // threshold, which is the one fact that shows cosine is not deciding.
     expect(section).toContain('opposition-candidate')
-    expect(section).toContain('0.809')
+    expect(section).toContain('0.811')
     expect(section).toContain('above the 0.72')
     // And the non-vacuity signal, so "nothing to merge" is distinguishable from "did not look".
     expect(section).toContain('pairsCompared')
+    // NEGATIVE GUARD on the re-measurement. The section claims every number is measured on
+    // this build; the previous fixture's cosine must be GONE, not merely joined by the new
+    // one. A positive-only check passes on prose carrying both.
+    expect(section).not.toContain('0.809')
+  })
+
+  it('shows the GUARD half, and that it is never applyable', () => {
+    const section = readme.slice(
+      readme.indexOf('## Designing the vocabulary in one pass'),
+      readme.indexOf('## Honest scope'),
+    )
+    // The slot that decides whether anything is compared at all.
+    expect(section).toContain('guardClasses')
+    expect(section).toContain('unlocks')
+    // The reason to trust reading it: the biggest suggestions are NOT in the pipeable ops.
+    expect(section).toContain('never appear in `opsJsonl`')
+    // And the hazard direction, stated rather than implied. Matched against whitespace-
+    // collapsed prose, because a reflow that only moved a line break must not fail a claim
+    // about CONTENT.
+    const flowed = section.replace(/\s+/g, ' ')
+    expect(flowed).toContain('prove a conflict your document does not contain')
+    // NEGATIVE GUARD: the pre-change claim that the pass partitions only responses must be
+    // gone. Asserting the new sentence alone would pass on a section carrying both.
+    expect(section).not.toContain('a partition of the\nresponse phrasings')
+    expect(section).not.toContain('partition of the response phrasings')
+  })
+
+  it('documents the TERM table, its blast radius, and the refusal', () => {
+    const section = readme.slice(
+      readme.indexOf('## Designing the vocabulary in one pass'),
+      readme.indexOf('## Honest scope'),
+    )
+    // The compositional claim and the reviewability mechanism.
+    expect(section).toContain('symspec term')
+    expect(section).toContain('blastRadius')
+    expect(section).toContain('termCandidates')
+    // The refusal, and its REASON — a documented restriction with no stated cause reads as an
+    // arbitrary limit, and the next reader removes it.
+    const flowed = section.replace(/\s+/g, ' ')
+    expect(flowed).toContain('Terms are for nouns, and that is enforced rather than advised')
+    expect(flowed).toContain('proving a conflict that is not there')
+    // NEGATIVE GUARD: the section must not claim a term is applyable through `ops`.
+    expect(flowed).not.toContain('term candidates are in `ops`')
+    expect(flowed).toContain('never appear in `ops`')
   })
 
   it('names the gates that make the no-drift claim checkable', () => {
@@ -554,6 +598,35 @@ describe('the README agrees with the tool about its own surface', () => {
 
   it('states the total code count across the three catalogs', () => {
     expect(readme).toContain(`**${codeCount} stable codes**`)
+    // The negative half, which this assertion lacked while the sibling three lines above
+    // spelled out in a comment exactly why it is needed. Adding two codes took the real
+    // count to 83 and left `**81 stable codes**` in the README with this test still green,
+    // because `toContain` cannot tell a live number from a stale one sitting beside it.
+    expect(readme).not.toContain(`**${codeCount - 1} stable codes**`)
+    expect(readme).not.toContain(`**${codeCount - 2} stable codes**`)
+  })
+
+  it('states the GtWR rule count the lint catalog actually holds', () => {
+    // Ungated until now, and it is the third count in this file. Gated individually rather
+    // than by extending `repair.test.ts`'s `HAND_TYPED_COUNT` sweep to Markdown: that sweep
+    // demands the number be INTERPOLATED, which a static README cannot do. The sweep's
+    // premise holds for generated surfaces (`AGENTS.md`, the installed skill) and not here,
+    // so the honest gate is a derived assertion with the same negative half.
+    expect(readme).toContain(`${manifestNow.lintCodes.length} INCOSE rules`)
+    expect(readme).not.toContain(`${manifestNow.lintCodes.length - 1} INCOSE rules`)
+    expect(readme).not.toContain(`${manifestNow.lintCodes.length + 1} INCOSE rules`)
+  })
+
+  it('does not ship a stale code count to the npm registry', () => {
+    // `package.json`'s `description` is the registry listing — the most-read sentence this
+    // package has and the only count with no gate at all. It said `81 stable codes` while
+    // the catalog held 83, and nothing anywhere would have failed: `publish.test.ts:109`
+    // checks the description's LENGTH and keywords, and the `HAND_TYPED_COUNT` sweep reads
+    // only `src/**/*.ts`.
+    const description = JSON.parse(read('package.json')).description as string
+    expect(description).toContain(`${codeCount} stable codes`)
+    expect(description).not.toContain(`${codeCount - 1} stable codes`)
+    expect(description).not.toContain(`${codeCount - 2} stable codes`)
   })
 
   it('lists EVERY operation in the operations TABLE, not merely somewhere', () => {

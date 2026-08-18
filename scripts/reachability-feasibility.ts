@@ -232,6 +232,7 @@ const model = (buggy: boolean): RequirementsDocument => {
     glossary: [],
     antonyms: [],
     waivers: [],
+    terms: [],
   }
 }
 

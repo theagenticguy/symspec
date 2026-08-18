@@ -53,6 +53,7 @@ import {
   type RequirementsDocument,
   type StateModel,
   type StateVariable,
+  type TermEntry,
   type UpdatableAttr,
   type Waiver,
 } from './document.ts'
@@ -642,6 +643,23 @@ export interface MutateOptions {
    * committed record matches what the atomizer looks up.
    */
   readonly normalizeHead?: (text: string) => string
+  /**
+   * Validate a candidate TERM. Return an error MESSAGE to refuse the write, or `undefined` to
+   * accept. Both arguments arrive already normalized.
+   *
+   * Injected for the same reason as {@link validateAntonyms}: the check needs the engine's
+   * antonym index and the guard-implication tier's establish-verb lexicon, and
+   * `domain/requirements` must not import the engine. Omitted ⇒ no validation, which is correct
+   * for a caller with no engine available and unsound for the CLI — so the operation layer
+   * always supplies it.
+   *
+   * What it refuses, and why it must: a term containing a verb that either lexicon reads moves
+   * the polarity `atomize` computes for a state-establishing response while leaving the
+   * raw-text parse that RECOGNISES the bridge unchanged. The two disagreeing lets a committed
+   * term prove a contradiction the document does not contain — an error-severity fabrication,
+   * which is the one outcome the propose/decide split exists to prevent.
+   */
+  readonly validateTerms?: (canonical: string, alias: string) => string | undefined
 }
 
 const applyAntonym = (
@@ -694,6 +712,176 @@ const applyUnantonym = (
   const antonyms = document.antonyms.filter((p) => pairKey(norm(p.a), norm(p.b)) !== key)
   if (antonyms.length === document.antonyms.length) return { document, noop: true }
   return { document: { ...document, antonyms }, noop: false }
+}
+
+/**
+ * Commit one noun-phrase term — with the refusal that keeps the feature sound.
+ *
+ * Mirrors {@link applyGlossary}'s four checks, for the same reasons, in the same normalized
+ * space. Two things are different, and both come from the substitution being applied INSIDE a
+ * body rather than replacing one.
+ *
+ * **One-hop in TOKEN space (the `canonical contains an alias` refusal).** `atomize` substitutes
+ * in a single pass and continues after the tokens it wrote, so a canonical containing a
+ * committed alias is NOT rewritten a second time. Accepting such an entry would therefore mean
+ * the table's effect depends on whether the reader expects a second pass. Refusing it is the
+ * token-space analogue of `applyGlossary`'s one-hop rule, and it keeps the decide key
+ * unambiguous.
+ *
+ * **The verb refusal, delegated to {@link MutateOptions.validateTerms}.** A term that rewrites
+ * a response VERB desyncs two pipelines that must agree: `guard-implication` decides whether a
+ * response establishes a state by parsing the RAW text, while the bridge's polarity comes from
+ * the full `atomize` — which sees the substitution. Rewrite a head into an antonym class and
+ * the bridge is still recognised while its polarity flips, so it asserts the negation of what
+ * the document says and can prove a contradiction that is not there. Error severity, tool's own
+ * doing. So terms are for NOUNS, and that is enforced here rather than documented; the check
+ * lives behind the same injection seam as `validateAntonyms` because `domain/requirements` must
+ * not import the engine tier.
+ */
+const applyTerm = (
+  document: RequirementsDocument,
+  op: Extract<DocumentOp, { op: 'term' }>,
+  options: MutateOptions,
+): OpSuccess | OpFailure => {
+  const norm = options.normalizeHead ?? ((s: string) => s.trim())
+  const canonical = op.canonical.trim()
+  const alias = op.alias.trim()
+  if (canonical.length === 0 || alias.length === 0) {
+    return fail('ERR_USAGE', 'A `term` op requires a non-empty canonical and alias.', [
+      'Both fields name a NOUN PHRASE, e.g. canonical "session token", alias "login credential".',
+    ])
+  }
+  const canonicalKey = norm(canonical)
+  const aliasKey = norm(alias)
+  if (canonicalKey === aliasKey) {
+    return fail('ERR_USAGE', `"${canonical}" cannot be a term alias of itself.`, [
+      'A term entry unifies two DIFFERENT noun phrases; these normalize to the same key.',
+    ])
+  }
+
+  const rejected = options.validateTerms?.(canonicalKey, aliasKey)
+  if (rejected !== undefined) {
+    return fail(
+      'ERR_USAGE',
+      `The term "${canonical}" / "${alias}" is not committable: ${rejected}`,
+      [
+        'A term is substituted inside EVERY slot body, so a verb in one moves the polarity the',
+        'solver computes while leaving the raw-text bridge parse unchanged — which can prove a',
+        'conflict the document does not contain.',
+        'Use `symspec glossary` to align a whole phrasing that contains a verb.',
+      ],
+    )
+  }
+
+  const entry = document.terms.find((e) => norm(e.canonical) === canonicalKey)
+  // IDEMPOTENT: this alias already sits under this canonical.
+  if (entry?.aliases.some((a) => norm(a) === aliasKey) === true) {
+    return { document, noop: true }
+  }
+
+  const otherOwner = document.terms.find(
+    (e) => norm(e.canonical) !== canonicalKey && e.aliases.some((a) => norm(a) === aliasKey),
+  )
+  if (otherOwner !== undefined) {
+    return fail(
+      'ERR_USAGE',
+      `"${alias}" is already a term alias of "${otherOwner.canonical}", so it cannot also be an alias of "${canonical}".`,
+      [
+        `Free it first: \`symspec term "${otherOwner.canonical}" "${alias}" --remove\`.`,
+        `Or point this entry at "${otherOwner.canonical}" instead, if that is the reading you meant.`,
+      ],
+    )
+  }
+
+  const canonicalIsAlias = document.terms.find(
+    (e) => norm(e.canonical) !== canonicalKey && e.aliases.some((a) => norm(a) === canonicalKey),
+  )
+  if (canonicalIsAlias !== undefined) {
+    return fail(
+      'ERR_USAGE',
+      `"${canonical}" is already a term alias of "${canonicalIsAlias.canonical}", so it cannot also be a canonical.`,
+      [
+        'Term substitution is one pass, so this chain would never resolve.',
+        `Use "${canonicalIsAlias.canonical}" as the canonical: \`symspec term "${canonicalIsAlias.canonical}" "${alias}"\`.`,
+      ],
+    )
+  }
+
+  // One-hop in TOKEN space: the substitution never re-reads what it wrote, so a canonical
+  // containing a committed alias would leave the table's meaning ambiguous.
+  // Split on EITHER separator. `normalizeHead` is the atomizer's `normalize` in production
+  // (underscore-joined), and a bare trim in a caller that has no engine — so a check that split
+  // only on `_` would be silently inert for the second, which is the shape a test would then
+  // fail to reach.
+  const tokensOf = (key: string) => key.split(/[\s_]+/).filter((t) => t.length > 0)
+  const canonicalTokens = tokensOf(canonicalKey)
+  const contains = (haystack: readonly string[], needle: readonly string[]): boolean => {
+    if (needle.length === 0 || needle.length > haystack.length) return false
+    for (let i = 0; i + needle.length <= haystack.length; i++) {
+      if (needle.every((t, k) => haystack[i + k] === t)) return true
+    }
+    return false
+  }
+  const committedAliases = [
+    ...document.terms.flatMap((e) => e.aliases.map((a) => norm(a))),
+    aliasKey,
+  ]
+  const swallowed = committedAliases.find(
+    (a) =>
+      a !== canonicalKey &&
+      contains(
+        canonicalTokens,
+        a.split('_').filter((t) => t.length > 0),
+      ),
+  )
+  if (swallowed !== undefined) {
+    return fail(
+      'ERR_USAGE',
+      `The canonical "${canonical}" contains the committed term alias "${swallowed.replace(/_/g, ' ')}", so the table would be ambiguous.`,
+      [
+        'Term substitution is a single pass that continues after the tokens it wrote, so the alias',
+        'inside this canonical would not be rewritten again — and a reader expecting it to be would',
+        'predict a different atom.',
+        'Reword the canonical so it does not contain another alias.',
+      ],
+    )
+  }
+
+  const terms: TermEntry[] =
+    entry === undefined
+      ? [...document.terms, { canonical, aliases: [alias] }]
+      : document.terms.map((e) =>
+          // The EXISTING canonical spelling is kept, not `canonical`.
+          norm(e.canonical) === canonicalKey
+            ? { canonical: e.canonical, aliases: [...e.aliases, alias] }
+            : e,
+        )
+  return { document: { ...document, terms }, noop: false }
+}
+
+/** Remove one term alias. Matched in NORMALIZED space, symmetrically with {@link applyTerm}. */
+const applyUnterm = (
+  document: RequirementsDocument,
+  op: Extract<DocumentOp, { op: 'unterm' }>,
+  options: MutateOptions,
+): OpSuccess | OpFailure => {
+  const norm = options.normalizeHead ?? ((s: string) => s.trim())
+  const canonicalKey = norm(op.canonical.trim())
+  const aliasKey = norm(op.alias.trim())
+  const entry = document.terms.find((e) => norm(e.canonical) === canonicalKey)
+  if (entry === undefined || !entry.aliases.some((a) => norm(a) === aliasKey)) {
+    return { document, noop: true }
+  }
+  // An emptied group is DROPPED entirely, as in `applyUnglossary`: a canonical with no aliases
+  // substitutes nothing, so keeping it would be a row that looks like a decision and is not.
+  const terms = document.terms
+    .map((e) =>
+      norm(e.canonical) === canonicalKey
+        ? { canonical: e.canonical, aliases: e.aliases.filter((a) => norm(a) !== aliasKey) }
+        : e,
+    )
+    .filter((e) => e.aliases.length > 0)
+  return { document: { ...document, terms }, noop: false }
 }
 
 /** Two waivers match iff they suppress the same code at the same scope. */
@@ -1281,6 +1469,10 @@ export const applyOp = (
       return applyStateInitial(document, op)
     case 'classify':
       return applyClassify(document, op, timestamp)
+    case 'term':
+      return applyTerm(document, op, options)
+    case 'unterm':
+      return applyUnterm(document, op, options)
   }
 }
 

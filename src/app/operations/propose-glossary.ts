@@ -94,6 +94,87 @@ const ProposeGlossaryInput = Schema.Struct({
   ),
 })
 
+/**
+ * The oppositions clause, appended to either branch below.
+ *
+ * Reported even when nothing clusters, because an opposition that formed no class is
+ * exactly the case the plan used to be silent about — and it is the half that manufactures
+ * a false contradiction if committed the wrong way, so it must not be reachable only by
+ * reading `data.oppositions` directly.
+ */
+const oppositionClause = (plan: GlossaryPlan): string => {
+  const found = plan.oppositions.length
+  if (found === 0) {
+    return plan.corpus.oppositionSignals > 0
+      ? ` ${plan.corpus.oppositionSignals} pair(s) carried an opposition signal but sat below the ` +
+          `${plan.oppositionCosineFloor} topical floor, so they read as unrelated rather than opposed.`
+      : ''
+  }
+  const quarantined = plan.oppositions.filter((o) => o.formsClass).length
+  return (
+    ` ${found} structurally-opposed pair(s) reported` +
+    (quarantined > 0
+      ? `, ${quarantined} of which quarantined a merge`
+      : ', none of which a merge threatened') +
+    '. Each offers BOTH readings: committing the wrong one manufactures a false contradiction, so ' +
+    'none of them is in `ops`.'
+  )
+}
+
+/**
+ * The guard clause, appended to either branch below.
+ *
+ * Guard alignment is the highest-leverage thing the plan proposes — context groups are keyed
+ * on guard atoms, so two requirements whose triggers are paraphrases are never compared at
+ * all — and it is the only thing the plan proposes that is NEVER applyable. Both facts belong
+ * in the one line a reader sees, because an agent that pipes `opsJsonl` needs to know that
+ * the biggest suggestions are not in it.
+ */
+const guardClause = (plan: GlossaryPlan): string => {
+  const total = plan.guardClasses.length
+  if (total === 0) {
+    return plan.corpus.guardNodes > 0
+      ? ` Compared ${plan.corpus.guardPairsCompared} guard pair(s) across ` +
+          `${plan.corpus.guardNodes} distinct trigger/precondition phrasing(s): nothing to align.`
+      : ''
+  }
+  const withheld = plan.guardClasses.filter((g) => g.withheldBy.length > 0).length
+  const unlocks = new Set(plan.guardClasses.flatMap((g) => g.unlocks)).size
+  return (
+    ` ${total} guard alignment(s) across ${plan.corpus.guardNodes} trigger/precondition ` +
+    `phrasing(s)` +
+    (withheld > 0 ? `, ${withheld} of them WITHHELD as likely-different conditions` : '') +
+    (unlocks > 0
+      ? `; aligning the rest would make ${unlocks} requirement(s) comparable for the first time`
+      : '') +
+    '. Guard alignments are suggestions only and never appear in `ops`: a wrong one asserts two ' +
+    'different conditions are one and can prove a conflict the document does not contain.'
+  )
+}
+
+/**
+ * The term clause.
+ *
+ * A term generalizes a phrase class to the noun underneath it, so the same alignment keeps
+ * applying to requirements written later. Reported with its blast radius because one record
+ * reaching many atoms is the whole difference from a phrase entry — and reported as
+ * suggest-only for the same reason a guard class is.
+ */
+const termClause = (plan: GlossaryPlan): string => {
+  const total = plan.termCandidates.length
+  if (total === 0) return ''
+  const withheld = plan.termCandidates.filter((c) => c.withheldBy.length > 0).length
+  const atoms = new Set(plan.termCandidates.flatMap((c) => c.blastRadius)).size
+  return (
+    ` ${total} of those class(es) differ only in a NOUN, so a single \`symspec term\` would ` +
+    `align ${atoms} atom(s) and keep aligning them as the document grows` +
+    (withheld > 0
+      ? `; ${withheld} is WITHHELD because its noun carries a verb the formal tier reads`
+      : '') +
+    '. Term candidates are suggestions only and never appear in `ops`.'
+  )
+}
+
 /** One line a human can read before deciding whether to read the rest. */
 const summarize = (plan: GlossaryPlan): string => {
   const merges = plan.ops.length
@@ -105,7 +186,10 @@ const summarize = (plan: GlossaryPlan): string => {
       `${plan.corpus.responseNodes} distinct response phrasing(s): nothing clusters above ` +
       `${plan.threshold}. The vocabulary is already distinct, or already unified — ` +
       `${plan.corpus.alreadyUnified} phrasing(s) were folded by the committed tables before ` +
-      'this pass ran.'
+      'this pass ran.' +
+      oppositionClause(plan) +
+      guardClause(plan) +
+      termClause(plan)
     )
   }
   const transitive = plan.classes.filter((c) => c.transitive).length
@@ -115,7 +199,10 @@ const summarize = (plan: GlossaryPlan): string => {
     `${plan.corpus.responseNodes} distinct response phrasing(s) at threshold ${plan.threshold}` +
     (transitive > 0
       ? `; ${transitive} class(es) formed by CHAINING rather than direct similarity and are listed first.`
-      : '.')
+      : '.') +
+    oppositionClause(plan) +
+    guardClause(plan) +
+    termClause(plan)
   )
 }
 

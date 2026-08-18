@@ -20,7 +20,7 @@ symspec install                            # drop this guidance into your agent 
 ```
 
 `manifest` is the machine-readable version of this document. `explain` answers for a
-single code across all 81 of them (21 `ERR_*`, 36 `FND_*`, 24 `GTWR_*`) and returns
+single code across all 83 of them (21 `ERR_*`, 38 `FND_*`, 24 `GTWR_*`) and returns
 its family, severity, tier, meaning, remedy, and a worked example where the catalog carries
 one — so a fix loop never pays for the whole contract to learn what one code means.
 
@@ -83,6 +83,7 @@ Failure:
 | `symspec propose-glossary` | Propose a whole-document glossary in one pass — the PROPOSE half of the semantic tier, at document scale |
 | `symspec glossary` | Commit or remove a synonym alias — the DECIDE half of the semantic tier |
 | `symspec antonym` | Commit or remove a polar-opposite verb pair — the opposition twin of the glossary |
+| `symspec term` | Commit or remove a noun-phrase term — the compositional half of the glossary, applied inside every body |
 | `symspec state` | Declare or undeclare one state variable — the document-scoped half of the state model |
 | `symspec state-initial` | Set or clear the model-wide initial-state predicate over the declared variables |
 | `symspec classify` | Classify one requirement's response as an effect or a constraint, with its state expression |
@@ -158,7 +159,17 @@ when NOTHING was cross-compared at all.
    `systemName` string. The candidate-pair filter skips pairs that span different
    systems outright, so "scheduler" vs "job scheduler" halves your coverage for free.
 2. **Name each trigger once.** Copy the trigger string verbatim between requirements
-   that react to the same event. Context groups are keyed on it.
+   that react to the same event. Context groups are keyed on it, and the solver asserts
+   one group at a time — so two requirements whose triggers are paraphrases are never
+   live together and their responses are never compared at all. If you inherited a spec
+   that already paraphrases its triggers, `symspec propose-glossary` reports the guard
+   alignments under `data.guardClasses`, each naming in `unlocks` which requirements the
+   alignment would make comparable. Those are SUGGESTIONS ONLY and never appear in
+   `data.ops`: a wrong response merge merely hides a conflict, while a wrong guard merge
+   asserts two different conditions are one and can prove a conflict the document does
+   not contain. Read the pair; when the two guards are mutually exclusive, leaving them
+   distinct is the correct answer, and no antonym op can help because antonyms apply to
+   responses only.
 3. **Fix one verb per action, and one noun per object.** Write a short list before you
    write requirements: start/stop, enqueue/dequeue, grant/revoke, open/close. Then use
    only those. Paraphrase is the enemy here, not repetition — a spec that reads
@@ -752,6 +763,8 @@ an error-severity finding also excludes its requirement from the formal tier.
 | `FND_REACHABILITY_UNKNOWN` | info | formal | the solver did not decide whether a declared constraint can be violated, so nothing is claimed either way and `verified` is DEMOTED. The message states which of the two causes applies, because they need different remedies and the solver cannot be asked: a timed-out Spacer query reports its reason as the literal string "ok", so the distinction is derived out-of-band from measured elapsed time against the budget that was set. |
 | `FND_REACHABILITY_NOT_CHECKED` | info | formal | the unbounded reachability tier did NOT cover part or all of this document, and `verified` is DEMOTED accordingly. Emitted when no state model is committed, when no requirement carries a constraint to check, when a classified requirement could not be read, or when the model admits no transitions at all (in which case only the initial state exists and any invariant over it holds almost vacuously). This is a coverage DISCLOSURE, not a defect: silence over a question that was never asked reads exactly like a pass, which is the one thing this tool must never do. |
 | `FND_REACHABILITY_VACUOUS_INITIAL` | error | formal | the INITIAL STATE is UNSATISFIABLE: the model-wide `initial` predicate, the per-variable `initial` predicates, and the declared integer/enum ranges cannot all hold at once, so the model has NO initial state, the reachable-state set is EMPTY, and every constraint holds VACUOUSLY. Nothing is proven about anything and every constraint is DEMOTED. Error severity rather than a disclosure because a vacuous model does not merely fail to prove — it MASKS proven violations: measured, adding a contradictory initial predicate to a document with a genuine reachable violation turned an error-severity FND_REACHABILITY_VIOLATED into a confident "PROVED with nothing assumed" and flipped the exit code from 1 to 0. The independent certificate check cannot catch this, because an unsatisfiable Init makes `Inv := false` discharge all three obligations validly. |
+| `FND_TERM_INCONSISTENT` | info | formal | one COMMITTED vocabulary entry (a `terms` noun or a `glossary` phrase) is being applied in two requirements whose surrounding text is unrelated, which is what a single spelling used for two different things looks like. The DUAL of the synonym bridge: where FND_SIMILAR_SEMANTIC proposes ADDING an entry because two phrasings mean one thing, this questions an existing entry because one phrasing may mean two. It matters because the failure is in the masking direction — a term entry rewrites every body containing the noun, so if the two concepts differ, both requirements land on ONE atom and a genuine conflict between them can no longer be proven. Cosine PROPOSES this and nothing more: the finding is info-severity and pushes no coverage demotion, so it cannot move `verified`, the strict gate, or the exit code. |
+| `FND_ACRONYM_UNDEFINED` | info | formal | an acronym appears in the document text but in neither committed table, so nothing records what it expands to. This is the DOCUMENT-LEVEL check that GTWR_R37_ACRONYM describes but cannot perform: R37 reads one statement at a time and has no table in scope, so it can only say that a statement carries an unexpanded acronym. The two are different claims and neither subsumes the other — R37 is per-statement style, which a glossary entry does not satisfy, while this is definition coverage, which a glossary entry does satisfy and therefore SILENCES. |
 
 ## Lint rule codes (`GTWR_*`)
 

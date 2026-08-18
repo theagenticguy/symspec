@@ -157,9 +157,11 @@ describe('serialization is byte-stable and git-diffable', () => {
       glossary: [],
       antonyms: [],
       waivers: [],
+      terms: [],
     } as RequirementsDocument
     const b = {
       waivers: [],
+      terms: [],
       antonyms: [],
       glossary: [],
       stateModel: { variables: [] },

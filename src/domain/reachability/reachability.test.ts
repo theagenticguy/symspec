@@ -132,6 +132,7 @@ const docOf = (
   glossary: [],
   antonyms: [],
   waivers: [],
+  terms: [],
 })
 
 /**

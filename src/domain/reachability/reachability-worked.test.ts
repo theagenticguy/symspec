@@ -169,6 +169,7 @@ const conversationLockDoc = (): RequirementsDocument => ({
   glossary: [],
   antonyms: [],
   waivers: [],
+  terms: [],
 })
 
 /** Run the REAL `check` operation over an in-memory document. */

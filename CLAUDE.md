@@ -2,6 +2,11 @@
 
 One package, at the repo root. `symspec` is published to npm from here.
 
+A codegraph index is maintained for this repo — use
+`~/.local/share/mise/shims/codegraph` (query/impact/affected) to navigate the
+~150 TypeScript files instead of broad greps, and run `codegraph sync` after
+structural changes.
+
 ## Prior lessons (ERPAVal)
 
 This repo accumulates hard-won lessons under `.erpaval/solutions/`. **Before
@@ -29,7 +34,7 @@ Every failure is a blocker.
 ### A gate never observed to fail is not known to be a gate
 
 Break the thing a new assertion guards, watch it go red, then put the sabotage in the
-commit message. `src/publish.test.ts:444` records a check that passed against a
+commit message. `src/publish.test.ts:606` records a check that passed against a
 deliberately broken table; `scripts/reachability-feasibility.ts:8-18` records the
 donor gate that was well-built and wired to nothing — "a gate nobody runs is
 documentation with a non-zero exit code."
@@ -58,8 +63,8 @@ generated-defect harness, or a suite assertion), and record the sabotage in the
 commit message. If no gate fails, the edit is uncovered — write the test first.
 
 `src/package-boundary.test.ts` keeps the dependency one-way: the engine imports
-nothing greenfield beyond the pinned `core/ops.ts` crossing, so a greenfield
-refactor never forces an engine edit.
+nothing greenfield beyond the pinned `domain/requirements/ops.ts` crossing (the op
+vocabulary), so a greenfield refactor never forces an engine edit.
 
 New finding codes still go in files owned by their tier, unioned by
 `app/runtime/catalog.ts` — see `src/domain/reachability/reachability-codes.ts`.

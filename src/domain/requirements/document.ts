@@ -870,7 +870,7 @@ export const RequirementsMap = Schema.Record(Schema.String, Requirement)
   })
 
 // ---------------------------------------------------------------------------
-// The three side tables
+// The four side tables
 // ---------------------------------------------------------------------------
 
 /**
@@ -953,6 +953,46 @@ export const Waiver = Schema.Struct({
   description: 'A reviewed, reasoned suppression of a finding code, optionally requirement-scoped.',
 })
 export type Waiver = typeof Waiver.Type
+
+/**
+ * One term entry: a canonical NOUN PHRASE plus the phrasings that name the same thing.
+ *
+ * The compositional half of the glossary. A {@link GlossaryEntry} aligns one whole slot
+ * phrasing against another, so aligning V verbs over N object phrasings costs an entry per
+ * surface combination — and every entry is a SNAPSHOT that stops covering requirements written
+ * next month. A term is substituted INSIDE a body, so one entry aligns the noun everywhere it
+ * appears, including in text that does not exist yet.
+ *
+ * The difference that matters is blast radius, and it cuts both ways: one entry reaching many
+ * atoms is the whole point, and also the whole risk. Two things bound it. The substitution is
+ * token-aligned and single-pass (see `atomize.ts`), so it can never rewrite part of a word or
+ * chain through a second entry. And the fold refuses a term containing any verb the antonym
+ * table or the guard-implication tier reads, because rewriting a response verb desyncs the
+ * bridge polarity from the raw-text parse that recognises the bridge — the one shape that
+ * turns this feature into a fabricated contradiction rather than a missed one.
+ *
+ * So: nouns. The narrowing is deliberate and it is enforced at write time, not documented.
+ */
+export const TermEntry = Schema.Struct({
+  canonical: NonEmpty.annotate({
+    description: lines(
+      'The canonical noun phrase every alias collapses to.',
+      "Example: 'session token'.",
+    ),
+  }),
+  aliases: withDefault(
+    Schema.Array(NonEmpty),
+    [],
+    lines(
+      'Phrasings that name the same thing. Substituted inside every slot body that contains them,',
+      'so one entry aligns the noun across the whole document rather than one phrase pair.',
+      "Example: ['login credential', 'access token'].",
+    ),
+  ),
+}).annotate({
+  description: 'A canonical noun phrase and the phrasings that name the same thing.',
+})
+export type TermEntry = typeof TermEntry.Type
 
 // ---------------------------------------------------------------------------
 // Diagnostics — the V27 disclosure channel
@@ -1052,11 +1092,20 @@ export const RequirementsDocument = Schema.Struct({
       'Defaults to [].',
     ),
   ),
+  terms: withDefault(
+    Schema.Array(TermEntry),
+    [],
+    lines(
+      'Committed noun-phrase terms. The formal tier substitutes these INSIDE every slot body, so one',
+      'entry aligns a noun everywhere it appears rather than one phrase pair at a time — including in',
+      'requirements written later. Defaults to [].',
+    ),
+  ),
 }).annotate({
   description: lines(
     'The whole requirements document as persisted to disk: a version tag, the UUID-keyed requirement',
-    'map, the declared state model, and the three committed side tables (glossary, antonyms,',
-    'waivers). Unknown TOP-LEVEL keys are preserved and disclosed as info diagnostics rather than',
+    'map, the declared state model, and the four committed side tables (glossary, antonyms, waivers,',
+    'terms). Unknown TOP-LEVEL keys are preserved and disclosed as info diagnostics rather than',
     'stripped (v4 finding V27); unknown keys anywhere deeper are a hard failure.',
   ),
 })
@@ -1093,6 +1142,7 @@ export const emptyDocument = (): RequirementsDocument => ({
   glossary: [],
   antonyms: [],
   waivers: [],
+  terms: [],
 })
 
 // ---------------------------------------------------------------------------

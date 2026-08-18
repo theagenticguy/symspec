@@ -43,9 +43,15 @@
  *     rather than polluting the conjunction;
  *   - the bridge's own response-vs-established-state never self-links (a rule is
  *     not its own bridge).
- * A mis-recognized establishment can therefore only ADD a true-to-the-doc
- * implication whose consequent some rule already guards on; it cannot invent an
- * atom out of nothing.
+ * A mis-recognized establishment can therefore only ADD an implication whose consequent some
+ * rule already guards on; it cannot invent an atom out of nothing.
+ *
+ * "True to the doc" holds only while the response's raw head and its atomized head agree. A
+ * committed glossary or term entry that rewrites the establishing VERB breaks that: bridge-ness
+ * is read off the raw sentence while polarity comes from the atomization, so the implication
+ * becomes the NEGATION of what the author wrote — and the inert-drop compares atom names, not
+ * polarity, so it does not filter one out. That desync was reachable through both committed
+ * tables and is now dropped explicitly at the polarity computation below.
  */
 
 import { atomize as realAtomize } from './atomize.ts'
@@ -82,7 +88,7 @@ export interface GuardImplication {
  * "set <thing> to <state>" / "escalate <thing> to <state>" object form, handled
  * separately. High-precision by design — grow only by explicit edit.
  */
-const ESTABLISH_VERBS: ReadonlySet<string> = new Set([
+export const ESTABLISH_VERBS: ReadonlySet<string> = new Set([
   'be',
   'become',
   'been',
@@ -252,7 +258,35 @@ export function extractGuardImplications(
     // the response verb compose correctly. The FIRST candidate that lands on a
     // guard some other requirement uses wins (most specific — object+state —
     // first); non-landing candidates are inert and dropped.
-    const respNegated = atomize('resp', r.systemResponse, r.systemName, r.negated ?? false).negated
+    const respAtom = atomize('resp', r.systemResponse, r.systemName, r.negated ?? false)
+    const respNegated = respAtom.negated
+
+    // A committed table that rewrote the establishing VERB makes this bridge unsound — drop it.
+    //
+    // Bridge-ness is decided from the RAW sentence (`establishedStateCandidates` above), while
+    // the polarity comes from the atomization on the line before. Those two readings agree only
+    // as long as no table moved the head between them. `ESTABLISH_VERBS` and the antonym heads
+    // are disjoint (asserted in `atomize.test.ts`), so a genuine bridge's head can never hit the
+    // antonym probe on its own — if the atomized head differs from the raw one, a committed
+    // glossary or term entry put it there, and the flip that follows is the table's, not the
+    // document's. The bridge would then assert the NEGATION of what the author wrote.
+    //
+    // The inert-drop below cannot catch it: that compares atom NAMES, so an inverted implication
+    // whose consequent some other rule genuinely guards on sails straight into the whole-spec
+    // conjunction and can make a group UNSAT the document never entailed — a fabricated
+    // FND_CONTRADICTION at error severity.
+    //
+    // Dropping is the honest direction: a missed bridge is a conflict left unproven, which is
+    // what "sound modulo atomization" already promises. Verified reachable through BOTH tables,
+    // so this sits here rather than in either write path — and a write-time fence could not
+    // close it anyway, since committing a clean term and a doc antonym in either order composes
+    // the same desync from two individually-valid writes.
+    const rawHead = deInflectHead(
+      (r.systemResponse.trim().split(/\s+/)[0] ?? '').toLowerCase().replace(/[^a-z0-9]/g, ''),
+    )
+    const atomizedHead = respAtom.ref?.body.split('_')[0] ?? rawHead
+    if (rawHead.length > 0 && atomizedHead !== rawHead) continue
+
     for (const stateText of stateTexts) {
       const stateAtomLit = atomize('pre', stateText, r.systemName, respNegated)
 

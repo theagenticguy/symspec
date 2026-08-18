@@ -75,13 +75,13 @@ describe('the generated doc is byte-stable', () => {
 // ---------------------------------------------------------------------------
 
 describe('every operation is projected, with the table`s own summary', () => {
-  it('lists all 23 operations', () => {
+  it('lists all 24 operations', () => {
     const rendered = doc()
     const operations = allOperations()
     // Pinned as a NUMBER rather than derived from `allOperations()` so growing the
     // agent-facing surface is a visible edit in review — the count is the point, not a
     // restatement of the array's length.
-    expect(operations.length).toBe(23)
+    expect(operations.length).toBe(24)
     for (const op of operations) {
       expect(rendered, `${op.name} is missing from AGENTS.md`).toContain(`\`symspec ${op.name}\``)
     }
@@ -99,11 +99,11 @@ describe('every operation is projected, with the table`s own summary', () => {
   })
 })
 
-describe('all 81 codes are projected, in all three families', () => {
+describe('all 83 codes are projected, in all three families', () => {
   it('names every code from every catalog', () => {
     const rendered = doc()
     const codes = allCodes()
-    expect(codes).toHaveLength(81)
+    expect(codes).toHaveLength(83)
     for (const row of codes) {
       expect(rendered, `${row.code} is missing`).toContain(`\`${row.code}\``)
     }

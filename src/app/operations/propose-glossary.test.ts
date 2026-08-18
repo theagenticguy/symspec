@@ -68,6 +68,7 @@ const paraphraseDoc = (): RequirementsDocument =>
     glossary: [],
     antonyms: [],
     waivers: [],
+    terms: [],
     stateModel: { variables: [] },
   }) as unknown as RequirementsDocument
 
@@ -163,6 +164,57 @@ describe('the envelope an agent branches on', () => {
       (proposeGlossaryOp as any).handler,
     )
     expect(source).not.toMatch(/\d+ class\(es\)/)
+  })
+
+  it('reports the oppositions it found, with the counts interpolated too', async () => {
+    // A document whose only interesting property is an opposition: same object, different
+    // verb. Nothing merges, so without this clause the summary would read as "nothing
+    // clusters" and say nothing about the half that manufactures rather than masks.
+    const doc = {
+      ...paraphraseDoc(),
+      requirements: Object.fromEntries([req('seal the vault'), req('close the vault')]),
+    } as RequirementsDocument
+    const data = await expectOk(doc, {})
+    expect(data.oppositions.length).toBeGreaterThan(0)
+    expect(data.summary).toContain(`${data.oppositions.length} structurally-opposed pair(s)`)
+    // The reason it is safe to read: none of them is applyable.
+    expect(data.summary).toContain('none of them is in `ops`')
+    expect(data.opsJsonl).toBe('')
+  })
+
+  it('reports guard alignments, and says they are NOT in ops', async () => {
+    // The biggest suggestions the plan makes are the ones an agent piping `opsJsonl` will not
+    // receive, so the one line a reader sees has to say so.
+    const data = await expectOk(paraphraseDoc())
+    expect(data.corpus.guardNodes).toBeGreaterThan(0)
+    expect(data.summary).toContain(
+      `${data.corpus.guardNodes} distinct trigger/precondition phrasing(s)`,
+    )
+    // Both slot families were read; only one is applyable.
+    expect(data.vocabularies).toEqual(['response', 'guard'])
+    expect(data.vocabulary).toBe('response')
+  })
+
+  it('says when the floor filtered an opposition out, rather than staying silent', async () => {
+    // `oppositionSignals` counts BEFORE the floor. Without surfacing it, "no oppositions"
+    // would be indistinguishable from "some were judged unrelated" — the same
+    // found-nothing/did-not-look distinction `pairsCompared` draws for merges.
+    const doc = {
+      ...paraphraseDoc(),
+      requirements: Object.fromEntries([req('seal the vault'), req('close the vault')]),
+    } as RequirementsDocument
+    // Orthogonal vectors put the pair far below the topical floor.
+    const result = await run(
+      doc,
+      embedderLayerOf(tableEmbedder({ 'seal the vault': [1, 0], 'close the vault': [0, 1] })),
+    )
+    expect(result._tag, JSON.stringify(result)).toBe('Success')
+    if (result._tag !== 'Success') throw new Error('unreachable')
+    const data = result.success.data
+    expect(data.oppositions).toEqual([])
+    expect(data.corpus.oppositionSignals).toBeGreaterThan(0)
+    expect(data.summary).toContain(`${data.corpus.oppositionSignals} pair(s) carried an opposition`)
+    expect(data.summary).toContain(`${data.oppositionCosineFloor} topical floor`)
   })
 })
 

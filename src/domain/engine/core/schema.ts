@@ -154,6 +154,15 @@ export type AntonymPair = {
   b: string
 }
 
+/**
+ * One committed noun-phrase term — substituted INSIDE a slot body, unlike a glossary entry
+ * which replaces a whole body.
+ */
+export type TermEntry = {
+  canonical: string
+  aliases: string[]
+}
+
 /** One reviewed finding waiver. */
 export type Waiver = {
   code: string
@@ -173,6 +182,11 @@ export type RequirementsDoc = {
   glossary: GlossaryEntry[]
   waivers: Waiver[]
   antonyms: AntonymPair[]
+  /**
+   * Optional for the same reason the tier reads `doc.waivers ?? []`: a hand-built fixture
+   * predating the table stays valid, and an absent table is exactly an empty one.
+   */
+  terms?: TermEntry[] | undefined
 }
 
 export const SCHEMA_VERSION = 2

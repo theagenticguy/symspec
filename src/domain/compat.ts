@@ -130,5 +130,6 @@ export const toEngineDoc = (document: RequirementsDocument): Doc => {
       reason: w.reason,
       ...(w.requirementId !== undefined ? { requirementId: w.requirementId } : {}),
     })),
+    terms: document.terms.map((t) => ({ canonical: t.canonical, aliases: [...t.aliases] })),
   }
 }

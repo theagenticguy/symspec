@@ -1034,34 +1034,65 @@ function checkR35Temporal(sentence: string, findings: GtWRFinding[]): void {
 // R37 — Acronym consistency
 // ============================================================================
 
+/**
+ * What counts as an acronym anywhere in this tool: a run of two or more capitals on word
+ * boundaries.
+ *
+ * Exported so the document-level definition-coverage check
+ * (`domain/terminology`, `FND_ACRONYM_UNDEFINED`) recognizes the SAME tokens this rule
+ * does. Two independent patterns would let one tier warn about a token the other considers
+ * a non-acronym, and the two findings would disagree about the same sentence.
+ *
+ * Stateful (`g`), so every consumer must reset `lastIndex` or use it through `getMatches`.
+ */
+export const ACRONYM_PATTERN = /\b([A-Z]{2,})\b/g
+
+/**
+ * Acronyms so widely known that requiring an expansion is noise.
+ *
+ * Module-level and shared for the reason {@link ACRONYM_PATTERN} is: the document-level
+ * check must treat the same tokens as needing no definition, or `symspec check` would
+ * report `JSON` undefined while R37 stayed silent about it.
+ */
+export const COMMON_ACRONYMS: ReadonlySet<string> = new Set([
+  'API',
+  'URL',
+  'HTTP',
+  'REST',
+  'JSON',
+  'UUID',
+  'SMS',
+  'SSH',
+  'TLS',
+  'EOF',
+])
+
+/**
+ * R37 — an acronym used without being expanded in the statement that uses it.
+ *
+ * The claim is scoped to ONE SENTENCE, which is all this function can see: its whole
+ * argument list is a string and an accumulator. It therefore says nothing about whether
+ * the acronym is defined anywhere, because it has no table in scope and cannot find out.
+ * The document-level question — is this acronym recorded in the glossary or the terms
+ * table — is `FND_ACRONYM_UNDEFINED`, emitted from `domain/terminology` where both tables
+ * are arguments.
+ *
+ * The two are different claims and neither subsumes the other. A glossary entry does not
+ * expand an acronym at its point of use, so it does not satisfy R37; and R37 firing does
+ * not mean the acronym is undefined. Threading the tables in here would collapse the
+ * distinction rather than ground the rule.
+ */
 function checkR37Acronym(sentence: string, findings: GtWRFinding[]): void {
-  // Regex: extract acronyms (2+ uppercase letters)
-  // High confidence: acronym used without prior expansion
-  // Heuristic (per-statement): flag any acronym; glossary check is document-level
-  const acronymPattern = /\b([A-Z]{2,})\b/g
-  const matches = getMatches(sentence, acronymPattern)
+  const matches = getMatches(sentence, ACRONYM_PATTERN)
   for (const match of matches) {
     const acronym = match[0]!
-    // Skip common acronyms (API, URL, etc.)
-    const commonAcronyms = [
-      'API',
-      'URL',
-      'HTTP',
-      'REST',
-      'JSON',
-      'UUID',
-      'SMS',
-      'SSH',
-      'TLS',
-      'EOF',
-    ]
-    if (!commonAcronyms.includes(acronym)) {
+    if (!COMMON_ACRONYMS.has(acronym)) {
       findings.push({
         code: 'GTWR_R37_ACRONYM',
         severity: 'warn',
         span: [match.index, match.index + acronym.length],
-        message: `Acronym: "${acronym}"; ensure it is defined in the glossary`,
-        suggestion: `Spell out or add to project glossary`,
+        message: `Acronym: "${acronym}" is used without being expanded in this statement`,
+        suggestion: `Expand it on first use, as "${acronym} (<expansion>)"`,
       })
     }
   }
