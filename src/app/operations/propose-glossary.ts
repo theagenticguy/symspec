@@ -152,6 +152,29 @@ const guardClause = (plan: GlossaryPlan): string => {
   )
 }
 
+/**
+ * The term clause.
+ *
+ * A term generalizes a phrase class to the noun underneath it, so the same alignment keeps
+ * applying to requirements written later. Reported with its blast radius because one record
+ * reaching many atoms is the whole difference from a phrase entry — and reported as
+ * suggest-only for the same reason a guard class is.
+ */
+const termClause = (plan: GlossaryPlan): string => {
+  const total = plan.termCandidates.length
+  if (total === 0) return ''
+  const withheld = plan.termCandidates.filter((c) => c.withheldBy.length > 0).length
+  const atoms = new Set(plan.termCandidates.flatMap((c) => c.blastRadius)).size
+  return (
+    ` ${total} of those class(es) differ only in a NOUN, so a single \`symspec term\` would ` +
+    `align ${atoms} atom(s) and keep aligning them as the document grows` +
+    (withheld > 0
+      ? `; ${withheld} is WITHHELD because its noun carries a verb the formal tier reads`
+      : '') +
+    '. Term candidates are suggestions only and never appear in `ops`.'
+  )
+}
+
 /** One line a human can read before deciding whether to read the rest. */
 const summarize = (plan: GlossaryPlan): string => {
   const merges = plan.ops.length
@@ -165,7 +188,8 @@ const summarize = (plan: GlossaryPlan): string => {
       `${plan.corpus.alreadyUnified} phrasing(s) were folded by the committed tables before ` +
       'this pass ran.' +
       oppositionClause(plan) +
-      guardClause(plan)
+      guardClause(plan) +
+      termClause(plan)
     )
   }
   const transitive = plan.classes.filter((c) => c.transitive).length
@@ -177,7 +201,8 @@ const summarize = (plan: GlossaryPlan): string => {
       ? `; ${transitive} class(es) formed by CHAINING rather than direct similarity and are listed first.`
       : '.') +
     oppositionClause(plan) +
-    guardClause(plan)
+    guardClause(plan) +
+    termClause(plan)
   )
 }
 

@@ -106,9 +106,9 @@ export type { Atomize, AtomKind, AtomLit, AtomRef } from './atomize.ts'
 // The parameterization is what makes the propositional tier's cmp-free formulas
 // STRUCTURALLY assignable to `TemporalFormula` — the same node objects, no
 // conversion, no copy — which is the property that lets one atomizer feed both.
-// A tier's extra nodes stay out of the other tier's type, so `emit-smt2` still
-// cannot be handed a `G` and `lowerAt` still cannot be handed a `cmp`; the
-// exhaustive switches in both files remain exhaustive.
+// A tier's extra nodes stay out of the other tier's type, so the propositional
+// lowering still cannot be handed a `G` and `lowerAt` still cannot be handed a
+// `cmp`; the exhaustive switches in both files remain exhaustive.
 //
 // The generic parameter is spelled out per union member rather than via a
 // `BooleanCore<T>` alias because TypeScript reports `TS2456 circularly

@@ -57,6 +57,7 @@ import { GUARD_KINDS, glossaryIndex, normalize, renderAtom } from '../engine/for
 import { contextAtomsOf, planContextGroups } from '../engine/formal/contradiction.ts'
 import type { Embedder } from '../engine/formal/embed.ts'
 import type { EncodedRequirement } from '../engine/formal/encode.ts'
+import { ESTABLISH_VERBS } from '../engine/formal/guard-implication.ts'
 import { deInflectHead } from '../engine/formal/lemma.ts'
 import {
   DEFAULT_OPPOSITION_COSINE_FLOOR,
@@ -380,6 +381,59 @@ export interface GuardClass {
   readonly remedies: readonly Remedy[]
 }
 
+/** Why a term candidate must not be committed as written. */
+export interface TermWithhold {
+  /** The offending token, named so the author knows which word was the problem. */
+  readonly token: string
+  readonly reason: 'antonym-head' | 'state-bridge-verb'
+}
+
+/**
+ * A NOUN-PHRASE generalization of a proposed phrase class — commit one term instead of N
+ * phrase aliases, and it keeps applying to requirements written later.
+ *
+ * ## Where these come from
+ *
+ * Every candidate is derived from a class the plan already proposed. When a class's members
+ * share a leading phrasing and differ only in a contiguous tail, that tail is a noun the
+ * document names two ways: `issue a session token` and `issue a login credential` share
+ * `issue a` and differ on `session token` / `login credential`. The phrase merge fixes those
+ * two strings; the term fixes the noun.
+ *
+ * The shape is the MIRROR of `sharedObjectSuffix` in `engine/formal/quantity-alias.ts`, which
+ * finds a shared object with differing verbs. A term needs a shared verb with differing
+ * objects, so that helper could not be reused — noted because the reuse looked obvious.
+ *
+ * ## Never in `ops`
+ *
+ * Same reason as a guard class, one step stronger. A term entry rewrites many atoms from one
+ * record, and the decide tier re-validates none of the propose-side conditions — so a
+ * machine-applyable term is a record whose safety rests on a document-scale precondition
+ * nothing re-checks when the next requirement arrives. `withheldBy` carries the write-time
+ * refusal's own reasons, computed here so an author sees them before running the command
+ * rather than after.
+ */
+export interface TermCandidate {
+  readonly system: string
+  /** The canonical noun phrase — the tail of the class's canonical member. */
+  readonly canonical: string
+  readonly aliases: readonly string[]
+  /** The leading phrasing the members agree on, which is what makes this a NOUN split. */
+  readonly sharedPrefix: string
+  /**
+   * Every atom in the document this entry would rewrite.
+   *
+   * The whole difference from a phrase entry, made reviewable. One record reaching many atoms
+   * is the point and the risk, and an author cannot weigh a blast radius they cannot see.
+   */
+  readonly blastRadius: readonly string[]
+  /** Non-empty means the fold would refuse this — shown BEFORE the command is run. */
+  readonly withheldBy: readonly TermWithhold[]
+  /** Runnable verbatim. Empty when withheld. */
+  readonly commands: readonly string[]
+  readonly consequence: string
+}
+
 /** A class withheld from `ops`, with the choice that would unblock it. */
 export interface UnresolvedClass {
   readonly reason: UnresolvedReason
@@ -478,6 +532,11 @@ export interface GlossaryPlan {
    * ones that are never applyable. Weakest-first, withheld ones last.
    */
   readonly guardClasses: readonly GuardClass[]
+  /**
+   * NOUN-PHRASE generalizations of the proposed classes — one term instead of N phrase
+   * aliases, and it keeps applying as the document grows. Never in `ops`.
+   */
+  readonly termCandidates: readonly TermCandidate[]
   /**
    * Every structurally-opposed pair in the document, whether or not a merge threatened it.
    * Never in `ops` — no op resolves an opposition.
@@ -779,6 +838,104 @@ const unlocksFor = (doc: Doc, canonical: string, aliases: readonly string[]): re
     for (const id of pair.split('|')) ids.add(id)
   }
   return [...ids].sort()
+}
+
+/**
+ * The NOUN split behind a phrase class, or `undefined` when there is not one.
+ *
+ * Returns the shared leading tokens plus each member's differing tail. Requires a non-empty
+ * shared prefix (otherwise the members differ from the first word and there is no noun to
+ * name) and a non-empty tail on every side (otherwise one phrase is a prefix of the other and
+ * the "term" would be the empty string).
+ */
+const nounSplit = (
+  bodies: readonly string[],
+): { readonly prefix: readonly string[]; readonly tails: readonly string[] } | undefined => {
+  if (bodies.length < 2) return undefined
+  const lists = bodies.map((b) => b.split('_').filter((t) => t.length > 0))
+  const shortest = Math.min(...lists.map((l) => l.length))
+  let shared = 0
+  while (shared < shortest - 1 && lists.every((l) => l[shared] === lists[0]?.[shared])) shared += 1
+  if (shared === 0) return undefined
+  const tails = lists.map((l) => l.slice(shared).join('_'))
+  if (tails.some((t) => t.length === 0)) return undefined
+  if (new Set(tails).size < 2) return undefined
+  return { prefix: (lists[0] as string[]).slice(0, shared), tails }
+}
+
+/**
+ * Derive the noun-phrase generalizations of the proposed classes.
+ *
+ * Every candidate reports the refusal the FOLD would raise, computed from the same two
+ * lexicons `validateTerms` consults, so an author sees the verdict before running the command
+ * rather than after. That duplication is deliberate and one-directional: the propose side may
+ * be stricter than the write side without harm, and it must never be looser.
+ */
+const termCandidatesFor = (
+  classes: readonly ProposedClass[],
+  nodes: readonly Node[],
+  antonyms: ReadonlyMap<string, AntonymEntry>,
+): TermCandidate[] => {
+  const out: TermCandidate[] = []
+  for (const c of classes) {
+    const members = [c.canonical, ...c.aliases]
+    const split = nounSplit(members.map((m) => normalize(m)))
+    if (split === undefined) continue
+    const [canonicalTail, ...aliasTails] = split.tails
+    if (canonicalTail === undefined) continue
+    const unique = [...new Set(aliasTails.filter((t) => t !== canonicalTail))].sort()
+    if (unique.length === 0) continue
+
+    const withheldBy: TermWithhold[] = []
+    for (const token of [canonicalTail, ...unique].flatMap((t) => t.split('_'))) {
+      if (antonyms.has(deInflectHead(token))) {
+        withheldBy.push({ token, reason: 'antonym-head' })
+      } else if (ESTABLISH_VERBS.has(deInflectHead(token))) {
+        withheldBy.push({ token, reason: 'state-bridge-verb' })
+      }
+    }
+
+    // Every atom the entry would rewrite — read off the document's own nodes, so the number is
+    // the real one rather than an estimate.
+    const blastRadius = nodes
+      .filter((n) =>
+        unique.some((alias) => {
+          const tokens = n.body.split('_')
+          const needle = alias.split('_')
+          for (let i = 0; i + needle.length <= tokens.length; i++) {
+            if (needle.every((t, k) => tokens[i + k] === t)) return true
+          }
+          return false
+        }),
+      )
+      .map((n) => n.atom)
+      .sort()
+
+    const readable = (t: string) => t.replace(/_/g, ' ')
+    out.push({
+      system: c.system,
+      canonical: readable(canonicalTail),
+      aliases: unique.map(readable),
+      sharedPrefix: split.prefix.join(' '),
+      blastRadius,
+      withheldBy,
+      commands:
+        withheldBy.length > 0
+          ? []
+          : unique.map(
+              (a) => `symspec term ${quoted(readable(canonicalTail))} ${quoted(readable(a))}`,
+            ),
+      consequence:
+        withheldBy.length > 0
+          ? `The fold will REFUSE this: "${withheldBy[0]?.token}" is a verb the formal tier reads, ` +
+            'and substituting one inside a body moves the polarity the solver computes without ' +
+            'moving the parse that recognises a state bridge. Commit the phrase merge instead.'
+          : `One entry instead of ${unique.length} phrase alias(es), and it keeps applying: any ` +
+            `requirement written later that says "${readable(unique[0] as string)}" lands on the ` +
+            `same atom without a second commit. It rewrites ${blastRadius.length} atom(s) today.`,
+    })
+  }
+  return out
 }
 
 /** Tokens that flip a guard's sense outright. */
@@ -1376,6 +1533,7 @@ export const buildGlossaryPlan = async (
     classes,
     unresolved,
     guardClasses,
+    termCandidates: termCandidatesFor(classes, nodes, antonyms),
     oppositions,
     ops: classes.flatMap((c) => c.ops),
   }

@@ -439,6 +439,25 @@ describe('the README is a PACKAGE readme, greenfield-first and honest', () => {
     expect(section).not.toContain('partition of the response phrasings')
   })
 
+  it('documents the TERM table, its blast radius, and the refusal', () => {
+    const section = readme.slice(
+      readme.indexOf('## Designing the vocabulary in one pass'),
+      readme.indexOf('## Honest scope'),
+    )
+    // The compositional claim and the reviewability mechanism.
+    expect(section).toContain('symspec term')
+    expect(section).toContain('blastRadius')
+    expect(section).toContain('termCandidates')
+    // The refusal, and its REASON — a documented restriction with no stated cause reads as an
+    // arbitrary limit, and the next reader removes it.
+    const flowed = section.replace(/\s+/g, ' ')
+    expect(flowed).toContain('Terms are for nouns, and that is enforced rather than advised')
+    expect(flowed).toContain('proving a conflict that is not there')
+    // NEGATIVE GUARD: the section must not claim a term is applyable through `ops`.
+    expect(flowed).not.toContain('term candidates are in `ops`')
+    expect(flowed).toContain('never appear in `ops`')
+  })
+
   it('names the gates that make the no-drift claim checkable', () => {
     expect(readme).toContain('### Check these claims yourself')
     for (const gate of [

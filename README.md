@@ -572,6 +572,55 @@ $ symspec propose-glossary --field data.guardClasses
 `the shift ends` and `the shift begins` differ by one token, and one token is usually the point.
 Neither verb is in the antonym table, so nothing but that shape catches it.
 
+### One entry for the noun, not one per phrase
+
+A `glossary` entry aligns two whole phrasings. If four verbs each take the same object under
+two names, that is eight entries — and every one of them is a snapshot that stops covering
+requirements you write next month. `symspec term` aligns the noun itself, inside every body
+that contains it.
+
+When a proposed class differs only in its noun, the plan says so and shows what the entry
+would touch:
+
+```console
+$ symspec propose-glossary --field data.termCandidates.0
+{"canonical":"login credential","aliases":["session token"],"sharedPrefix":"issue a",
+ "blastRadius":["sys__auth_service__resp__issue_a_session_token"],"withheldBy":[],
+ "commands":["symspec term \"login credential\" \"session token\""]}
+```
+
+`blastRadius` is the point. One record reaching many atoms is why a term is worth committing
+and also the only reason to be careful with one, so the plan lists every atom the entry would
+rewrite rather than counting them. Term candidates never appear in `ops`, so piping
+`data.opsJsonl` into `apply` will not commit one — you run the command after reading the
+radius. Committing it moves the same gradient a phrase merge does:
+
+```console
+$ symspec check --field data.progress.atomsUncompared
+{"data":{"progress":{"atomsUncompared":2}}}
+
+$ symspec term "login credential" "session token"
+$ symspec check --field data.progress.atomsUncompared
+{"data":{"progress":{"atomsUncompared":0}}}
+```
+
+**Terms are for nouns, and that is enforced rather than advised.** A term containing a verb
+the solver reads is refused at write time:
+
+```console
+$ symspec term "revoke access" "grant access"
+{"apiVersion":1,"type":"error","code":"ERR_USAGE",
+ "error":"The term \"revoke access\" / \"grant access\" is not committable: \"revoke\" is a
+ verb the formal tier reads …"}                                                  # exit 2
+```
+
+The reason is specific. A response like "mark the session as verified" is recognised as
+establishing a state by reading the sentence as written, while the polarity of that state comes
+from the atomized form. A term that rewrote the verb would move the second without moving the
+first, and the resulting bridge would assert the opposite of what your document says — proving
+a conflict that is not there. Rewriting a noun cannot do that, so nouns are what the table
+accepts. Use `symspec glossary` for a phrasing that contains a verb.
+
 ### The gradient
 
 Apply the confident half and the gradient moves. Align a guard and it moves again, by as much.

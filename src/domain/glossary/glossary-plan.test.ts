@@ -888,6 +888,129 @@ describe('guard vocabulary is proposed and NEVER applyable', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Term candidates — the noun generalization of a phrase class
+// ---------------------------------------------------------------------------
+
+describe('a phrase class that differs only in its NOUN offers a term instead', () => {
+  const nounDoc = () =>
+    docOf([
+      req('auth service', 'issue a session token', 'the user signs in'),
+      req('auth service', 'issue a login credential', 'the user signs in'),
+    ])
+  const NOUN_TABLE = {
+    'issue a session token': [1, 0.05],
+    'issue a login credential': [1, 0.08],
+  } as const
+
+  it('extracts the shared verb and the differing noun', async () => {
+    const plan = await buildGlossaryPlan(toEngineDoc(nounDoc()), tableEmbedder(NOUN_TABLE))
+    expect(plan.termCandidates).toHaveLength(1)
+    const c = plan.termCandidates[0]
+    expect(c?.sharedPrefix).toBe('issue a')
+    // The AUTHOR's words, with no underscores leaking out of the atom space.
+    expect([c?.canonical, ...(c?.aliases ?? [])].sort()).toEqual([
+      'login credential',
+      'session token',
+    ])
+    for (const phrase of [c?.canonical, ...(c?.aliases ?? [])]) {
+      expect(phrase).not.toMatch(/_/)
+    }
+  })
+
+  it('reports the BLAST RADIUS, which is the whole difference from a phrase entry', async () => {
+    // One record reaching many atoms is the point and the risk. An author cannot weigh a blast
+    // radius they cannot see, so it is listed rather than counted.
+    const plan = await buildGlossaryPlan(toEngineDoc(nounDoc()), tableEmbedder(NOUN_TABLE))
+    const c = plan.termCandidates[0]
+    expect(c?.blastRadius.length).toBeGreaterThan(0)
+    for (const atom of c?.blastRadius ?? []) expect(atom).toMatch(/^sys__/)
+    // And the consequence names the durability, which is the reason to prefer a term at all.
+    expect(c?.consequence).toContain('keeps applying')
+  })
+
+  it('is NEVER in `ops` — the decide tier re-validates none of this', async () => {
+    const plan = await buildGlossaryPlan(toEngineDoc(nounDoc()), tableEmbedder(NOUN_TABLE))
+    expect(JSON.stringify(plan.termCandidates)).not.toContain('"op":')
+    for (const op of plan.ops) expect(op.op).not.toBe('term')
+  })
+
+  it('WITHHOLDS a candidate whose noun carries a STATE-BRIDGE verb', async () => {
+    // The propose-side mirror of the write-time refusal, so the verdict is visible BEFORE the
+    // command is run rather than after. Only the differing TAIL is checked — a verb sitting in
+    // the shared prefix is never substituted, so it is not a hazard.
+    const doc = docOf([
+      req('vault service', 'log the audit record', 'the audit begins'),
+      req('vault service', 'log the audit entry', 'the audit begins'),
+    ])
+    const plan = await buildGlossaryPlan(
+      toEngineDoc(doc),
+      tableEmbedder({
+        'log the audit record': [1, 0.05],
+        'log the audit entry': [1, 0.08],
+      }),
+    )
+    const withheld = plan.termCandidates.filter((c) => c.withheldBy.length > 0)
+    expect(withheld.length, JSON.stringify(plan.termCandidates)).toBeGreaterThan(0)
+    // `record` is an ESTABLISH_VERBS member, so this tail can reach a response head.
+    expect(withheld[0]?.withheldBy.map((w) => w.token)).toContain('record')
+    expect(withheld[0]?.withheldBy[0]?.reason).toBe('state-bridge-verb')
+    // A withheld candidate offers no command, because running it would fail.
+    expect(withheld[0]?.commands).toEqual([])
+    expect(withheld[0]?.consequence).toContain('REFUSE')
+  })
+
+  it('WITHHOLDS a candidate whose noun carries an ANTONYM head — the other lexicon', async () => {
+    // Both lexicons feed the refusal, and they are different sets. A check wired to only one
+    // would pass the case above and still let the other half through.
+    const doc = docOf([
+      req('vault service', 'note the release', 'the audit begins'),
+      req('vault service', 'note the lock', 'the audit begins'),
+    ])
+    const plan = await buildGlossaryPlan(
+      toEngineDoc(doc),
+      tableEmbedder({ 'note the release': [1, 0.05], 'note the lock': [1, 0.08] }),
+    )
+    const reasons = plan.termCandidates.flatMap((c) => c.withheldBy.map((w) => w.reason))
+    expect(reasons, JSON.stringify(plan.termCandidates)).toContain('antonym-head')
+  })
+
+  it('offers nothing when the phrasings share no leading words', async () => {
+    // No shared prefix means the members differ from the first word, so there is no noun to
+    // name — the generalization does not exist and must not be invented.
+    const doc = docOf([
+      req('auth service', 'alpha the token', 'the user signs in'),
+      req('auth service', 'beta the shard', 'the user signs in'),
+    ])
+    const plan = await buildGlossaryPlan(
+      toEngineDoc(doc),
+      tableEmbedder({ 'alpha the token': [1, 0.05], 'beta the shard': [1, 0.08] }),
+    )
+    expect(plan.termCandidates).toEqual([])
+  })
+
+  it('offers nothing when one phrasing is a PREFIX of the other', async () => {
+    // The tail would be empty on one side, so the "term" would be the empty string — which as
+    // an index key would match at every position.
+    const doc = docOf([
+      req('auth service', 'issue a token', 'the user signs in'),
+      req('auth service', 'issue a token quickly', 'the user signs in'),
+    ])
+    const plan = await buildGlossaryPlan(
+      toEngineDoc(doc),
+      tableEmbedder({ 'issue a token': [1, 0.05], 'issue a token quickly': [1, 0.08] }),
+    )
+    expect(plan.termCandidates.every((c) => c.canonical.length > 0)).toBe(true)
+  })
+
+  it('is deterministic across two runs', async () => {
+    const doc = nounDoc()
+    const a = await buildGlossaryPlan(toEngineDoc(doc), tableEmbedder(NOUN_TABLE))
+    const b = await buildGlossaryPlan(toEngineDoc(doc), tableEmbedder(NOUN_TABLE))
+    expect(JSON.stringify(a.termCandidates)).toBe(JSON.stringify(b.termCandidates))
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Dedup, determinism, and disclosure
 // ---------------------------------------------------------------------------
 
