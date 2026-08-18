@@ -34,8 +34,9 @@
  */
 
 import { Effect, Schema } from 'effect'
-import { buildAntonymIndexWithDoc } from '../../domain/engine/formal/antonyms.ts'
+import { ANTONYM_INDEX, buildAntonymIndexWithDoc } from '../../domain/engine/formal/antonyms.ts'
 import { normalize } from '../../domain/engine/formal/atomize.ts'
+import { ESTABLISH_VERBS } from '../../domain/engine/formal/guard-implication.ts'
 // STATIC. A dynamic import here bought nothing: `operations/parse.ts` imports
 // `engine/parse/batch.ts` statically and that imports `result.ts` statically, so the parse
 // ladder is in the main chunk on every run regardless. The lazy form only added an await
@@ -171,6 +172,34 @@ const MUTATE_OPTIONS: MutateOptions = {
     } catch (cause) {
       return cause instanceof Error ? cause.message : String(cause)
     }
+  },
+  /**
+   * The OTHER false-contradiction guard: terms are for nouns, enforced rather than documented.
+   *
+   * A term is substituted inside every slot body, so one containing a verb reaches the response
+   * head — and that desyncs two pipelines which must agree. `guard-implication` decides whether
+   * a response ESTABLISHES a state by parsing the raw text against `ESTABLISH_VERBS`; the
+   * bridge's polarity comes from the full `atomize`, which sees the substitution. Rewrite a head
+   * into an antonym class and the bridge is still recognised while its polarity flips, so it
+   * asserts the negation of what the document says. The inert-drop downstream compares atom
+   * NAMES, not polarity, so it does not catch it: the inverted implication joins the whole-spec
+   * conjunction and can make a group UNSAT that the document never entailed. Error severity,
+   * and the tool's own doing.
+   *
+   * Both lexicons are consulted per TOKEN, because the substitution is per token — a term
+   * `close the vault` would reach the head just as `close` does. Refusing at write time is what
+   * keeps the check path free of "this table was incoherent" branches, exactly as above.
+   */
+  validateTerms: (canonical, alias) => {
+    const offending = [...canonical.split(/[\s_]+/), ...alias.split(/[\s_]+/)].find(
+      (token) => token.length > 0 && (ANTONYM_INDEX.has(token) || ESTABLISH_VERBS.has(token)),
+    )
+    if (offending === undefined) return undefined
+    return (
+      `"${offending}" is a verb the formal tier reads — the antonym table or the ` +
+      'state-bridge lexicon — and substituting one inside a body moves the polarity the solver ' +
+      'computes without moving the parse that recognises the bridge'
+    )
   },
 }
 
@@ -904,6 +933,52 @@ export const antonymOp = defineOperation({
       const op: DocumentOp = { op: input.remove ? 'unantonym' : 'antonym', a: input.a, b: input.b }
       return emitMutation(
         'antonym',
+        yield* runFold({ file: input.file, dryRun: input.dryRun, ops: [op], single: true }),
+      )
+    }),
+})
+
+export const termOp = defineOperation({
+  name: 'term',
+  summary:
+    'Commit or remove a noun-phrase term — the compositional half of the glossary, applied inside every body',
+  type: 'term',
+  input: Schema.Struct({
+    canonical: requiredString(
+      lines('The canonical NOUN PHRASE every alias collapses to.', 'Example: "session token"'),
+    ),
+    alias: requiredString(
+      lines(
+        'The noun phrase that names the same thing.',
+        'Unlike `glossary`, which replaces a whole slot phrasing, a term is substituted INSIDE every',
+        'body that contains it — so one record aligns the noun across the document, and keeps',
+        'aligning it in requirements written later.',
+        'Terms are for NOUNS. A term containing a verb the antonym table or the state-bridge lexicon',
+        'reads is REFUSED, because substituting one moves the polarity the solver computes for a',
+        'state-establishing response without moving the parse that recognises it — which would prove',
+        'a conflict the document does not contain. Use `symspec glossary` for a phrasing with a verb.',
+        'Example: "login credential"',
+      ),
+    ),
+    remove: Schema.withDecodingDefaultKey<Schema.Boolean>(Effect.succeed(false))(
+      Schema.Boolean.annotate({
+        default: false,
+        description:
+          'Remove the alias instead of adding it. A group left with no aliases is dropped entirely.',
+      }),
+    ),
+    file: docPathField('edit'),
+    dryRun: dryRunField,
+  }),
+  handler: (input) =>
+    Effect.gen(function* () {
+      const op: DocumentOp = {
+        op: input.remove ? 'unterm' : 'term',
+        canonical: input.canonical,
+        alias: input.alias,
+      }
+      return emitMutation(
+        'term',
         yield* runFold({ file: input.file, dryRun: input.dryRun, ops: [op], single: true }),
       )
     }),

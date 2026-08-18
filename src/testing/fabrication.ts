@@ -38,8 +38,13 @@ import { DOC_VERSION, type RequirementsDocument } from '../domain/requirements/d
 
 const TS = '2026-01-01T00:00:00.000Z'
 
-/** One requirement, spelled so the GtWR lint tier has nothing to say about it. */
-const req = (
+/**
+ * One requirement, spelled so the GtWR lint tier has nothing to say about it.
+ *
+ * Exported so the drift gate in `./fabrication.test.ts` builds its fixture the same way the
+ * corpus does — a second requirement builder would be a second set of lint quirks to keep clean.
+ */
+export const req = (
   n: number,
   systemName: string,
   trigger: string,
@@ -76,6 +81,7 @@ const docOf = (rows: readonly (readonly [string, unknown])[]): RequirementsDocum
     glossary: [],
     antonyms: [],
     waivers: [],
+    terms: [],
     stateModel: { variables: [] },
   }) as unknown as RequirementsDocument
 

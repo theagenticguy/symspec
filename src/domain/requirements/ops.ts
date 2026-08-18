@@ -265,6 +265,35 @@ export const UnantonymOp = Schema.Struct({
 export type UnantonymOp = typeof UnantonymOp.Type
 
 /**
+ * `{"op":"term", …}` — commit one noun-phrase alias under a canonical term.
+ *
+ * The compositional sibling of `glossary`. Where that op aligns two whole slot phrasings,
+ * this one is substituted INSIDE every body containing the alias, so a single record aligns a
+ * noun across the document instead of one surface pair — and keeps aligning it in requirements
+ * written later.
+ *
+ * The fold refuses a term containing any verb the antonym table or the guard-implication tier
+ * reads. That is not a style rule: rewriting a response verb moves the polarity `atomize`
+ * computes while leaving the raw-text parse that RECOGNISES a state bridge unchanged, and the
+ * two disagreeing is what would let this op fabricate a contradiction instead of merely
+ * missing one.
+ */
+export const TermOp = Schema.Struct({
+  op: Schema.Literal('term'),
+  canonical: Schema.String,
+  alias: Schema.String,
+})
+export type TermOp = typeof TermOp.Type
+
+/** `{"op":"unterm", …}` — remove one committed noun-phrase alias. */
+export const UntermOp = Schema.Struct({
+  op: Schema.Literal('unterm'),
+  canonical: Schema.String,
+  alias: Schema.String,
+})
+export type UntermOp = typeof UntermOp.Type
+
+/**
  * `{"op":"state", …}` — declare (or redeclare) one state variable.
  *
  * ## Why the state model gets OPS and not just a command
@@ -393,6 +422,10 @@ export const DocumentOp = Schema.Union([
   UnstateOp,
   StateInitialOp,
   ClassifyOp,
+  // The compositional half of the glossary. Same union for the same reason as G4: one
+  // vocabulary, so an op a finding proposes is an op `apply` accepts by construction.
+  TermOp,
+  UntermOp,
 ])
 export type DocumentOp = typeof DocumentOp.Type
 
@@ -428,6 +461,10 @@ export const OP_VERBS = [
   'unstate',
   'state-initial',
   'classify',
+  // Term glossary — APPENDED, for the reason stated above. Reading naturally next to
+  // `glossary` is not worth renumbering every position an external snapshot recorded.
+  'term',
+  'unterm',
 ] as const
 export type OpVerb = (typeof OP_VERBS)[number]
 

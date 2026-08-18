@@ -45,6 +45,7 @@ const oneRequirementDoc = () => ({
   glossary: [],
   antonyms: [],
   waivers: [],
+  terms: [],
   stateModel: { variables: [] },
 })
 

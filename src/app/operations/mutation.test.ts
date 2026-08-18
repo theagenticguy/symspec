@@ -38,6 +38,7 @@ import {
   glossaryOp,
   linkOp,
   type MutationPayload,
+  termOp,
   updateOp,
   waiveOp,
 } from './mutation.ts'
@@ -164,6 +165,7 @@ const LINK = runnable(linkOp)
 const WAIVE = runnable(waiveOp)
 const GLOSSARY = runnable(glossaryOp)
 const ANTONYM = runnable(antonymOp)
+const TERM = runnable(termOp)
 const APPLY = runnable(applyOpDefinition)
 
 /** A fresh filesystem holding one empty document. */
@@ -351,6 +353,54 @@ describe('the injected fold options reach the fold', () => {
     const fs = fresh()
     await ok(ANTONYM, { a: '  Open ', b: 'SHUT', file: 'doc.json' }, fs)
     expect(fs.document.antonyms).toEqual([{ a: 'open', b: 'shut' }])
+  })
+
+  it('REFUSES a term containing an antonym verb, using the REAL lexicons', async () => {
+    // The operation layer is the only place that can prove this. `mutate.test.ts` injects its
+    // own validator, so it shows the SEAM works; only this shows production wired it — and an
+    // unwired seam means a term can rewrite a response head, desync the bridge polarity from
+    // the raw-text parse, and prove a conflict the document does not contain.
+    const fs = fresh()
+    const result = await run(
+      TERM,
+      { canonical: 'revoke access', alias: 'grant access', file: 'doc.json' },
+      fs,
+    )
+    expect(result._tag).toBe('Failure')
+    if (result._tag !== 'Failure') return
+    expect(result.failure._tag).toBe('ERR_USAGE')
+    expect(result.failure.error).toContain('not committable')
+    // Names the offending verb, so the author is not left guessing which word was the problem.
+    expect(result.failure.error).toContain('revoke')
+    expect(fs.document.terms).toEqual([])
+  })
+
+  it('REFUSES a term containing a state-bridge verb too, not only an antonym head', async () => {
+    // `ESTABLISH_VERBS` is the other half of the desync, and it is a DIFFERENT lexicon — a
+    // check wired to only one of the two would pass the case above and still be unsound.
+    const fs = fresh()
+    const result = await run(
+      TERM,
+      { canonical: 'mark the session', alias: 'flag the session', file: 'doc.json' },
+      fs,
+    )
+    expect(result._tag).toBe('Failure')
+    if (result._tag !== 'Failure') return
+    expect(result.failure.error).toContain('mark')
+  })
+
+  it('COMMITS a noun-phrase term, normalized through the atomizer`s own normalizer', async () => {
+    const fs = fresh()
+    await ok(
+      TERM,
+      { canonical: '  Session Token ', alias: 'Login Credential', file: 'doc.json' },
+      fs,
+    )
+    // Stored as the author wrote it; matched in normalized space. The same discipline
+    // `applyGlossary` follows — an author's capitalization is theirs.
+    expect(fs.document.terms).toEqual([
+      { canonical: 'Session Token', aliases: ['Login Credential'] },
+    ])
   })
 
   it('REFUSES an inconsistent antonym pair, using the real union-find', async () => {

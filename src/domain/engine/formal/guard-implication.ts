@@ -82,7 +82,7 @@ export interface GuardImplication {
  * "set <thing> to <state>" / "escalate <thing> to <state>" object form, handled
  * separately. High-precision by design — grow only by explicit edit.
  */
-const ESTABLISH_VERBS: ReadonlySet<string> = new Set([
+export const ESTABLISH_VERBS: ReadonlySet<string> = new Set([
   'be',
   'become',
   'been',

@@ -38,7 +38,7 @@ import type { DocumentOp } from '../domain/requirements/ops.ts'
 import { DocPath, DocStore, makeDocPath } from '../ports/doc-store.ts'
 import { embedderLayerOf } from '../ports/embedder.ts'
 import { ErrDocNotFound } from '../ports/errors.ts'
-import { fabricationCases } from './fabrication.ts'
+import { fabricationCases, req } from './fabrication.ts'
 
 const TS = '2026-01-01T00:00:00.000Z'
 
@@ -186,6 +186,75 @@ describe('applying a whole-document glossary plan FABRICATES nothing', () => {
       reasons.push(...plan.unresolved.map((u) => u.reason))
     }
     expect(reasons).toContain('opposition-candidate')
+  })
+})
+
+describe('the propose tier and the decide tier atomize the SAME document', () => {
+  /**
+   * The property AC-2-7 claims and nothing asserted: `encodeIncluded` (which the propose tier
+   * derives its nodes from) and the main `check` closure must be the same function of the same
+   * document tables.
+   *
+   * It rested on two textually-identical `makeAtomize(...)` expressions on two lines. Threading
+   * a committed table into one and not the other is a recorded prior bug, and it was invisible:
+   * `makeAtomize` takes positional arguments, so a missing third one still compiles, and no test
+   * contrasted the two sites. `pipelineAtomize` now makes the divergence unrepresentable — this
+   * gate is what catches it coming back.
+   *
+   * TWO-DIRECTIONAL by construction. A committed term that unifies two response atoms must move
+   * both numbers: `check`'s own `atomsUncompared`, and the plan's `responseNodes`. Un-threading
+   * either site moves exactly one of them, so neither assertion alone would localize the fault.
+   */
+  const twinDoc = (terms: readonly { canonical: string; aliases: string[] }[]) =>
+    ({
+      docVersion: 3,
+      requirements: Object.fromEntries([
+        req(20, 'auth service', 'the user signs in', 'issue a session token'),
+        req(21, 'auth service', 'the user signs in', 'issue a login credential', true),
+      ]),
+      glossary: [],
+      antonyms: [],
+      waivers: [],
+      terms,
+      stateModel: { variables: [] },
+    }) as unknown as RequirementsDocument
+
+  const TWIN_TABLE = {
+    'issue a session token': [1, 0] as const,
+    'issue a login credential': [0, 1] as const,
+    'the user signs in': [1, 0] as const,
+  }
+
+  it('a committed term moves BOTH tiers, or one of them is not seeing it', async () => {
+    const withoutTerms = twinDoc([])
+    const withTerms = twinDoc([{ canonical: 'session token', aliases: ['login credential'] }])
+
+    // The DECIDE tier: `check`'s own atom roster.
+    const before = await check(withoutTerms)
+    const after = await check(withTerms)
+    expect(before.progress.atomsUncompared, 'two distinct response atoms before the term').toBe(2)
+    expect(
+      after.progress.atomsUncompared,
+      'the main check closure did not see `terms` — atoms stayed apart',
+    ).toBe(0)
+
+    // The PROPOSE tier: the node set derived from `encodeIncluded`.
+    const planBefore = await buildGlossaryPlan(toEngineDoc(withoutTerms), tableEmbedder(TWIN_TABLE))
+    const planAfter = await buildGlossaryPlan(toEngineDoc(withTerms), tableEmbedder(TWIN_TABLE))
+    expect(planBefore.corpus.responseNodes, 'two response nodes before the term').toBe(2)
+    expect(
+      planAfter.corpus.responseNodes,
+      '`encodeIncluded` did not see `terms` — the plan still sees two nodes where check sees one',
+    ).toBe(1)
+  })
+
+  it('and the unified atom is what makes the conflict PROVABLE', async () => {
+    // The payoff, so the gate above is not just about two counters agreeing. One committed
+    // noun-phrase entry, and a contradiction the document always had becomes provable.
+    const after = await check(
+      twinDoc([{ canonical: 'session token', aliases: ['login credential'] }]),
+    )
+    expect(after.findings.map((f) => f.code)).toContain('FND_CONTRADICTION')
   })
 })
 

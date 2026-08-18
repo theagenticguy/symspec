@@ -55,6 +55,7 @@ describe('the table', () => {
       'propose-glossary',
       'glossary',
       'antonym',
+      'term',
       // G4 REACHABILITY AUTHORING, after the side tables and before `apply` because
       // that is the order an agent uses them: declare the state variables, set the
       // model-wide initial predicate, classify the responses that touch them.

@@ -87,6 +87,11 @@ describe('the op vocabulary is closed, reachable, and strict', () => {
     unstate: { op: 'unstate', name: 'lock_held' },
     'state-initial': { op: 'state-initial', predicate: 'lock_held = false' },
     classify: { op: 'classify', ref: 'G1', kind: 'constraint', expression: 'lock_held = false' },
+    // The term glossary. Spelled with NOUN phrases, which is what the fold accepts: a term
+    // containing a verb either lexicon reads is refused, so `{canonical:'c', alias:'a'}` would
+    // pass the decoder but not the fold — and this table is about decoder reachability.
+    term: { op: 'term', canonical: 'session token', alias: 'login credential' },
+    unterm: { op: 'unterm', canonical: 'session token', alias: 'login credential' },
   }
 
   it.each(
@@ -432,6 +437,128 @@ describe('the side tables', () => {
    *
    * These matter more now that `propose-glossary` emits a whole PLAN of aliases at once.
    */
+  /**
+   * The TERM table's own refusals. Three mirror the glossary's, for the same table-order and
+   * one-hop reasons. Two are new, and both exist because a term is substituted INSIDE a body.
+   */
+  describe('the term table', () => {
+    const term = (canonical: string, alias: string) => op({ op: 'term', canonical, alias })
+
+    it('commits a noun phrase, and is idempotent', () => {
+      const once = ok(emptyDocument(), {
+        op: 'term',
+        canonical: 'session token',
+        alias: 'login credential',
+      })
+      expect(once.document.terms).toEqual([
+        { canonical: 'session token', aliases: ['login credential'] },
+      ])
+      const twice = applyOp(once.document, term('session token', 'login credential'), TS)
+      expect(isOpFailure(twice)).toBe(false)
+      if (isOpFailure(twice)) return
+      expect(twice.noop).toBe(true)
+    })
+
+    it('drops an emptied group entirely, as `unglossary` does', () => {
+      const base = ok(emptyDocument(), {
+        op: 'term',
+        canonical: 'session token',
+        alias: 'login credential',
+      }).document
+      const removed = applyOp(
+        base,
+        op({ op: 'unterm', canonical: 'session token', alias: 'login credential' }),
+        TS,
+      )
+      expect(isOpFailure(removed)).toBe(false)
+      if (isOpFailure(removed)) return
+      // A canonical with no aliases substitutes nothing, so keeping it would be a row that
+      // looks like a decision and is not.
+      expect(removed.document.terms).toEqual([])
+    })
+
+    it('REFUSES a self-alias', () => {
+      const result = applyOp(emptyDocument(), term('session token', 'session token'), TS)
+      expect(isOpFailure(result)).toBe(true)
+      if (!isOpFailure(result)) return
+      expect(result.code).toBe('ERR_USAGE')
+    })
+
+    it('REFUSES an alias that already belongs to another canonical', () => {
+      const base = ok(emptyDocument(), {
+        op: 'term',
+        canonical: 'session token',
+        alias: 'login credential',
+      }).document
+      const result = applyOp(base, term('vault record', 'login credential'), TS)
+      expect(isOpFailure(result)).toBe(true)
+      if (!isOpFailure(result)) return
+      expect(result.error).toContain('session token')
+      expect(result.suggestions.join(' ')).toContain('--remove')
+    })
+
+    it('REFUSES a canonical that is already an alias — one pass, so the chain never resolves', () => {
+      const base = ok(emptyDocument(), {
+        op: 'term',
+        canonical: 'session token',
+        alias: 'login credential',
+      }).document
+      const result = applyOp(base, term('login credential', 'access token'), TS)
+      expect(isOpFailure(result)).toBe(true)
+      if (!isOpFailure(result)) return
+      expect(result.error).toContain('already a term alias')
+    })
+
+    /**
+     * NEW, and specific to substituting inside a body: the substitution continues AFTER the
+     * tokens it wrote, so an alias sitting inside a canonical is not rewritten a second time.
+     * Accepting the entry would make the table mean one thing to the code and another to a
+     * reader who assumed a second pass — an ambiguous decide key.
+     */
+    it('REFUSES a canonical that CONTAINS a committed alias', () => {
+      const base = ok(emptyDocument(), {
+        op: 'term',
+        canonical: 'shard',
+        alias: 'token',
+      }).document
+      const result = applyOp(base, term('session token vault', 'chamber'), TS)
+      expect(isOpFailure(result)).toBe(true)
+      if (!isOpFailure(result)) return
+      expect(result.error).toContain('ambiguous')
+    })
+
+    /**
+     * NEW, and the one that keeps the feature SOUND. Delegated to the injected validator,
+     * because `domain/requirements` must not import the engine — so the refusal is only
+     * reachable when a validator is supplied, exactly as `validateAntonyms` is.
+     */
+    it('REFUSES a term containing a verb the formal tier reads, via the injected validator', () => {
+      // Mirrors production: the operation layer supplies BOTH the real normalizer and the
+      // validator, so the check runs in the same key space the atomizer looks up. Supplying
+      // only the validator would hand it space-separated keys and the token check would miss.
+      const reject = {
+        normalizeHead: normalize,
+        validateTerms: (canonical: string, alias: string) =>
+          `${canonical}_${alias}`.split('_').includes('revoke')
+            ? 'revoke is an antonym head'
+            : undefined,
+      }
+      const result = applyOp(emptyDocument(), term('revoke access', 'withdraw access'), TS, reject)
+      expect(isOpFailure(result)).toBe(true)
+      if (!isOpFailure(result)) return
+      expect(result.error).toContain('not committable')
+      // The always-available alternative is named, because the author still has a real goal.
+      expect(result.suggestions.join(' ')).toContain('symspec glossary')
+    })
+
+    it('accepts the SAME term when no validator is supplied — the seam is optional', () => {
+      // Matching `validateAntonyms`: a caller with no engine available still folds ops. The
+      // operation layer is what always supplies the real check, and `mutation.test.ts` pins that.
+      const result = applyOp(emptyDocument(), term('revoke access', 'withdraw access'), TS)
+      expect(isOpFailure(result)).toBe(false)
+    })
+  })
+
   it('REFUSES an alias that already belongs to another canonical', () => {
     const base = ok(emptyDocument(), {
       op: 'glossary',

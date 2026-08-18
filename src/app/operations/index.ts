@@ -82,6 +82,7 @@ import {
   linkOp,
   stateInitialOp,
   stateOp,
+  termOp,
   updateOp,
   waiveOp,
 } from './mutation.ts'
@@ -104,6 +105,7 @@ export {
   linkOp,
   stateInitialOp,
   stateOp,
+  termOp,
   updateOp,
   waiveOp,
 } from './mutation.ts'
@@ -304,6 +306,9 @@ export const OPERATIONS = [
   proposeGlossaryOp,
   glossaryOp,
   antonymOp,
+  // The compositional half of the glossary: one entry aligns a noun everywhere it appears,
+  // where `glossary` aligns one whole phrasing against another.
+  termOp,
   // G4 REACHABILITY AUTHORING, listed after the side tables and before `apply`
   // because that is the order an agent uses them: declare the variables, classify the
   // responses that touch them, then batch the rest.

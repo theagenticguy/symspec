@@ -83,6 +83,7 @@ Failure:
 | `symspec propose-glossary` | Propose a whole-document glossary in one pass — the PROPOSE half of the semantic tier, at document scale |
 | `symspec glossary` | Commit or remove a synonym alias — the DECIDE half of the semantic tier |
 | `symspec antonym` | Commit or remove a polar-opposite verb pair — the opposition twin of the glossary |
+| `symspec term` | Commit or remove a noun-phrase term — the compositional half of the glossary, applied inside every body |
 | `symspec state` | Declare or undeclare one state variable — the document-scoped half of the state model |
 | `symspec state-initial` | Set or clear the model-wide initial-state predicate over the declared variables |
 | `symspec classify` | Classify one requirement's response as an effect or a constraint, with its state expression |

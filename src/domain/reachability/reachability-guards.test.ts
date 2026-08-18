@@ -120,6 +120,7 @@ const modelledDoc = (): RequirementsDocument => ({
   glossary: [],
   antonyms: [],
   waivers: [],
+  terms: [],
 })
 
 const op = (raw: unknown): DocumentOp => Effect.runSync(decodeOp(raw))
@@ -220,6 +221,7 @@ describe('V16 GUARD — the frame defaults VOLATILE and can never fabricate a pr
         glossary: [],
         antonyms: [],
         waivers: [],
+        terms: [],
       },
       op({ op: 'state', name: 'lock_held', type: 'bool' }),
       TS,
@@ -351,6 +353,7 @@ describe('V14/V21 GUARD — undeclared params and the interrupt escape', () => {
       glossary: [],
       antonyms: [],
       waivers: [],
+      terms: [],
     })
 
     const program = Effect.gen(function* () {
@@ -526,6 +529,7 @@ describe('V27 GUARD — `stateModel` survives EVERY mutation op', () => {
       glossary: [],
       antonyms: [],
       waivers: [],
+      terms: [],
     })
     const loaded = await Effect.runPromise(parseDocumentText(raw, 'doc.json'))
     expect(loaded.document.stateModel.variables[0]?.frame).toBe('volatile')
@@ -603,6 +607,7 @@ describe('SANITY GATE #1 GUARD — an unsatisfiable initial state is an ERROR, n
     glossary: [],
     antonyms: [],
     waivers: [],
+    terms: [],
   })
 
   const runDoc = (document: RequirementsDocument) =>

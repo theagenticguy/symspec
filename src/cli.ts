@@ -43,6 +43,7 @@ import {
   showOp,
   stateInitialOp,
   stateOp,
+  termOp,
   updateOp,
   versionOp,
   waiveOp,
@@ -705,6 +706,25 @@ const antonymCommand = Command.make(
     }),
 ).pipe(Command.withDescription(antonymOp.summary))
 
+const termCommand = Command.make(
+  'term',
+  {
+    canonical: positional(termOp, 'canonical'),
+    alias: positional(termOp, 'alias'),
+    remove: booleanFlag(termOp, 'remove'),
+    file: Flag.optional(stringFlag(termOp, 'file')),
+    dryRun: booleanFlag(termOp, 'dryRun'),
+  },
+  (config) =>
+    emit(termOp, {
+      canonical: config.canonical,
+      alias: config.alias,
+      remove: config.remove,
+      file: Option.getOrNull(config.file),
+      dryRun: config.dryRun,
+    }),
+).pipe(Command.withDescription(termOp.summary))
+
 /**
  * `state <name>` — the variable name as a positional, everything else a flag.
  *
@@ -857,6 +877,7 @@ const rootWithSubcommands = root.pipe(
     proposeGlossaryCommand,
     glossaryCommand,
     antonymCommand,
+    termCommand,
     stateCommand,
     stateInitialCommand,
     classifyCommand,

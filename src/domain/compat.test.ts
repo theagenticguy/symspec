@@ -190,7 +190,7 @@ describe('compat — every projected field the tier reads', () => {
     expect(codes.has('FND_CONTRADICTION')).toBe(false)
   })
 
-  it('preserves the three side tables, so a committed antonym still decides', async () => {
+  it('preserves the four side tables, so a committed antonym still decides', async () => {
     // The glossary/antonym/waiver tables are the DECIDE-tier inputs — the whole
     // propose/decide split rests on the tier consulting the COMMITTED tables. A lost
     // antonym table means an agent-confirmed opposition stops being provable.
@@ -209,6 +209,29 @@ describe('compat — every projected field the tier reads', () => {
     expect(toEngineDoc(withAntonym).antonyms).toEqual([{ a: 'open', b: 'shut' }])
     // And that supplying it never LOSES a finding — the demotion-only direction.
     expect(after.has('FND_CONTRADICTION')).toBe(before.has('FND_CONTRADICTION') || true)
+  })
+
+  it('preserves the committed TERM table, whose loss would be silent', async () => {
+    // The blindness this file's own header records: `toEngineDoc` hand-projects each field, so
+    // forgetting one makes the feature permanently inert with NO test failure anywhere else —
+    // the same shape as hardcoding `negated: false`, which left 22 differential assertions green.
+    //
+    // Asserted as a unit, on the projection itself, because that is the only place the drop is
+    // observable. An end-to-end check would also pass with terms dropped, since the fixture
+    // would simply fail to unify and report nothing.
+    const doc: RequirementsDocument = {
+      ...docOf(
+        req({ id: A, systemResponse: 'issue a session token' }),
+        req({ id: B, systemResponse: 'issue a login credential' }),
+      ),
+      terms: [{ canonical: 'session token', aliases: ['login credential'] }],
+    }
+    expect(toEngineDoc(doc).terms).toEqual([
+      { canonical: 'session token', aliases: ['login credential'] },
+    ])
+    // The alias array is COPIED, not shared — a mutation inside the engine must not reach back
+    // into the caller's document, the same reason the edge arrays are copied.
+    expect(toEngineDoc(doc).terms?.[0]?.aliases).not.toBe(doc.terms[0]?.aliases)
   })
 
   it('preserves a committed waiver, so a reviewed baseline stays suppressed', async () => {

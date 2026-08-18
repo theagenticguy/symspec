@@ -664,14 +664,14 @@ invariant. That is auditable evidence rather than a certificate.
 
 ## What is in the box
 
-There are 23 operations. All of them are projections of one operations table, which is why
+There are 24 operations. All of them are projections of one operations table, which is why
 `--help`, `symspec manifest`, and the generated `AGENTS.md` cannot disagree with the tool.
 
 | Group | Operations |
 |---|---|
 | Documents | `init`, `import`, `list`, `show` |
 | Authoring | `parse`, `add`, `update`, `link`, `delete`, `apply` |
-| Vocabulary | `propose-glossary`, `glossary`, `antonym`, `waive` |
+| Vocabulary | `propose-glossary`, `glossary`, `term`, `antonym`, `waive` |
 | State model | `state`, `state-initial`, `classify` |
 | Analysis | `check` |
 | Agent surface | `manifest`, `explain`, `version`, `install`, `download-model` |

@@ -68,6 +68,7 @@ const paraphraseDoc = (): RequirementsDocument =>
     glossary: [],
     antonyms: [],
     waivers: [],
+    terms: [],
     stateModel: { variables: [] },
   }) as unknown as RequirementsDocument
 

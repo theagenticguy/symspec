@@ -79,7 +79,7 @@ import { renderSentence } from '../core/render.ts'
 import type { Requirement, Waiver } from '../core/schema.ts'
 import { detectAmbiguity } from '../formal/ambiguity.ts'
 import { type AntonymEntry, buildAntonymIndexWithDoc } from '../formal/antonyms.ts'
-import { glossaryIndex, makeAtomize, normalize } from '../formal/atomize.ts'
+import { glossaryIndex, makeAtomize, normalize, termIndex } from '../formal/atomize.ts'
 import { getContext } from '../formal/backend.ts'
 import { type SolverBounds, SolverBudget } from '../formal/budget.ts'
 import { type FndCode, structuralKindToFndCode } from '../formal/codes.ts'
@@ -90,7 +90,12 @@ import {
   relationalUncheckedFinding,
 } from '../formal/coverage.ts'
 import type { Embedder } from '../formal/embed.ts'
-import { type EncodableRequirement, type EncodedRequirement, encode } from '../formal/encode.ts'
+import {
+  type Atomize,
+  type EncodableRequirement,
+  type EncodedRequirement,
+  encode,
+} from '../formal/encode.ts'
 import { attachEvidenceToAll, type Evidence } from '../formal/finding.ts'
 import { buildSimilarityGraph, type GraphRequirement } from '../formal/graph.ts'
 import { checkCompleteness } from '../formal/incomplete.ts'
@@ -593,21 +598,38 @@ export function toEncodable(view: ReqView): EncodableRequirement {
 }
 
 /**
+ * THE atomizer for this document — one construction, both tiers.
+ *
+ * AC-2-7 says the propositional tier and the temporal tier share one atomizer instance. That
+ * guarantee used to rest on two textually-identical `makeAtomize(...)` expressions on two
+ * lines, with no shared constant and nothing comparing their output. Threading a new committed
+ * table into one and not the other is a recorded prior bug, and it is invisible: `makeAtomize`
+ * takes positional args, so a missing third argument still compiles, and no test contrasts the
+ * two sites.
+ *
+ * Naming it once makes that divergence unrepresentable rather than merely detectable, which is
+ * strictly better than the test it replaces — and the test exists too.
+ */
+function pipelineAtomize(doc: Doc): Atomize {
+  return makeAtomize(glossaryIndex(doc.glossary), docAntonymIndex(doc), termIndex(doc.terms ?? []))
+}
+
+/**
  * Encode the AC-3-7-INCLUDED requirements into the same guarded-implication
- * {@link EncodedRequirement} set the in-process formal tier asserts — the exact
- * input `--emit-smt2` (AC-4-8) exports and `--solver z3-bin`/`cvc5` (AC-4-9)
- * cross-checks. Reuses the pipeline's own gate + `toEncodable` + `pipelineAtomize`
- * so the artifact is a faithful export of what `check` would evaluate, never a
- * parallel encoding that could drift. Pure and Z3-free (no `getContext`, no
- * solver contact) — it only builds the plain-data formula AST.
+ * {@link EncodedRequirement} set the in-process formal tier asserts. Reuses the pipeline's own
+ * gate + `toEncodable` + {@link pipelineAtomize} so the encoding is the one `check` evaluates
+ * rather than a parallel one that could drift — which is what lets the propose tier
+ * (`domain/glossary/glossary-plan.ts`, its only non-test consumer) derive its node set from
+ * exactly the atoms the solver compares. Pure and Z3-free (no `getContext`, no solver contact):
+ * it only builds the plain-data formula AST, so a vocabulary pass pays no WASM boot.
  */
 export function encodeIncluded(doc: Doc): EncodedRequirement[] {
   const requirements = listRequirements(doc)
   // Waiver-aware gate (waiver-vs-exclusion soundness): a waived blocking finding
-  // re-admits its requirement to the formal tier, so `--emit-smt2` exports the
-  // SAME included set `check` evaluates. Empty waivers ⇒ identical partition.
+  // re-admits its requirement to the formal tier, so this exports the SAME included
+  // set `check` evaluates. Empty waivers ⇒ identical partition.
   const excluded = excludedIds(gateRequirements(requirements, doc.waivers ?? []))
-  const atomize = makeAtomize(glossaryIndex(doc.glossary), docAntonymIndex(doc))
+  const atomize = pipelineAtomize(doc)
   return requirements
     .map(asView)
     .filter((r) => !excluded.has(r.id))
@@ -794,7 +816,9 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       // #1: fold the committed antonym pairs into the seed table so
       // agent-confirmed opposites (open/shut) collapse to one atom at opposite
       // polarity — the shape the contradiction tier proves. Empty ⇒ seed-only.
-      const atomize = makeAtomize(glossaryIndex(doc.glossary), docAntonymIndex(doc))
+      // #6: committed noun-phrase terms are substituted inside every slot body, so one entry
+      // aligns a noun document-wide. Empty ⇒ identical to a term-free run.
+      const atomize = pipelineAtomize(doc)
       const contradictionOpts = { atomize, timeoutMs }
 
       // Whole-spec checks (contradiction / vacuity / completeness / review)
@@ -909,6 +933,17 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       // phrasings of one physical quantity ("keep valid for" vs "expire after")
       // key to a single quantity and the LIA/LRA solver compares them. Empty
       // glossary ⇒ identical to the pre-feature numeric path.
+      //
+      // The committed TERM table is deliberately NOT folded in here, and this is a soundness
+      // boundary rather than an oversight. `quantityAliases` is safe because `glossaryIndex` is
+      // whole-phrase exact-match and `quantityKey` does a single `get(normalize(label))` — a
+      // committed, one-hop, all-or-nothing lookup. Term substitution is per-token, and a
+      // quantity label's last words are exactly where phrasal-verb tails live, so substituting
+      // inside one could collapse "the carry over" and "the carry" onto a single quantity key
+      // and emit FND_NUMERIC_CONTRADICTION — error severity — between a billing carry-over and
+      // an in-flight transfer. That is the defect
+      // `.erpaval/solutions/architecture/normalization-for-a-propose-signal-must-not-touch-the-decide-key.md`
+      // records, and it must not arrive through a new door.
       const quantityAliases = glossaryIndex(doc.glossary)
       const numericReqPreds = reqs.map((r) => ({
         id: r.id,
