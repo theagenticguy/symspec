@@ -74,6 +74,34 @@ export const req = (
   ] as const
 }
 
+/** A state-driven requirement, for the bridge fixtures — `guard-implication` needs a guard. */
+const stateReq = (n: number, preCondition: string, systemResponse: string) => {
+  const id = `ffffffff-0000-4000-8000-${String(n).padStart(12, '0')}`
+  return [
+    id,
+    {
+      id,
+      patternType: 'state-driven' as const,
+      systemName: 'latch service',
+      systemResponse,
+      preCondition,
+      negated: false,
+      sentence: `While ${preCondition}, the latch service shall ${systemResponse}.`,
+      priority: 'medium' as const,
+      status: 'draft' as const,
+      createdAt: TS,
+      updatedAt: TS,
+      derives: [],
+      satisfies: [],
+      verifies: [],
+      refines: [],
+    },
+  ] as const
+}
+
+const stateDoc = (rows: readonly (readonly [number, string, string])[]): RequirementsDocument =>
+  docOf(rows.map(([n, pre, resp]) => stateReq(n, pre, resp)))
+
 const docOf = (rows: readonly (readonly [string, unknown])[]): RequirementsDocument =>
   ({
     docVersion: DOC_VERSION,
@@ -101,6 +129,16 @@ export interface FabricationCase {
    * is the point. A fixture that expects an empty plan is asserting a WITHHOLD.
    */
   readonly expectsEmptyPlan: boolean
+  /**
+   * Tables the fixture commits BEFORE the plan runs.
+   *
+   * Most fixtures test what the planner proposes. These test what an already-committed table
+   * may do to a verdict — a different claim, and the only way to reach the bridge desync.
+   */
+  readonly committed?: {
+    readonly terms?: readonly { canonical: string; aliases: string[] }[]
+    readonly glossary?: readonly { canonical: string; aliases: string[] }[]
+  }
 }
 
 /**
@@ -149,6 +187,67 @@ export const fabricationCases = (): readonly FabricationCase[] => [
       'receive the packet': [1, 0.03],
     },
     expectsEmptyPlan: true,
+  },
+  {
+    /**
+     * THE BRIDGE-DESYNC FIXTURE — a committed table must not be able to invert a state bridge.
+     *
+     * `guard-implication` decides a response ESTABLISHES a state by parsing the raw sentence,
+     * while the polarity of that state comes from the atomized form. A committed table that
+     * rewrites the response HEAD moves the second without moving the first, so the bridge
+     * asserts the negation of what the document says — and the inert-drop compares atom names,
+     * not polarity, so it does not catch it.
+     *
+     * R1 and R2 are the SAME requirement inflected differently; the tool itself calls them
+     * logically equivalent. R3 exists only so `latch_engaged` is a guard some other requirement
+     * keys on, which is what makes the bridge live rather than inert.
+     *
+     * Reached here through `terms`, and identically reachable through the shipped `glossary` —
+     * so the fix belongs at check time, not in either table's write path.
+     */
+    id: 'a-committed-table-must-not-invert-a-state-bridge',
+    why:
+      'Two requirements that both KEEP the latch engaged, plus a third that guards on the ' +
+      'latch being engaged. Nothing here conflicts: the tool reports the first two as ' +
+      'logically equivalent. A committed table that rewrites the establishing verb must not ' +
+      'turn that into a proven contradiction.',
+    doc: stateDoc([
+      [30, 'the door is open', 'keeps the latch engaged'],
+      [31, 'the door is open', 'keep the latch engaged'],
+      [32, 'the latch is engaged', 'log the state'],
+    ]),
+    table: {
+      'keeps the latch engaged': [1, 0.02],
+      'keep the latch engaged': [1, 0.03],
+      'log the state': [0, 1],
+    },
+    expectsEmptyPlan: false,
+    // The committed tables that MUST NOT fabricate. Each was accepted by the CLI and each
+    // turned a clean document into an error-severity FND_CONTRADICTION before the fix.
+    committed: {
+      terms: [{ canonical: 'revokes entry', aliases: ['keeps the latch'] }],
+    },
+  },
+  {
+    id: 'a-committed-GLOSSARY-must-not-invert-a-state-bridge',
+    why:
+      'The same document and the same hazard, reached through the shipped `glossary` command ' +
+      'instead of `terms`. This one predates the term table entirely, which is why the fix is ' +
+      'at check time: no write-time fence on `terms` could ever have closed it.',
+    doc: stateDoc([
+      [33, 'the door is open', 'keep the latch engaged'],
+      [34, 'the door is open', 'hold the latch engaged'],
+      [35, 'the latch is engaged', 'log the state'],
+    ]),
+    table: {
+      'keep the latch engaged': [1, 0.02],
+      'hold the latch engaged': [1, 0.03],
+      'log the state': [0, 1],
+    },
+    expectsEmptyPlan: false,
+    committed: {
+      glossary: [{ canonical: 'revoke entry', aliases: ['keep the latch engaged'] }],
+    },
   },
   {
     id: 'negating-prefix-different-objects',

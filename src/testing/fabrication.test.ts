@@ -126,17 +126,39 @@ const groupsByKey = (document: RequirementsDocument): Map<string, string[]> => {
 describe('applying a whole-document glossary plan FABRICATES nothing', () => {
   for (const testCase of fabricationCases()) {
     it(`${testCase.id} — ${testCase.why.slice(0, 60)}…`, async () => {
-      const before = await check(testCase.doc)
-      // A fixture that is already failing proves nothing about the plan.
-      expect(before.counts.error, `fixture is not clean BEFORE the plan: ${testCase.id}`).toBe(0)
+      // A fixture may commit tables of its own. Those are applied FIRST, because the claim for
+      // those cases is about what an already-committed table may do to a verdict — not about
+      // what the planner proposes.
+      const doc =
+        testCase.committed === undefined
+          ? testCase.doc
+          : ({
+              ...testCase.doc,
+              terms: testCase.committed.terms ?? testCase.doc.terms,
+              glossary: testCase.committed.glossary ?? testCase.doc.glossary,
+            } as RequirementsDocument)
 
-      const plan = await buildGlossaryPlan(toEngineDoc(testCase.doc), tableEmbedder(testCase.table))
+      const before = await check(doc)
+      // A fixture that is already failing proves nothing. For a `committed` fixture this IS the
+      // assertion: the table was accepted by the CLI, and it must not have proven anything.
+      expect(
+        before.counts.error,
+        `a committed table FABRICATED ${before.counts.error} error-severity finding(s) in a ` +
+          `document that has no conflict. Ground truth: ${testCase.why}\n` +
+          JSON.stringify(
+            before.findings.filter((f) => f.severity === 'error'),
+            null,
+            2,
+          ),
+      ).toBe(0)
+
+      const plan = await buildGlossaryPlan(toEngineDoc(doc), tableEmbedder(testCase.table))
 
       // The FABRICATION claim first, and unconditionally. Asserting the withhold before it
       // would let the narrower expectation short-circuit the one this gate is named for —
       // so a regression that both merged wrongly AND fabricated would be reported only as
       // "the plan was not empty", which reads like a cosmetic surprise.
-      const after = await check(applyOps(testCase.doc, plan.ops))
+      const after = await check(applyOps(doc, plan.ops))
       expect(
         after.counts.error,
         `applying the plan MANUFACTURED ${after.counts.error} error-severity finding(s) in a ` +

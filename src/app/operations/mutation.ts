@@ -37,6 +37,7 @@ import { Effect, Schema } from 'effect'
 import { ANTONYM_INDEX, buildAntonymIndexWithDoc } from '../../domain/engine/formal/antonyms.ts'
 import { normalize } from '../../domain/engine/formal/atomize.ts'
 import { ESTABLISH_VERBS } from '../../domain/engine/formal/guard-implication.ts'
+import { deInflectHead } from '../../domain/engine/formal/lemma.ts'
 // STATIC. A dynamic import here bought nothing: `operations/parse.ts` imports
 // `engine/parse/batch.ts` statically and that imports `result.ts` statically, so the parse
 // ladder is in the main chunk on every run regardless. The lazy form only added an await
@@ -191,9 +192,22 @@ const MUTATE_OPTIONS: MutateOptions = {
    * keeps the check path free of "this table was incoherent" branches, exactly as above.
    */
   validateTerms: (canonical, alias) => {
-    const offending = [...canonical.split(/[\s_]+/), ...alias.split(/[\s_]+/)].find(
-      (token) => token.length > 0 && (ANTONYM_INDEX.has(token) || ESTABLISH_VERBS.has(token)),
-    )
+    // De-inflected, because `atomize` de-inflects the head before probing: a raw-token check
+    // accepts `revokes` while the atomizer reads `revoke`, and that gap was a verified
+    // fabrication. Defense in depth only — the SOUNDNESS guarantee is the check-time drop in
+    // `guard-implication.ts`, because no write-time fence can see a doc antonym committed
+    // afterwards, nor a two-token head formed by joining a canonical to the tokens beside it.
+    const offending = [...canonical.split(/[\s_]+/), ...alias.split(/[\s_]+/)]
+      .filter((token) => token.length > 0)
+      .find((token) => {
+        const head = deInflectHead(token)
+        return (
+          ANTONYM_INDEX.has(token) ||
+          ANTONYM_INDEX.has(head) ||
+          ESTABLISH_VERBS.has(token) ||
+          ESTABLISH_VERBS.has(head)
+        )
+      })
     if (offending === undefined) return undefined
     return (
       `"${offending}" is a verb the formal tier reads — the antonym table or the ` +
