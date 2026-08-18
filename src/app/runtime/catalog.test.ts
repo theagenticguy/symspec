@@ -23,6 +23,7 @@ import {
   REACHABILITY_FND_CODES,
   ReachabilityFndCodeMeta,
 } from '../../domain/reachability/reachability-codes.ts'
+import { TERMINOLOGY_FND_CODES } from '../../domain/terminology/terminology-codes.ts'
 import { descriptionOf, ERR_CLASSES, tagOf } from '../../ports/errors.ts'
 import {
   allCodeStrings,
@@ -35,15 +36,16 @@ import {
 } from './catalog.ts'
 
 // ---------------------------------------------------------------------------
-// Coverage: all 81, in family order
+// Coverage: all 83, in family order
 // ---------------------------------------------------------------------------
 
 describe('the unified catalog spans all three code families', () => {
-  it('holds exactly 21 ERR_* / 36 FND_* / 24 GTWR_* = 81', () => {
-    // 36 FND_*: the transplanted 30, plus 6 `FND_REACHABILITY_*`. The two live in
-    // different files because codes live with the tier that emits them. They report the
-    // same `family`, because an agent switches on a code and not on provenance.
-    expect(catalogCounts()).toEqual({ ERR: 21, FND: 36, GTWR: 24, total: 81 })
+  it('holds exactly 21 ERR_* / 38 FND_* / 24 GTWR_* = 83', () => {
+    // 38 FND_*: the transplanted 30, plus 6 `FND_REACHABILITY_*` and 2 `FND_TERM_*` /
+    // `FND_ACRONYM_*`. The three live in different files because codes live with the tier
+    // that emits them. They report the same `family`, because an agent switches on a code and
+    // not on provenance.
+    expect(catalogCounts()).toEqual({ ERR: 21, FND: 38, GTWR: 24, total: 83 })
   })
 
   it('resolves EVERY code in every catalog', () => {
@@ -51,9 +53,10 @@ describe('the unified catalog spans all three code families', () => {
       ...ERR_CLASSES.map((c) => tagOf(c)),
       ...FND_CODES,
       ...REACHABILITY_FND_CODES,
+      ...TERMINOLOGY_FND_CODES,
       ...GTWR_CODES,
     ] as readonly string[]
-    expect(codes).toHaveLength(81)
+    expect(codes).toHaveLength(83)
     for (const code of codes) {
       const entry = lookupCode(code)
       expect(entry, `${code} must resolve`).toBeDefined()
@@ -66,14 +69,16 @@ describe('the unified catalog spans all three code families', () => {
   it('lists the families in order, each in its own append-only order', () => {
     const rows = allCodes()
     expect(rows.slice(0, 21).map((r) => r.family)).toEqual(Array(21).fill('ERR'))
-    // 36 FND rows: v4's 30 then the reachability 6, both reporting `family: 'FND'`.
-    expect(rows.slice(21, 57).map((r) => r.family)).toEqual(Array(36).fill('FND'))
-    expect(rows.slice(57).map((r) => r.family)).toEqual(Array(24).fill('GTWR'))
+    // 38 FND rows: v4's 30, then the reachability 6, then the terminology 2 — all reporting
+    // `family: 'FND'`.
+    expect(rows.slice(21, 59).map((r) => r.family)).toEqual(Array(38).fill('FND'))
+    expect(rows.slice(59).map((r) => r.family)).toEqual(Array(24).fill('GTWR'))
     // The per-family order is the shipped append-only order, unreordered — and WITHIN the
     // FND family, provenance order: the transplanted list, then the greenfield's.
     expect(rows.slice(21, 51).map((r) => r.code)).toEqual([...FND_CODES])
     expect(rows.slice(51, 57).map((r) => r.code)).toEqual([...REACHABILITY_FND_CODES])
-    expect(rows.slice(57).map((r) => r.code)).toEqual([...GTWR_CODES])
+    expect(rows.slice(57, 59).map((r) => r.code)).toEqual([...TERMINOLOGY_FND_CODES])
+    expect(rows.slice(59).map((r) => r.code)).toEqual([...GTWR_CODES])
   })
 
   it('publishes the description VERBATIM — the manifest`s own bytes', () => {
@@ -111,9 +116,9 @@ describe('severity is derived, and null where it genuinely is not per-code', () 
    * would report `null` for every code — which reads as "no severity" rather than
    * as a bug. Asserting every one parses is what makes the derivation trustworthy.
    */
-  it('parses a severity for ALL 36 FND_* codes', () => {
+  it('parses a severity for ALL 38 FND_* codes', () => {
     const fnd = allCodes().filter((r) => r.family === 'FND')
-    expect(fnd).toHaveLength(36)
+    expect(fnd).toHaveLength(38)
     for (const row of fnd) {
       expect(row.severity, `${row.code} severity must parse`).not.toBeNull()
       expect(['error', 'warn', 'info', 'warn/info']).toContain(row.severity)
@@ -393,8 +398,8 @@ describe('nearestCodesAll ranks across all three families', () => {
     expect(nearestCodesAll('FND_', 5)).toHaveLength(5)
   })
 
-  it('draws from all 81 code strings', () => {
-    expect(allCodeStrings()).toHaveLength(81)
-    expect(new Set(allCodeStrings()).size, 'no duplicate codes across families').toBe(81)
+  it('draws from all 83 code strings', () => {
+    expect(allCodeStrings()).toHaveLength(83)
+    expect(new Set(allCodeStrings()).size, 'no duplicate codes across families').toBe(83)
   })
 })

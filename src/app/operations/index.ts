@@ -50,6 +50,10 @@ import {
   REACHABILITY_FND_CODES,
   ReachabilityFndCodeMeta,
 } from '../../domain/reachability/reachability-codes.ts'
+import {
+  TERMINOLOGY_FND_CODES,
+  TerminologyFndCodeMeta,
+} from '../../domain/terminology/terminology-codes.ts'
 import { ErrNotFound, errCodeCatalog } from '../../ports/errors.ts'
 import {
   EXIT_CLEAN,
@@ -169,7 +173,8 @@ const manifestEnvelope = () =>
       // description corpus. See `Manifest` for why publishing only ERR_* was a gap
       // rather than a scope choice.
       errorCodes: errCodeCatalog(),
-      // BOTH FND sources, in provenance order — the engine's transplanted 30 then v5's own 5.
+      // EVERY FND source, in provenance order — the engine's transplanted corpus, then the
+      // greenfield ones. A count here would rot; the arrays are the source of truth.
       // Published as ONE `findingCodes` array because an agent switches on a code, not on
       // which file it came from.
       findingCodes: [
@@ -177,6 +182,10 @@ const manifestEnvelope = () =>
         ...REACHABILITY_FND_CODES.map((code) => ({
           code,
           description: ReachabilityFndCodeMeta[code].description,
+        })),
+        ...TERMINOLOGY_FND_CODES.map((code) => ({
+          code,
+          description: TerminologyFndCodeMeta[code].description,
         })),
       ],
       lintCodes: GTWR_CODES.map((code) => ({
@@ -234,7 +243,7 @@ export const explainOp = defineOperation({
   handler: (input) => {
     const entry = lookupCode(input.code)
     if (entry === undefined) {
-      // Ranked across ALL 80 now. The family prefix keeps this from becoming noise:
+      // Ranked across the WHOLE catalog now. The family prefix keeps this from becoming noise:
       // a misspelled FND_* shares 4 leading characters with every other FND_* and
       // none with any ERR_*, so a cross-family suggestion only appears when nothing
       // in the right family is close.

@@ -214,7 +214,7 @@ describe('explain — AC-A-3: every code through the operation', () => {
     const published = [...manifest.errorCodes, ...manifest.findingCodes, ...manifest.lintCodes].map(
       (row) => row.code,
     )
-    expect(published).toHaveLength(81)
+    expect(published).toHaveLength(83)
 
     for (const code of published) {
       const env = await Effect.runPromise(runOperation(explainOp, { code }))
@@ -276,7 +276,7 @@ describe('explain — AC-A-3: every code through the operation', () => {
       // the engine's transplanted 30 plus the 6 `FND_REACHABILITY_*`. Read from
       // `catalogCounts()` at runtime rather than hardcoded in the message, which is why
       // this number moves on its own when the vocabulary grows.
-      expect(env.suggestions.join(' ')).toContain('36 FND_*')
+      expect(env.suggestions.join(' ')).toContain('38 FND_*')
     }
   })
 

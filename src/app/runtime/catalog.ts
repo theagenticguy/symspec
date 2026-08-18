@@ -55,6 +55,10 @@ import {
   REACHABILITY_FND_CODES,
   ReachabilityFndCodeMeta,
 } from '../../domain/reachability/reachability-codes.ts'
+import {
+  TERMINOLOGY_FND_CODES,
+  TerminologyFndCodeMeta,
+} from '../../domain/terminology/terminology-codes.ts'
 import { runnable } from '../../ports/command-form.ts'
 import { descriptionOf, ERR_CLASSES, tagOf } from '../../ports/errors.ts'
 
@@ -135,8 +139,8 @@ const SYMSPEC_COMMAND = /`(symspec [^`]+)`/g
 /**
  * A parenthesized `(e.g. …)` illustration, or a `such as "x" / "y"` enumeration.
  *
- * These are the two shapes v4 corpora actually use, verified by probing all
- * 80 descriptions: 11 carry one (3 `FND_*` with `e.g.`, 1 `GTWR_*` with `e.g.`, 7
+ * These are the two shapes v4 corpora actually use, verified by probing every
+ * description: 11 carry one (3 `FND_*` with `e.g.`, 1 `GTWR_*` with `e.g.`, 7
  * `GTWR_*` with `such as`) and the rest carry none. A third shape does not exist,
  * so this is exhaustive rather than a sample — and a future description that
  * invents one loses its example silently, which is why `catalog.test.ts` pins the
@@ -310,6 +314,26 @@ const REACHABILITY_TIER = {
 } as const satisfies Record<(typeof REACHABILITY_FND_CODES)[number], 'formal'>
 
 /**
+ * The terminology codes' tier — `'formal'`, matching `FND_SIMILAR_SEMANTIC` and
+ * `FND_OPPOSITION_CANDIDATE` in {@link FND_TIER}.
+ *
+ * Those are the embedding-derived propose-only findings this family sits beside, and
+ * `FND_TERM_INCONSISTENT` is the dual of the first one, so filing it anywhere else would
+ * split one kind of claim across two tiers. `'structural'` would be the alternative
+ * reading — a fact about the document the solver never saw — but the catalog already
+ * reserves that for facts about the requirement GRAPH, and this is a fact about the atom
+ * bodies the formal tier compares.
+ *
+ * A separate table for the same reason `REACHABILITY_TIER` is one: {@link FND_TIER} is
+ * keyed on the engine's `FND_CODES` with a `satisfies` bound that makes it exhaustive over
+ * a transplanted list, and widening that key would cost the exhaustiveness.
+ */
+const TERMINOLOGY_TIER = {
+  FND_TERM_INCONSISTENT: 'formal',
+  FND_ACRONYM_UNDEFINED: 'formal',
+} as const satisfies Record<(typeof TERMINOLOGY_FND_CODES)[number], 'formal'>
+
+/**
  * Why a `GTWR_*` row reports no severity. Single-sourced here so `explain`, the
  * craft corpus, and the generated AGENTS.md all quote ONE sentence.
  */
@@ -339,7 +363,7 @@ const errRows = (): readonly CodeEntry[] =>
     }
   })
 
-/** The 30 `FND_*` rows, with severity PARSED from the corpus text. */
+/** The engine's transplanted `FND_*` rows, with severity PARSED from the corpus text. */
 const fndRows = (): readonly CodeEntry[] =>
   FND_CODES.map((code) => {
     const description = FndCodeMeta[code].description
@@ -381,24 +405,34 @@ const gtwrRows = (): readonly CodeEntry[] =>
   })
 
 /**
- * The 5 G4 `FND_REACHABILITY_*` rows, parsed by the SAME parsers as the transplanted
- * families.
+ * The rows for a GREENFIELD-owned `FND_*` corpus, parsed by the SAME parsers as the
+ * transplanted families.
  *
- * That shared parsing is why `reachability-codes.ts` writes its descriptions in the
- * v4's format (severity prefix with an em dash, trailing `Suggestion:`): one parser
- * over one convention, rather than a second corpus with its own reader that could
- * disagree about what a description means.
+ * That shared parsing is why every greenfield corpus writes its descriptions in v4's
+ * format (severity prefix with an em dash, trailing `Suggestion:`): one parser over one
+ * convention, rather than a corpus per reader that could disagree about what a
+ * description means.
+ *
+ * ONE function over `(codes, meta, tier)` rather than one per corpus. The two callers
+ * below were identical except for which three names they closed over, and a pair of
+ * identical builders kept in step by a comment is how the last two families drifted —
+ * a corpus whose builder forgot to strip the severity prefix would publish it twice into
+ * `meaning`, and nothing would notice.
  */
-const reachabilityRows = (): readonly CodeEntry[] =>
-  REACHABILITY_FND_CODES.map((code) => {
-    const description = ReachabilityFndCodeMeta[code].description
+const greenfieldFndRows = <Code extends string>(
+  codes: readonly Code[],
+  meta: Record<Code, { readonly description: string }>,
+  tier: Record<Code, string>,
+): readonly CodeEntry[] =>
+  codes.map((code) => {
+    const description = meta[code].description
     const prefix = FND_SEVERITY_PREFIX.exec(description)
     const severity = prefix?.[1] ?? null
     return {
       code,
       family: 'FND' as const,
       severity,
-      tier: REACHABILITY_TIER[code],
+      tier: tier[code],
       description,
       ...projectionsOf(description.replace(FND_SEVERITY_PREFIX, '')),
     }
@@ -415,11 +449,12 @@ const reachabilityRows = (): readonly CodeEntry[] =>
  */
 export const allCodes = (): readonly CodeEntry[] => [
   ...errRows(),
-  // The two FND sources in provenance order: the engine's transplanted 30, then v5's own 5.
-  // Both report `family: 'FND'`, so an agent sees ONE finding-code vocabulary and cannot
-  // tell (or need to tell) which file the bytes live in.
+  // The three FND sources in provenance order: the engine's transplanted 30, then the two
+  // greenfield corpora. All report `family: 'FND'`, so an agent sees ONE finding-code
+  // vocabulary and cannot tell (or need to tell) which file the bytes live in.
   ...fndRows(),
-  ...reachabilityRows(),
+  ...greenfieldFndRows(REACHABILITY_FND_CODES, ReachabilityFndCodeMeta, REACHABILITY_TIER),
+  ...greenfieldFndRows(TERMINOLOGY_FND_CODES, TerminologyFndCodeMeta, TERMINOLOGY_TIER),
   ...gtwrRows(),
 ]
 
@@ -437,7 +472,7 @@ export const lookupCode = (code: string): CodeEntry | undefined =>
   allCodes().find((row) => row.code === code)
 
 /**
- * Codes closest to a misspelling, across ALL 80 — the did-you-mean corpus.
+ * Codes closest to a misspelling, across every code in the catalog — the did-you-mean corpus.
  *
  * Same deterministic ranking `nearestCodes` used over the 21: shared leading prefix
  * first (so `GTWR_R7_VAGU` suggests `GTWR_R7_VAGUE` before anything else), then
