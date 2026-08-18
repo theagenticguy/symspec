@@ -2,6 +2,29 @@
 
 ## [1.2.0](https://github.com/theagenticguy/symspec/compare/v1.1.0...v1.2.0) (2026-08-18)
 
+> ### Upgrade note — this release contains a correctness fix on an already-published surface
+>
+> [`fbe4e67`](https://github.com/theagenticguy/symspec/commit/fbe4e67610d0c5b09b7368a1f9b6acb62957f48d)
+> (*a committed table must not invert a state bridge*) is listed below among the vocabulary
+> work it shipped beside, but it is independent of it and it is the entry to read first.
+>
+> **It closes a fabricated `FND_CONTRADICTION` at error severity — a conflict reported against
+> a document that contains none — reachable through `symspec glossary`, which has shipped since
+> 1.0.0.** A committed glossary (or the new `terms`) entry that rewrites a response's leading
+> verb desynchronised two readings of one sentence: the guard-implication tier recognises a
+> state bridge from the RAW sentence while computing its polarity from the ATOMIZED form, so the
+> implication it asserted into the whole-spec conjunction was the negation of what the author
+> wrote. The inert-implication filter compares atom names rather than polarity, so it did not
+> catch one. The result is exit code 1 on a clean document, which for a tool whose contract is
+> "sound modulo atomization" is the worst failure available to it.
+>
+> Reproduced on the built binary through both doors before the fix, and fixed at the point of
+> inference rather than in either write path — committing a clean term and a document antonym
+> in either order composes the same desync past any write-time validation.
+>
+> **If you commit glossary entries, re-run `symspec check` on this version.** A contradiction
+> you could not account for may have been this. A dropped bridge is a miss, which is the only
+> direction a sound checker may move, so the fix can cost you a proof but never invent one.
 
 ### Features
 
