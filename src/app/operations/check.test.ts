@@ -26,6 +26,7 @@ import { Effect, Layer, type Schema } from 'effect'
 import { describe, expect, it } from 'vitest'
 import { stubEmbedder } from '../../adapters/embedding/embedder.ts'
 import { solverServiceLayer } from '../../adapters/z3/solver-service.ts'
+import type { Embedder } from '../../domain/engine/formal/embed.ts'
 import {
   DOC_VERSION,
   emptyDocument,
@@ -222,6 +223,7 @@ const memoryStore = (fs: MemoryFs) =>
 const runCheckOp = (
   document: RequirementsDocument,
   input: Record<string, unknown> = {},
+  embedder: Embedder = stubEmbedder(),
 ): Promise<
   | { readonly _tag: 'Success'; readonly success: { readonly data: CheckPayload } }
   | { readonly _tag: 'Failure'; readonly failure: OperationalError | Schema.SchemaError }
@@ -234,10 +236,13 @@ const runCheckOp = (
           memoryStore(fs),
           Layer.succeed(DocPath)(makeDocPath({})),
           solverServiceLayer,
-          // The DETERMINISTIC stub, so these tests exercise the always-on semantic
-          // tier without the ~110 MB model. Not a fallback — a caller with no stub and
-          // no cached model still fails closed with ERR_EMBED_MODEL_MISSING.
-          embedderLayerOf(stubEmbedder()),
+          // The DETERMINISTIC stub by default, so these tests exercise the always-on
+          // semantic tier without the ~110 MB model. Not a fallback — a caller with no stub
+          // and no cached model still fails closed with ERR_EMBED_MODEL_MISSING.
+          //
+          // Overridable, because the stub's cosines are deliberately meaningless: a test
+          // about a THRESHOLD has to supply hand-authored vectors or it is asserting a hash.
+          embedderLayerOf(embedder),
         ),
       ),
     ),
@@ -248,8 +253,9 @@ const runCheckOp = (
 const expectOk = async (
   document: RequirementsDocument,
   input: Record<string, unknown> = {},
+  embedder?: Embedder,
 ): Promise<CheckPayload> => {
-  const result = await runCheckOp(document, input)
+  const result = await runCheckOp(document, input, embedder)
   if (result._tag === 'Failure') {
     throw new Error(`expected success, got ${JSON.stringify(result.failure)}`)
   }
@@ -1223,5 +1229,227 @@ describe('--strict fails on a demotion the BOUNDARY added, not just the tier', (
     expect(exitCodeForEnvelope({ apiVersion: 1, type: 'check', data: payload })).toBe(
       EXIT_FINDINGS_FAILURE,
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The terminology tier at the seam
+// ---------------------------------------------------------------------------
+
+/**
+ * A document whose ONE committed term lands in two unrelated requirements.
+ *
+ * Disjoint vocabulary apart from the shared `token`, so the formal tier compares nothing
+ * — which is exactly the condition `FND_NO_PAIRS_CHECKED` exists to disclose, and
+ * therefore the document that can catch this tier suppressing it.
+ */
+const driftDoc = (): RequirementsDocument => ({
+  ...docOf(
+    req({
+      id: '33333333-3333-4333-8333-333333333333',
+      patternType: 'event-driven',
+      trigger: 'the token expires',
+      systemName: 'auth service',
+      systemResponse: 'revoke the active session',
+      sentence: 'When the token expires, the auth service shall revoke the active session.',
+    }),
+    req({
+      id: '44444444-4444-4444-8444-444444444444',
+      patternType: 'event-driven',
+      trigger: 'the player places the token on the board',
+      systemName: 'auth service',
+      systemResponse: 'advance the turn',
+      sentence:
+        'When the player places the token on the board, the auth service shall advance the turn.',
+    }),
+  ),
+  terms: [{ canonical: 'token', aliases: [] }],
+})
+
+/**
+ * Unit vectors at fixed angles, so every cosine the run produces is exactly known.
+ *
+ * An unlisted text THROWS rather than defaulting, and that is load-bearing here. `check`
+ * makes four embed calls over three different text populations — the response atoms (twice,
+ * for the synonym and opposition detectors), the rendered sentences (the similarity graph),
+ * and this tier's joined slots. A default angle silently collapses whichever population a
+ * fixture forgot onto ONE vector at cosine 1.0, which fires the engine's own
+ * `FND_SIMILAR_SEMANTIC` across the document — and that names two requirement ids, which
+ * suppresses `FND_NO_PAIRS_CHECKED`. The disclaimer test below would then fail while
+ * blaming the terminology tier for something the fixture did. Throwing turns a forgotten
+ * text into a named error instead of a misattributed failure.
+ */
+const angleEmbedder = (table: Readonly<Record<string, number>>): Embedder => {
+  const at = (deg: number): Float32Array => {
+    const r = (deg * Math.PI) / 180
+    return Float32Array.from([Math.cos(r), Math.sin(r)])
+  }
+  return async (texts: readonly string[]) =>
+    texts.map((t) => {
+      const deg = table[t]
+      if (deg === undefined) throw new Error(`angleEmbedder: no angle for ${JSON.stringify(t)}`)
+      return at(deg)
+    })
+}
+
+/**
+ * Every text `check` embeds over `driftDoc()`, placed deliberately.
+ *
+ * The two SLOT texts sit 80° apart (cosine 0.1736, well under the 0.62 coherence floor) so
+ * `FND_TERM_INCONSISTENT` fires. Everything else sits 85° apart (cosine 0.0872) so it clears
+ * NOTHING: not the 0.72 paraphrase threshold, not the 0.82 graph threshold, not the 0.5
+ * opposition floor. So the only cross-requirement finding this document can produce is the
+ * terminology one, which is what makes the disclaimer assertion attributable.
+ */
+const DRIFT_EMBEDDER = angleEmbedder({
+  // The joined slots — this tier's framing.
+  'the token expires revoke the active session': 0,
+  'the player places the token on the board advance the turn': 80,
+  // The response atoms — the engine's synonym and opposition detectors.
+  'revoke the active session': 0,
+  'advance the turn': 85,
+  // The rendered sentences — the engine's similarity graph.
+  'When the token expires, the auth service shall revoke the active session.': 0,
+  'When the player places the token on the board, the auth service shall advance the turn.': 85,
+})
+
+/**
+ * A document that is otherwise CLEAN — `verified: true`, zero demotions — and still carries
+ * term drift.
+ *
+ * This fixture exists because of a sabotage that did NOT fire. `driftDoc()` has disjoint
+ * vocabulary, so it is already demoted for `uncovered-requirement`; asserting "`verified` is
+ * unchanged" over it passes whether or not this tier pushes a demotion, because the boolean
+ * was false either way. Measured: two requirements sharing one trigger reach `verified: true`
+ * with `demotions: []`, so here a single pushed demotion flips a `true` to `false` and the
+ * assertion has something to fail on.
+ *
+ * The shared trigger is also what puts the committed `token` in both requirements.
+ */
+const verifiedDriftDoc = (): RequirementsDocument => ({
+  ...docOf(
+    req({
+      id: '55555555-5555-4555-8555-555555555555',
+      patternType: 'event-driven',
+      trigger: 'the token is presented',
+      systemName: 'auth service',
+      systemResponse: 'revoke the active session',
+      sentence: 'When the token is presented, the auth service shall revoke the active session.',
+    }),
+    req({
+      id: '66666666-6666-4666-8666-666666666666',
+      patternType: 'event-driven',
+      trigger: 'the token is presented',
+      systemName: 'auth service',
+      systemResponse: 'advance the turn',
+      sentence: 'When the token is presented, the auth service shall advance the turn.',
+    }),
+  ),
+  terms: [{ canonical: 'token', aliases: [] }],
+})
+
+/** Same placement discipline as `DRIFT_EMBEDDER`: slots at 80°, everything else at 85°. */
+const VERIFIED_DRIFT_EMBEDDER = angleEmbedder({
+  'the token is presented revoke the active session': 0,
+  'the token is presented advance the turn': 80,
+  'revoke the active session': 0,
+  'advance the turn': 85,
+  'When the token is presented, the auth service shall revoke the active session.': 0,
+  'When the token is presented, the auth service shall advance the turn.': 85,
+})
+
+describe('check — the terminology tier is spliced in without reaching the verdict', () => {
+  it('emits FND_TERM_INCONSISTENT through the one findings array', async () => {
+    const payload = await expectOk(driftDoc(), {}, DRIFT_EMBEDDER)
+    const drift = payload.findings.filter((f) => f.code === 'FND_TERM_INCONSISTENT')
+    expect(drift).toHaveLength(1)
+    expect(drift[0]?.severity).toBe('info')
+    expect(drift[0]?.tier).toBe('formal')
+    expect(drift[0]?.requirementIds).toHaveLength(2)
+  })
+
+  it('reports drift on a document that still verifies, with no demotion at all', async () => {
+    // The discriminating claim. This document has NOTHING else wrong with it, so a demotion
+    // pushed by this tier — under any reason name, including one it borrows from another
+    // tier — turns `verified` false and fails here.
+    const payload = await expectOk(verifiedDriftDoc(), {}, VERIFIED_DRIFT_EMBEDDER)
+    expect(payload.findings.some((f) => f.code === 'FND_TERM_INCONSISTENT')).toBe(true)
+    expect(payload.coverage.demotions).toEqual([])
+    expect(payload.verified).toBe(true)
+    expect(payload.progress.demotions).toBe(0)
+    expect(exitCodeForEnvelope({ apiVersion: 1, type: 'check', data: payload })).toBe(EXIT_CLEAN)
+  })
+
+  it('does not make --strict fail on a document that would otherwise pass', async () => {
+    const strict = await expectOk(verifiedDriftDoc(), { strict: true }, VERIFIED_DRIFT_EMBEDDER)
+    expect(strict.findings.some((f) => f.code === 'FND_TERM_INCONSISTENT')).toBe(true)
+    // A wording opinion must not fail a build. Exit 3 is reserved for "I could not check
+    // this", and this tier checked everything it claims to.
+    expect(strict.strictGate).toBe('pass')
+    expect(exitCodeForEnvelope({ apiVersion: 1, type: 'check', data: strict })).toBe(EXIT_CLEAN)
+  })
+
+  it('adds no demotion to an already-demoted document either', async () => {
+    // The other direction: on a document with existing demotions, the tier must not append.
+    // Compared as full arrays rather than by reason substring — the substring form passed a
+    // sabotage that pushed a demotion under a borrowed reason name.
+    const withTier = await expectOk(driftDoc(), {}, DRIFT_EMBEDDER)
+    const withoutTier = await expectOk(driftDoc(), { semantic: false })
+    const reasonsOf = (p: CheckPayload) => p.coverage.demotions.map((d) => d.reason).sort()
+    // `--semantic=false` legitimately adds `semantic-tier-skipped`, so that one is excluded
+    // from the comparison — it is the disclosure for the flag, not for this tier.
+    expect(reasonsOf(withTier)).toEqual(
+      reasonsOf(withoutTier).filter((r) => r !== 'semantic-tier-skipped'),
+    )
+    expect(withTier.counts.error).toBe(withoutTier.counts.error)
+  })
+
+  it('does NOT suppress FND_NO_PAIRS_CHECKED', async () => {
+    // The property, asserted directly rather than as a fact about where the splice sits.
+    // A terminology finding names two requirement ids, which is the exact predicate the
+    // engine uses to decide a cross-requirement comparison happened — so if this tier ever
+    // ran INSIDE the engine, it would quiet a disclaimer over a comparison it never made.
+    const payload = await expectOk(driftDoc(), {}, DRIFT_EMBEDDER)
+    expect(payload.findings.some((f) => f.code === 'FND_TERM_INCONSISTENT')).toBe(true)
+    expect(payload.findings.some((f) => f.code === 'FND_NO_PAIRS_CHECKED')).toBe(true)
+  })
+
+  it('keeps counts in agreement with the merged findings array', async () => {
+    const payload = await expectOk(driftDoc(), {}, DRIFT_EMBEDDER)
+    const tally = { error: 0, warn: 0, info: 0 }
+    for (const f of payload.findings) tally[f.severity] += 1
+    expect(payload.counts).toEqual(tally)
+    expect(payload.progress.openFindings).toBe(payload.counts.error)
+  })
+
+  it('is filtered by --min-severity like every other tier', async () => {
+    const filtered = await expectOk(driftDoc(), { minSeverity: 'warn' }, DRIFT_EMBEDDER)
+    expect(filtered.findings.some((f) => f.code === 'FND_TERM_INCONSISTENT')).toBe(false)
+    // Presentation only: the counters still report what the tier examined.
+    expect(filtered.terminology?.keysExamined).toBe(1)
+  })
+
+  it('publishes what it examined, and omits the field entirely when it did not run', async () => {
+    const ran = await expectOk(driftDoc(), {}, DRIFT_EMBEDDER)
+    expect(ran.terminology).toEqual({
+      keysExamined: 1,
+      pairsCompared: 1,
+      acronymsExamined: 0,
+    })
+
+    const skipped = await expectOk(driftDoc(), { semantic: false })
+    // ABSENT, not zeroed — "the tier did not run" and "it found nothing" are different
+    // facts, and a zero-filled object states the second while meaning the first.
+    expect('terminology' in skipped).toBe(false)
+  })
+
+  it('reports zero keys examined on a document with no committed vocabulary', async () => {
+    const payload = await expectOk(
+      docOf(...Object.values(driftDoc().requirements)),
+      {},
+      DRIFT_EMBEDDER,
+    )
+    expect(payload.terminology?.keysExamined).toBe(0)
+    expect(payload.findings.some((f) => f.code === 'FND_TERM_INCONSISTENT')).toBe(false)
   })
 })
