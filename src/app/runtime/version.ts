@@ -24,4 +24,4 @@
  * one moves only when the envelope shape changes in a way an agent must
  * negotiate.
  */
-export const VERSION = '1.1.0' // x-release-please-version
+export const VERSION = '1.2.0' // x-release-please-version

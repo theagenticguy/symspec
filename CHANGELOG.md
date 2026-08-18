@@ -1,5 +1,49 @@
 # Changelog
 
+## [1.2.0](https://github.com/theagenticguy/symspec/compare/v1.1.0...v1.2.0) (2026-08-18)
+
+> ### Upgrade note — this release contains a correctness fix on an already-published surface
+>
+> [`fbe4e67`](https://github.com/theagenticguy/symspec/commit/fbe4e67610d0c5b09b7368a1f9b6acb62957f48d)
+> (*a committed table must not invert a state bridge*) is listed below among the vocabulary
+> work it shipped beside, but it is independent of it and it is the entry to read first.
+>
+> **It closes a fabricated `FND_CONTRADICTION` at error severity — a conflict reported against
+> a document that contains none — reachable through `symspec glossary`, which has shipped since
+> 1.0.0.** A committed glossary (or the new `terms`) entry that rewrites a response's leading
+> verb desynchronised two readings of one sentence: the guard-implication tier recognises a
+> state bridge from the RAW sentence while computing its polarity from the ATOMIZED form, so the
+> implication it asserted into the whole-spec conjunction was the negation of what the author
+> wrote. The inert-implication filter compares atom names rather than polarity, so it did not
+> catch one. The result is exit code 1 on a clean document, which for a tool whose contract is
+> "sound modulo atomization" is the worst failure available to it.
+>
+> Reproduced on the built binary through both doors before the fix, and fixed at the point of
+> inference rather than in either write path — committing a clean term and a document antonym
+> in either order composes the same desync past any write-time validation.
+>
+> **If you commit glossary entries, re-run `symspec check` on this version.** A contradiction
+> you could not account for may have been this. A dropped bridge is a miss, which is the only
+> direction a sound checker may move, so the fix can cost you a proof but never invent one.
+
+### Features
+
+* **check:** splice the terminology tier where it cannot reach the verdict ([a74d2fe](https://github.com/theagenticguy/symspec/commit/a74d2fe16f29991152b770e9db71385e8a148a91))
+* **propose-glossary:** align GUARD vocabulary, the slot that decides what gets compared ([59969d9](https://github.com/theagenticguy/symspec/commit/59969d96dd005d22bdab0393d66a16ba39f9befe))
+* **propose-glossary:** offer the NOUN behind a phrase class, with its blast radius ([358d8b1](https://github.com/theagenticguy/symspec/commit/358d8b1d225449649e4f7b1c1e4dcdff0b0b49aa))
+* **propose-glossary:** report every opposition, not only the ones a merge threatened ([b3b79ba](https://github.com/theagenticguy/symspec/commit/b3b79ba63a38c9d6322423c2555c521257fb64e6))
+* **terminology:** the dual of the synonym bridge, at a measured floor ([c47d20c](https://github.com/theagenticguy/symspec/commit/c47d20c6a4264229bf55be265389851dd856343d))
+* **terms:** a committed noun-phrase table, so one entry aligns a noun document-wide ([8a38938](https://github.com/theagenticguy/symspec/commit/8a389389c6c04db529034366174cb7a452f36c56))
+* whole-document vocabulary alignment — guard slots, terms, and the terminology tier ([8fcdac7](https://github.com/theagenticguy/symspec/commit/8fcdac7cae6e8db6a43563d7734272461456e49c))
+
+
+### Bug Fixes
+
+* **formal:** a committed table must not invert a state bridge ([fbe4e67](https://github.com/theagenticguy/symspec/commit/fbe4e67610d0c5b09b7368a1f9b6acb62957f48d))
+* **glossary:** a dead withhold reason, and a plan that split what it aligned ([473fbc5](https://github.com/theagenticguy/symspec/commit/473fbc5a3c6f0b79fe5967b3b015f30b4c99687c))
+* **lint:** R37 stops claiming a glossary check it never ran ([a296926](https://github.com/theagenticguy/symspec/commit/a2969262938604582ee09f25358da6af9d931634))
+* **publish:** gate the two code counts that had no gate, and the one that had half ([ed9e12f](https://github.com/theagenticguy/symspec/commit/ed9e12f94ba776a91067658ae8bd46dd591a57b3))
+
 ## [1.1.0](https://github.com/theagenticguy/symspec/compare/v1.0.1...v1.1.0) (2026-08-14)
 
 
