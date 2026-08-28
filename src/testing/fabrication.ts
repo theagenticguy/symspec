@@ -102,6 +102,43 @@ const stateReq = (n: number, preCondition: string, systemResponse: string) => {
 const stateDoc = (rows: readonly (readonly [number, string, string])[]): RequirementsDocument =>
   docOf(rows.map(([n, pre, resp]) => stateReq(n, pre, resp)))
 
+/**
+ * A state-driven requirement in a NAMED system.
+ *
+ * A peer of {@link stateReq} rather than a widening of it. `stateReq` hardcodes
+ * `latch service`, and the bridge fixtures depend on that scope appearing in their atom names —
+ * threading a system parameter through it would rewrite every one of their atoms for no reason.
+ */
+const stateReqIn = (
+  systemName: string,
+  n: number,
+  preCondition: string,
+  systemResponse: string,
+  negated = false,
+) => {
+  const id = `ffffffff-0000-4000-8000-${String(n).padStart(12, '0')}`
+  return [
+    id,
+    {
+      id,
+      patternType: 'state-driven' as const,
+      systemName,
+      systemResponse,
+      preCondition,
+      negated,
+      sentence: `While ${preCondition}, the ${systemName} shall ${negated ? 'not ' : ''}${systemResponse}.`,
+      priority: 'medium' as const,
+      status: 'draft' as const,
+      createdAt: TS,
+      updatedAt: TS,
+      derives: [],
+      satisfies: [],
+      verifies: [],
+      refines: [],
+    },
+  ] as const
+}
+
 const docOf = (rows: readonly (readonly [string, unknown])[]): RequirementsDocument =>
   ({
     docVersion: DOC_VERSION,
@@ -283,6 +320,48 @@ export const fabricationCases = (): readonly FabricationCase[] => [
       'seal the vault': [1, 0.02],
       'the shift ends': [1, 0.02],
       'the shift begins': [1, 0.03],
+    },
+    expectsEmptyPlan: true,
+  },
+  {
+    /**
+     * THE EROSION FENCE — the same ground truth as the fixture above, with a comparator added.
+     *
+     * This fixture exists to catch a failure no other one can: a recognizer that consumes the
+     * threshold clause and DROPS the rest of the guard. Erasure is indistinguishable from
+     * over-merging in its effect — a weaker antecedent activates in strictly more contexts — so
+     * `>= 30 ms and the cache is cold` reduced to `>= 30 ms` would put these two requirements in
+     * ONE context group and prove their opposed responses contradictory.
+     *
+     * The document is consistent for exactly the reason the shift fixture is: a cold cache and a
+     * warm cache never co-occur. The shared threshold is the part a partial lift is tempted by.
+     */
+    id: 'compound-guard-shared-threshold',
+    why:
+      'Two guards sharing a latency threshold but differing in cache state, with one response ' +
+      'at opposite polarity. Consistent because a cold cache and a warm cache cannot both ' +
+      'hold, so the two requirements sit in separate context groups. Any rewrite that keeps ' +
+      'the threshold and discards the cache clause merges those groups and manufactures the ' +
+      'conflict — which is why this fixture guards the recognizer, not the planner.',
+    doc: docOf([
+      stateReqIn(
+        'gateway',
+        7,
+        'the request latency is >= 30 ms and the cache is cold',
+        'enable the response cache',
+      ),
+      stateReqIn(
+        'gateway',
+        8,
+        'the request latency is >= 30 ms and the cache is warm',
+        'disable the response cache',
+      ),
+    ]),
+    table: {
+      'enable the response cache': [1, 0.02],
+      'disable the response cache': [1, 0.03],
+      'the request latency is >= 30 ms and the cache is cold': [1, 0.02],
+      'the request latency is >= 30 ms and the cache is warm': [1, 0.03],
     },
     expectsEmptyPlan: true,
   },

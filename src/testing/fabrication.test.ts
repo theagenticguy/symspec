@@ -282,10 +282,24 @@ describe('the propose tier and the decide tier atomize the SAME document', () =>
 
 describe('what a GUARD merge would cost, without booting the solver', () => {
   /**
-   * The two guard fixtures are safe only because their triggers are distinct. Merging them
-   * collapses two context groups into one, which is the antecedent a contradiction needs.
+   * These fixtures are safe only because their guards are distinct. Merging them collapses two
+   * context groups into one, which is the antecedent a contradiction needs.
+   *
+   * `compound-guard-shared-threshold` guards on a `preCondition` rather than a `trigger`, so the
+   * guard is read through {@link guardOf} — `planContextGroups` keys on `pre` and `trig` alike, so
+   * the hazard does not care which one carries the condition and neither should the test.
    */
-  const guardCases = ['mutually-exclusive-guards-opposed-response', 'distinct-agents-same-report']
+  const guardCases = [
+    'mutually-exclusive-guards-opposed-response',
+    'distinct-agents-same-report',
+    'compound-guard-shared-threshold',
+  ]
+
+  const guardOf = (r: { trigger?: string; preCondition?: string }): string => {
+    const guard = r.trigger ?? r.preCondition
+    if (guard === undefined) throw new Error('fixture requirement carries no guard slot')
+    return guard
+  }
 
   it.each(guardCases)('%s keeps its requirements in SEPARATE context groups', (id) => {
     const testCase = fabricationCases().find((c) => c.id === id)
@@ -299,20 +313,18 @@ describe('what a GUARD merge would cost, without booting the solver', () => {
   it.each(guardCases)('%s WOULD host both once the guards are aligned', (id) => {
     const testCase = fabricationCases().find((c) => c.id === id)
     const doc = testCase?.doc as RequirementsDocument
-    const triggers = Object.values(doc.requirements)
-      .map((r) => r.trigger as string)
-      .sort()
-    expect(triggers).toHaveLength(2)
+    const guards = Object.values(doc.requirements).map(guardOf).sort()
+    expect(guards).toHaveLength(2)
 
     // The op a guard-slot proposal would suggest, constructed by hand — nothing emits it today.
     const merged = applyOps(doc, [
-      { op: 'glossary', canonical: triggers[0] as string, alias: triggers[1] as string },
+      { op: 'glossary', canonical: guards[0] as string, alias: guards[1] as string },
     ])
     const groups = groupsByKey(merged)
     const both = [...groups.values()].filter((ids) => ids.length > 1)
     expect(
       both.length,
-      `aligning ${JSON.stringify(triggers)} should have put both requirements in one group`,
+      `aligning ${JSON.stringify(guards)} should have put both requirements in one group`,
     ).toBeGreaterThan(0)
 
     // And the other half of the antecedent: one response atom, opposite polarities.
