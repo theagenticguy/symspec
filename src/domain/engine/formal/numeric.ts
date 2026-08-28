@@ -190,15 +190,25 @@ function quantityKey(
 }
 
 /**
- * Candidate quantity label: the noun-ish phrase that owns the numeric bound.
- * We look immediately BEFORE the comparator phrase (e.g. "response latency
- * within 200 ms" → "response latency"). Kept deliberately shallow — a few
- * trailing words — because over-broad capture would split identical quantities.
+ * Candidate quantity label: the noun-ish phrase that owns the numeric bound —
+ * EVERY word before the comparator phrase (e.g. "the primary shard replication
+ * lag at most 10 ms" → "primary shard replication lag"), less trailing filler and
+ * one leading stopword.
+ *
+ * SOUNDNESS: this label is a DECIDE key. `quantityKey` turns it into the Real
+ * variable two bounds must share before Z3 is asked to refute them, so two slots
+ * whose labels collide are asserted to bound ONE physical thing at `error`
+ * severity. Truncating the phrase to a trailing window MERGES subjects the
+ * document keeps apart — "the primary shard replication lag" and "the analytics
+ * shard replication lag" both end in "shard replication lag" — and a merged
+ * subject co-asserts bounds no requirement placed on one quantity, which is a
+ * fabricated FND_NUMERIC_CONTRADICTION. Keeping the whole phrase can only SPLIT a
+ * key, and a split can only drop a proof: the honest failure direction, and the
+ * one `quantity-alias.ts` proposes an author-confirmed merge for.
  */
 function labelBefore(text: string, comparatorStart: number): string | null {
   const before = text.slice(0, comparatorStart).trim()
   if (before === '') return null
-  // Take up to the last 3 alphabetic words as the quantity label.
   let words = before.split(/\s+/).filter((w) => /[a-zA-Z]/.test(w))
   if (words.length === 0) return null
   // Strip TRAILING prepositions/fillers so "respond in", "respond in no" and
@@ -235,9 +245,9 @@ function labelBefore(text: string, comparatorStart: number): string | null {
   while (words.length > 1 && TRAILING_FILLER.has(words[words.length - 1]!.toLowerCase())) {
     words = words.slice(0, -1)
   }
-  const tail = words.slice(-3).join(' ')
+  const phrase = words.join(' ')
   // Strip leading verb-ish stopwords so "shall respond with latency" → "latency".
-  return tail.replace(/^(?:shall|be|is|are|the|a|an|with|of|to|have|has)\s+/i, '').trim() || null
+  return phrase.replace(/^(?:shall|be|is|are|the|a|an|with|of|to|have|has)\s+/i, '').trim() || null
 }
 
 /**

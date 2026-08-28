@@ -4,16 +4,16 @@
  * ## The blind spot this closes
  *
  * The numeric tier (`numeric.ts` → `numeric-contradiction.ts`) proves a conflict
- * only when two bounds land on the SAME per-system quantity key. That key is
- * derived from the noun phrase immediately before the comparator, so the SAME
- * physical quantity described with two different verbs splits into two keys and
- * the joint bound is never seen:
+ * only when two bounds land on the SAME per-system quantity key. That key is the
+ * whole phrase before the comparator, so the SAME physical quantity described with
+ * two different verbs splits into two keys and the joint bound is never seen:
  *
- *     "complete the infusion within at most 30 minutes"  → qty `complete_the_infusion`  (≤ 30 min)
- *     "run the infusion for at least 60 minutes"         → qty `run_the_infusion`        (≥ 60 min)
+ *     "complete the infusion within at most 30 minutes"  → qty `complete_the_infusion_within`  (≤ 30 min)
+ *     "run the infusion for at least 60 minutes"         → qty `run_the_infusion`              (≥ 60 min)
  *
- * ≤ 30 ∧ ≥ 60 on one duration is UNSAT, but the two keys never meet, so `check`
- * reported `verified=true` (GitHub issue #2, reproducer a).
+ * ≤ 30 ∧ ≥ 60 on one duration is UNSAT, but the two keys never meet, so nothing in
+ * the decide tier can prove it (GitHub issue #2, reproducer a). This tier is what
+ * stops `check` certifying such a document.
  *
  * ## Why this is propose-only, not an automatic merge
  *
@@ -24,9 +24,10 @@
  * is an authoring judgment, exactly like the paraphrase/opposition proposals
  * (`semantic.ts`). So this tier follows the same PROPOSE/DECIDE discipline:
  *
- *   - PROPOSE (here, deterministic + conservative): flag same-system,
- *     same-trigger numeric bounds whose quantity labels share a common object
- *     SUFFIX but differ in their leading verb, and whose comparators are
+ *   - PROPOSE (here, deterministic + conservative): flag CO-ACTIVE numeric bounds
+ *     — one system and one trigger key, where two untriggered requirements share
+ *     the always-on context — whose quantity labels share a common object SUFFIX
+ *     but differ in their leading verb, and whose comparators are
  *     directionally OPPOSED (one upper, one lower) in a comparable unit — the
  *     only shape that could be jointly unsatisfiable if unified. Emit an
  *     info-tier `FND_QUANTITY_ALIAS_CANDIDATE` carrying a ready-to-run
@@ -85,7 +86,7 @@ const LABEL_STOPWORDS: ReadonlySet<string> = new Set([
   'their',
   // Comparator / bound words that the numeric keyer leaves ON the label when
   // they lead a compound bound ("complete the infusion WITHIN at most 30 min" →
-  // label "infusion within"). We drop them HERE, in the propose-only matcher,
+  // label "complete the infusion within"). We drop them HERE, in the propose-only matcher,
   // rather than in numeric.ts's KEY — stripping them from the sound key would
   // collapse phrasal-verb nouns ("carry OVER" vs "carry") and fabricate a false
   // contradiction. Dropping them only for object-suffix comparison is safe: this
@@ -140,12 +141,12 @@ function sharedObjectSuffix(labelA: string, labelB: string): string | null {
   const prefixB = b.slice(0, b.length - n)
   // The two labels must DIFFER in their residual prefix (the verb/qualifier that
   // split one object into two keys). We do NOT require BOTH prefixes to be
-  // non-empty: after dropping a leaked comparator word, one side can reduce to
-  // the bare object ("infusion within" → ["infusion"]) while the other keeps its
-  // verb ("run the infusion" → ["run","infusion"]) — that is exactly the
-  // same-quantity-two-verbs shape reproducer (a) exhibits. Equal prefixes would
-  // mean identical token lists (already keyed together by the numeric tier, and
-  // the caller skips pa.quantity === pb.quantity anyway), so reject only that.
+  // non-empty: a slot that names the quantity with no verb ("the infusion within
+  // at most 30 min" → ["infusion"]) still pairs with one that has a verb ("run the
+  // infusion" → ["run","infusion"]), and that pair is the same-quantity-two-verbs
+  // shape. Equal prefixes would mean identical token lists (already keyed together
+  // by the numeric tier, and the caller skips pa.quantity === pb.quantity anyway),
+  // so reject only that.
   if (prefixA.join('_') === prefixB.join('_')) return null
   return a.slice(a.length - n).join(' ')
 }
@@ -168,11 +169,16 @@ export function findQuantityAliasCandidates(
       const ra = inputs[i]!
       const rb = inputs[j]!
       if (ra.id === rb.id) continue
-      // Same context: same system and the SAME non-empty trigger. Requirements
-      // under different triggers do not co-occur, so their bounds cannot form a
-      // single-quantity conflict worth surfacing.
+      // Same context: same system and the SAME trigger key, where two EMPTY keys
+      // are the same context — a pair of ubiquitous requirements is unconditional,
+      // so the two bounds always hold together. Requirements under DIFFERENT
+      // triggers do not co-occur, so their bounds cannot form a single-quantity
+      // conflict worth surfacing. Refusing the always-on context would leave the
+      // most co-active pair in the document unexamined and uncounted: an
+      // under-demotion, the one direction a propose-only tier can be wrong in,
+      // since it can only ever push `verified` false.
       if (ra.systemName !== rb.systemName) continue
-      if (ra.triggerKey === '' || ra.triggerKey !== rb.triggerKey) continue
+      if (ra.triggerKey !== rb.triggerKey) continue
 
       const pairKey = [ra.id, rb.id].sort().join('|')
       if (emittedPairs.has(pairKey)) continue
@@ -200,13 +206,19 @@ export function findQuantityAliasCandidates(
       const { pa, pb, object } = hit
       // Deterministic canonical/alias order for the suggested command.
       const [labelLo, labelHi] = [pa.label, pb.label].sort() as [string, string]
+      // The message names the context it actually found, because a reader checks the claim
+      // against the document: an unconditional pair has no trigger to be "the same" as.
+      const context =
+        ra.triggerKey === ''
+          ? 'in the same system with no trigger, so both bounds always hold'
+          : 'under the same system and trigger'
       findings.push({
         code: 'FND_QUANTITY_ALIAS_CANDIDATE',
         severity: 'info',
         requirementIds: [loId, hiId],
         message:
           `${loId} and ${hiId} place opposed numeric bounds (${pa.sourceText} vs ${pb.sourceText}) ` +
-          `under the same system and trigger, on quantities that share the object "${object}" but ` +
+          `${context}, on quantities that share the object "${object}" but ` +
           `differ in their leading verb ("${pa.label}" vs "${pb.label}"), so they atomized to ` +
           'different quantity keys and were never compared. If both bounds constrain the SAME ' +
           `physical quantity, run \`symspec glossary add "${labelLo}" "${labelHi}"\` so the numeric ` +

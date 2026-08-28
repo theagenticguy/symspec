@@ -139,12 +139,13 @@ describe('applying a whole-document glossary plan FABRICATES nothing', () => {
             } as RequirementsDocument)
 
       const before = await check(doc)
-      // A fixture that is already failing proves nothing. For a `committed` fixture this IS the
-      // assertion: the table was accepted by the CLI, and it must not have proven anything.
+      // A fixture that is already failing proves nothing. For a fixture with committed tables
+      // this IS the assertion — the table was accepted by the CLI and must not have proven
+      // anything — and for one without, it is the checker's own reading of the bare document.
       expect(
         before.counts.error,
-        `a committed table FABRICATED ${before.counts.error} error-severity finding(s) in a ` +
-          `document that has no conflict. Ground truth: ${testCase.why}\n` +
+        `the document FABRICATED ${before.counts.error} error-severity finding(s) before any ` +
+          `plan was applied, and it has no conflict. Ground truth: ${testCase.why}\n` +
           JSON.stringify(
             before.findings.filter((f) => f.severity === 'error'),
             null,
@@ -189,7 +190,21 @@ describe('applying a whole-document glossary plan FABRICATES nothing', () => {
         plan.corpus.responseNodes,
         `${testCase.id} produced no response nodes`,
       ).toBeGreaterThan(0)
-      expect(plan.corpus.guardNodes, `${testCase.id} produced no guard nodes`).toBeGreaterThan(0)
+      // Guard nodes are expected exactly when a guard slot exists. Read off the document
+      // rather than asserted as a floor, so an unconditional fixture — which has no guard to
+      // embed — is held to `0` instead of being excused from the sweep, and a guard family
+      // that silently stops being embedded still fails for every fixture that has one.
+      const guardSlots = Object.values(testCase.doc.requirements).filter(
+        (r) => r.trigger !== undefined || r.preCondition !== undefined,
+      ).length
+      if (guardSlots === 0) {
+        expect(
+          plan.corpus.guardNodes,
+          `${testCase.id} has no guard slot, so it must contribute no guard node`,
+        ).toBe(0)
+      } else {
+        expect(plan.corpus.guardNodes, `${testCase.id} produced no guard nodes`).toBeGreaterThan(0)
+      }
       // ...and it compared something, so "fabricated nothing" is not "never ran".
       expect(
         plan.corpus.pairsCompared + plan.corpus.alreadyUnified,

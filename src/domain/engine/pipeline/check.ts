@@ -295,10 +295,11 @@ export interface CoverageDemotion {
     // lint/parse finding, so the solver never saw it — `verified` cannot cover
     // it. Discharged by fixing the blocking finding (rephrase), NOT by waiving.
     | 'excluded-from-formal'
-    // Same-system+same-trigger opposed numeric bounds whose labels differ only
-    // by verb landed on distinct quantity keys and were never compared — a
-    // possible single-quantity conflict went unexamined. Discharged by a
-    // `glossary add` alias (or waiving if genuinely distinct quantities).
+    // Co-active opposed numeric bounds — same system, same trigger, or both
+    // unconditional — whose labels differ only by verb landed on distinct
+    // quantity keys and were never compared, so a possible single-quantity
+    // conflict went unexamined. Discharged by a `glossary add` alias (or waiving
+    // if genuinely distinct quantities).
     | 'quantity-alias-candidate'
     // A shared trigger carries numeric bounds alongside unmatched atoms — the
     // shape where aggregate/conservation or cross-quantity relational conflicts
@@ -959,16 +960,17 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       }))
       const numericContradictions = await findNumericContradictions(ctx, numericReqPreds, bounds)
 
-      // Issue #2 (reproducer a): the numeric tier keys a quantity off the noun
-      // phrase before the comparator, so ONE physical quantity described with
-      // two different verbs ("complete the infusion within ≤30 min" vs "run the
+      // Issue #2 (reproducer a): the numeric tier keys a quantity off the phrase
+      // before the comparator, so ONE physical quantity described with two
+      // different verbs ("complete the infusion within ≤30 min" vs "run the
       // infusion for ≥60 min") splits into two keys and the joint bound is never
-      // compared. Propose-only: flag same-system+same-trigger opposed bounds
-      // whose labels share an object but differ in verb, suggesting a `glossary
-      // add` alias that routes both to one quantity key (DECIDE tier). Demotes
-      // `verified`; never a verdict. Reuses the predicates already extracted
-      // (with the committed alias map applied), so a pair already unified via
-      // the glossary no longer differs and the candidate stops firing.
+      // compared. Propose-only: flag co-active opposed bounds — same system and
+      // trigger, or both unconditional — whose labels share an object but differ
+      // in verb, suggesting a `glossary add` alias that routes both to one
+      // quantity key (DECIDE tier). Demotes `verified`; never a verdict. Reuses
+      // the predicates already extracted (with the committed alias map applied),
+      // so a pair already unified via the glossary no longer differs and the
+      // candidate stops firing.
       const predsById = new Map(numericReqPreds.map((p) => [p.id, p.predicates]))
       const quantityAliasCandidates = findQuantityAliasCandidates(
         reqs.map((r) => ({
@@ -1424,7 +1426,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
         reason: 'quantity-alias-candidate',
         requirementIds: [...f.requirementIds],
         action:
-          'Two same-trigger opposed numeric bounds landed on different quantity keys. If they ' +
+          'Two co-active opposed numeric bounds landed on different quantity keys. If they ' +
           'constrain one physical quantity, commit the `symspec glossary add` alias from the ' +
           "finding's message so the numeric tier compares them; otherwise waive it. Then re-run `symspec check`.",
       })

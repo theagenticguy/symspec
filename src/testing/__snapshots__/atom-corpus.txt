@@ -95,6 +95,8 @@ fabrication/distinct-agents-same-report	resp	sys__alarm_service__resp__lower_the
 fabrication/distinct-agents-same-report	resp	sys__alarm_service__resp__lower_the_siren [NEG]	<- raise the siren
 fabrication/distinct-agents-same-report	trig	sys__alarm_service__trig__operator_reports_a_fault	<- the operator reports a fault
 fabrication/distinct-agents-same-report	trig	sys__alarm_service__trig__sensor_reports_a_fault	<- the sensor reports a fault
+fabrication/distinct-shard-quantities	resp	sys__database__resp__keep_the_analytics_shard_replication_lag_at_least_500_ms	<- keep the analytics shard replication lag at least 500 ms
+fabrication/distinct-shard-quantities	resp	sys__database__resp__keep_the_primary_shard_replication_lag_at_most_10_ms	<- keep the primary shard replication lag at most 10 ms
 fabrication/mutually-exclusive-guards-opposed-response	resp	sys__vault_service__resp__conceal_the_vault	<- seal the vault
 fabrication/mutually-exclusive-guards-opposed-response	resp	sys__vault_service__resp__conceal_the_vault [NEG]	<- seal the vault
 fabrication/mutually-exclusive-guards-opposed-response	trig	sys__vault_service__trig__shift_begins	<- the shift begins

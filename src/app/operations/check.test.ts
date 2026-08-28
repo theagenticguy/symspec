@@ -1171,6 +1171,60 @@ describe('no command in a check envelope spells a nested subcommand', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Two unconditional bounds are ONE context
+// ---------------------------------------------------------------------------
+
+/**
+ * The most co-active pair a document can hold is the one the propose tier must not skip.
+ *
+ * A ubiquitous requirement carries no trigger, so a pair of them is unconditional: both bounds
+ * hold at every instant. If the quantity-alias tier reads "no trigger" as "no shared context"
+ * it declines exactly the pair whose bounds are most certainly simultaneous, and the run
+ * publishes neither the finding nor the demotion — silence about an unexamined possible
+ * conflict, which is the one direction a propose-only tier can be wrong in.
+ *
+ * The two subjects here are genuinely distinct (`primary` vs `analytics` shard), so the
+ * correct answer is a suggestion at `info` plus a demotion, and never a proof: the error count
+ * is asserted at zero in the same test, which is what stops this fixture being satisfied by a
+ * tier that answers by fabricating instead.
+ */
+describe('the alias candidate examines a pair with no trigger at all', () => {
+  const shardBound = (id: string, shard: string, bound: string): Requirement =>
+    req({
+      id,
+      patternType: 'ubiquitous',
+      systemName: 'database',
+      systemResponse: `keep the ${shard} shard replication lag ${bound}`,
+      sentence: `The database shall keep the ${shard} shard replication lag ${bound}.`,
+    })
+
+  const unconditionalDoc = (): RequirementsDocument =>
+    docOf(
+      shardBound('cccccccc-1111-4111-8111-111111111111', 'primary', 'at most 10 ms'),
+      shardBound('dddddddd-2222-4222-8222-222222222222', 'analytics', 'at least 500 ms'),
+    )
+
+  it('raises the candidate and the demotion, without proving anything', async () => {
+    const data = await expectOk(unconditionalDoc(), { strict: true })
+    expect(data.findings.map((f) => f.code)).toContain('FND_QUANTITY_ALIAS_CANDIDATE')
+    expect(data.coverage.demotions.map((d) => d.reason)).toContain('quantity-alias-candidate')
+    // Distinct shards stay distinct: the suggestion is the whole answer, and an error here
+    // would be the fabrication the widened quantity key exists to prevent.
+    expect(data.counts.error).toBe(0)
+  })
+
+  it('describes the context it FOUND, so the message is checkable against the document', async () => {
+    // There is no trigger in this document, so a message claiming the two bounds share one
+    // would be a false statement about the document in the finding that reports it.
+    const data = await expectOk(unconditionalDoc(), { strict: true })
+    const message =
+      data.findings.find((f) => f.code === 'FND_QUANTITY_ALIAS_CANDIDATE')?.message ?? ''
+    expect(message).toContain('with no trigger')
+    expect(message).not.toContain('under the same system and trigger')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // `--strict` honours its own flag text
 // ---------------------------------------------------------------------------
 

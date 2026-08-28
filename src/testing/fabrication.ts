@@ -139,6 +139,37 @@ const stateReqIn = (
   ] as const
 }
 
+/**
+ * A ubiquitous requirement — no guard slot at all.
+ *
+ * The numeric tier reads bounds out of the response slot regardless of pattern, so an
+ * unconditional pair is the sharpest quantity-key fixture available: both requirements are
+ * always active, which removes "the guards keep them apart" as an alternative explanation
+ * for an absent conflict and leaves the quantity key as the only thing holding the line.
+ */
+const ubiquitousReq = (n: number, systemName: string, systemResponse: string) => {
+  const id = `ffffffff-0000-4000-8000-${String(n).padStart(12, '0')}`
+  return [
+    id,
+    {
+      id,
+      patternType: 'ubiquitous' as const,
+      systemName,
+      systemResponse,
+      negated: false,
+      sentence: `The ${systemName} shall ${systemResponse}.`,
+      priority: 'medium' as const,
+      status: 'draft' as const,
+      createdAt: TS,
+      updatedAt: TS,
+      derives: [],
+      satisfies: [],
+      verifies: [],
+      refines: [],
+    },
+  ] as const
+}
+
 const docOf = (rows: readonly (readonly [string, unknown])[]): RequirementsDocument =>
   ({
     docVersion: DOC_VERSION,
@@ -397,6 +428,43 @@ export const fabricationCases = (): readonly FabricationCase[] => [
       'the request latency is >= 30 ms and the cache is warm': [1, 0.03],
     },
     expectsEmptyPlan: true,
+  },
+  {
+    /**
+     * FABRICATION B, the regression fixture — reproduced on the built CLI before the fix.
+     *
+     * The numeric tier's quantity key is the phrase before the comparator. A trailing-word
+     * window over that phrase drops the qualifier that distinguishes two shards, so
+     * `primary shard replication lag` and `analytics shard replication lag` land on one Real
+     * variable, ≤ 10 ms ∧ ≥ 500 ms is UNSAT, and `error FND_NUMERIC_CONTRADICTION` names both
+     * requirements. No comparator symbol and no glossary is involved: the lenient key is the
+     * whole cause.
+     *
+     * Both requirements are ubiquitous, so nothing about the guards can be credited for the
+     * document being consistent — the quantity key is load-bearing on its own.
+     *
+     * `expectsEmptyPlan` is false, and deliberately: with the table pushing the two response
+     * bodies together the planner proposes one whole-body glossary alias. That merge is a
+     * RESPONSE merge, so it costs recall and cannot fabricate; and it leaves the quantity keys
+     * alone, because `glossaryIndex` keys on the whole normalized body while `quantityKey`
+     * looks up the label — the phrase before the comparator. Both halves of the gate here are
+     * the `counts.error` ones, and the BEFORE half is the fabrication-B regression.
+     */
+    id: 'distinct-shard-quantities',
+    why:
+      "A tight bound on one shard's replication lag and a loose bound on another shard's are " +
+      'two bounds on two quantities, and the sentences differ only in the qualifier that says ' +
+      'which shard. Any quantity key that drops that qualifier co-asserts the two bounds on one ' +
+      'Real variable and proves a conflict the document does not contain.',
+    doc: docOf([
+      ubiquitousReq(11, 'database', 'keep the primary shard replication lag at most 10 ms'),
+      ubiquitousReq(12, 'database', 'keep the analytics shard replication lag at least 500 ms'),
+    ]),
+    table: {
+      'keep the primary shard replication lag at most 10 ms': [1, 0.02],
+      'keep the analytics shard replication lag at least 500 ms': [1, 0.03],
+    },
+    expectsEmptyPlan: false,
   },
   {
     id: 'distinct-agents-same-report',
