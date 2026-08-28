@@ -50,6 +50,12 @@
  * LIA/LRA is convex + decidable; Z3's SAT/UNSAT verdict and unsat core are
  * reproducible. This tier introduces no approximation — it is verdict-eligible
  * (`error`), unlike the fuzzy propose-only tiers.
+ *
+ * Reproducible means reproducible from the requirement SET, which is stronger than
+ * reproducible from an identical call. WHICH minimal core Z3 returns is a function
+ * of the sequence it was fed, and a quantity can admit more than one, so the
+ * predicates are asserted in id order rather than document order — otherwise the
+ * blamed requirement would be a function of its line number.
  */
 
 import type { Z3Context } from './backend.ts'
@@ -145,6 +151,17 @@ export async function findNumericContradictions(
     const distinctIds = new Set(entries.map((e) => e.id))
     if (distinctIds.size < 2) continue
 
+    // The solver-facing sequence is id-sorted, never document-ordered: a quantity
+    // can admit more than one minimal unsat core (`lag >= 100` conflicts with
+    // `lag <= 10` and with `lag <= 20` independently, while the two upper bounds
+    // co-hold), and which one `unsatCore()` names is a function of the sequence
+    // the solver was fed. `requirementIds` and the ids in `message` are output
+    // bytes, so a document-ordered sequence would make the blamed requirement a
+    // function of file position — move a bound up three lines and a different one
+    // is named. `entries` itself stays in document order, because the evidence
+    // block below should list predicates the way the document does.
+    const solverEntries = [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+
     const solver = new ctx.Solver()
     // AC-1-7: bound this group's solve. A timeout returns `unknown`, which the
     // `res !== 'unsat'` guard below already treats as "no conflict proved" — so
@@ -152,12 +169,12 @@ export async function findNumericContradictions(
     if (bounds.timeoutMs !== undefined) solver.set('timeout', bounds.timeoutMs)
     // Assert each predicate implied by its requirement guard, so the unsat core
     // is exactly the set of requirement ids whose predicates cannot co-hold.
-    for (const { id, pred } of entries) {
+    for (const { id, pred } of solverEntries) {
       const guard = ctx.Bool.const(id)
       const predFormula = materialize(ctx, cmp(pred.quantity, pred.comparator, pred.value))
       solver.add(ctx.Implies(guard, predFormula))
     }
-    const guards = [...distinctIds].map((id) => ctx.Bool.const(id))
+    const guards = [...distinctIds].sort().map((id) => ctx.Bool.const(id))
     const res = await solver.check(...guards)
     if (res !== 'unsat') continue
 
@@ -171,7 +188,7 @@ export async function findNumericContradictions(
       const name = c.toString().replace(/^\|(.*)\|$/, '$1')
       if (distinctIds.has(name)) coreIds.push(name)
     }
-    const minimal = await minimizeNumericCore(ctx, entries, coreIds, bounds)
+    const minimal = await minimizeNumericCore(ctx, solverEntries, coreIds, bounds)
     const culprits = minimal.length > 0 ? minimal : [...distinctIds]
 
     const contributing = entries.filter((e) => culprits.includes(e.id))
@@ -222,9 +239,17 @@ export async function findNumericContradictions(
  * The visit order is canonicalized on requirement id for the same reason
  * `contradiction.ts`'s `minimizeCore` does it: a quantity can admit more than
  * one minimal core (`lag >= 100` conflicts with `lag <= 10` and with `lag <= 20`
- * independently, while the two upper bounds co-hold), deletion keeps whichever the
- * input order reaches, and `core` arrives in `unsatCore()` order — the solver's
- * ordering, not the document's. The culprit ids are output bytes.
+ * independently, while the two upper bounds co-hold), and deletion keeps whichever
+ * the input order reaches. The culprit ids are output bytes.
+ *
+ * The scope of that, exactly: measured on this z3-solver build, `core` arrives from
+ * `unsatCore()` already irreducible at two ids — this tier sets no
+ * `smt.core.minimize`, so that is the default core, not an option's work — and the
+ * `trial.length < 2` guard then deletes nothing. Which minimal core is reported is
+ * therefore settled by the sequence {@link findNumericContradictions} feeds the
+ * solver, which is why that sequence is id-sorted. This sort is the second line of
+ * defence, holding if a solver returns the same core in a different order or a core
+ * wide enough to shrink.
  */
 export async function minimizeNumericCore(
   ctx: Z3Context,
