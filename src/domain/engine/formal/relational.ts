@@ -35,7 +35,7 @@
  * never a verdict. It cannot manufacture a false contradiction because it never
  * asserts one — it only declines to certify.
  *
- * ## Two recognized shapes (both require a shared trigger — same context)
+ * ## Two recognized shapes (both require a shared guard — same context)
  *
  *   A. AGGREGATE: ≥2 same-trigger requirements each carry a numeric bound, and
  *      at least one of them has an unmatched (singleton) atom — the shape where
@@ -55,8 +55,14 @@ import { normalize } from './atomize.ts'
 export interface RelationalInput {
   readonly id: string
   readonly systemName: string
-  /** Normalized trigger text; `''` when the requirement has no trigger. */
-  readonly triggerKey: string
+  /**
+   * Normalized guard context spanning BOTH EARS guard slots (precondition and
+   * trigger); `''` when the requirement is wholly unguarded. Built by
+   * `pipeline/check.ts`'s `guardKeyOf`, the same derivation
+   * `findQuantityAliasCandidates` groups on, so the two co-liveness tiers agree
+   * on what "the same context" means.
+   */
+  readonly guardKey: string
   /** Raw response text (scanned for inter-entity relational language). */
   readonly responseText: string
   /** True when this requirement carries ≥1 numeric bound (from numeric.ts). */
@@ -88,22 +94,26 @@ export function hasRelationalLanguage(text: string): boolean {
 
 /**
  * Find relational / aggregate blind-spot groups. Groups requirements by
- * (system, non-empty trigger); within each group of ≥2, emits one finding
+ * (system, non-empty guard); within each group of ≥2, emits one finding
  * naming the participating ids when either recognized shape holds:
  *
  *   A. ≥2 members carry a numeric bound AND ≥1 of them has an unmatched atom;
  *   B. ≥2 members use inter-entity relational language.
  *
  * Deterministic and order-independent (ids sorted, groups keyed on the
- * normalized (system, trigger)). At most one finding per group.
+ * normalized (system, guard)). At most one finding per group.
  */
 export function findRelationalUnchecked(
   inputs: readonly RelationalInput[],
 ): RelationalUncheckedFinding[] {
   const groups = new Map<string, RelationalInput[]>()
   for (const r of inputs) {
-    if (r.triggerKey === '') continue // no shared context → nothing to co-constrain
-    const key = `${normalize(r.systemName)}||${r.triggerKey}`
+    // Unguarded requirements are excluded: this tier declines to certify a SHAPE,
+    // and an always-on group is the one context whose members a reader can already
+    // see co-occur. Skipping it is an under-demotion, the safe direction for a
+    // tier that can only push `verified` false.
+    if (r.guardKey === '') continue
+    const key = `${normalize(r.systemName)}||${r.guardKey}`
     const g = groups.get(key)
     if (g === undefined) groups.set(key, [r])
     else g.push(r)

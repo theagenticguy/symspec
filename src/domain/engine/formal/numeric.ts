@@ -205,6 +205,20 @@ function quantityKey(
  * fabricated FND_NUMERIC_CONTRADICTION. Keeping the whole phrase can only SPLIT a
  * key, and a split can only drop a proof: the honest failure direction, and the
  * one `quantity-alias.ts` proposes an author-confirmed merge for.
+ *
+ * That split-only property is a claim about the BARE key, and it does not extend
+ * to `quantityKey` as a whole. `quantityKey` looks the committed glossary up on
+ * `normalize(label)` — this same string — so the label's width also decides WHICH
+ * alias entries hit, and a hit REPLACES the label with a canonical. Widening the
+ * label therefore re-partitions alias hits in BOTH directions: a committed entry
+ * whose alias is a whole verb phrase starts matching (two labels collapse onto one
+ * canonical — a MERGE, at `error` severity, authorized by the author who committed
+ * it), and an entry whose alias is a bare noun tail stops matching (the entry goes
+ * inert and its proof disappears). Neither direction is a fabrication — a
+ * committed glossary entry is the author asserting the two phrases name one thing
+ * — but the monotonicity argument above cannot be used to wave a label-width
+ * change through while a glossary is in play. Both directions are pinned as
+ * observed behavior in `app/operations/check.test.ts`.
  */
 function labelBefore(text: string, comparatorStart: number): string | null {
   const before = text.slice(0, comparatorStart).trim()

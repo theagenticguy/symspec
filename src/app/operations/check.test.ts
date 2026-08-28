@@ -1177,10 +1177,10 @@ describe('no command in a check envelope spells a nested subcommand', () => {
 /**
  * The most co-active pair a document can hold is the one the propose tier must not skip.
  *
- * A ubiquitous requirement carries no trigger, so a pair of them is unconditional: both bounds
- * hold at every instant. If the quantity-alias tier reads "no trigger" as "no shared context"
- * it declines exactly the pair whose bounds are most certainly simultaneous, and the run
- * publishes neither the finding nor the demotion — silence about an unexamined possible
+ * A ubiquitous requirement carries neither guard slot, so a pair of them is unconditional: both
+ * bounds hold at every instant. If the quantity-alias tier reads "no guard" as "no shared
+ * context" it declines exactly the pair whose bounds are most certainly simultaneous, and the
+ * run publishes neither the finding nor the demotion — silence about an unexamined possible
  * conflict, which is the one direction a propose-only tier can be wrong in.
  *
  * The two subjects here are genuinely distinct (`primary` vs `analytics` shard), so the
@@ -1188,7 +1188,7 @@ describe('no command in a check envelope spells a nested subcommand', () => {
  * is asserted at zero in the same test, which is what stops this fixture being satisfied by a
  * tier that answers by fabricating instead.
  */
-describe('the alias candidate examines a pair with no trigger at all', () => {
+describe('the alias candidate examines a pair with no guard at all', () => {
   const shardBound = (id: string, shard: string, bound: string): Requirement =>
     req({
       id,
@@ -1214,13 +1214,208 @@ describe('the alias candidate examines a pair with no trigger at all', () => {
   })
 
   it('describes the context it FOUND, so the message is checkable against the document', async () => {
-    // There is no trigger in this document, so a message claiming the two bounds share one
-    // would be a false statement about the document in the finding that reports it.
+    // There is no guard of either kind in this document, so a message claiming the two bounds
+    // share one would be a false statement about the document in the finding that reports it.
     const data = await expectOk(unconditionalDoc(), { strict: true })
     const message =
       data.findings.find((f) => f.code === 'FND_QUANTITY_ALIAS_CANDIDATE')?.message ?? ''
-    expect(message).toContain('with no trigger')
-    expect(message).not.toContain('under the same system and trigger')
+    expect(message).toContain('with no precondition or trigger')
+    expect(message).not.toContain('under the same system and the same precondition and trigger')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A precondition is a guard, and two of them can exclude each other
+// ---------------------------------------------------------------------------
+
+/**
+ * The co-liveness key spans BOTH EARS guard slots, so a `state-driven` pair is never read as
+ * unconditional.
+ *
+ * A `state-driven` requirement carries its guard in `preCondition` and leaves `trigger` unset.
+ * A context key built from `trigger` alone therefore maps EVERY such requirement to the same
+ * empty string, and the quantity-alias tier treats an empty key as the always-on context. Two
+ * requirements whose preconditions are mutually exclusive then get co-asserted, and the finding
+ * that reports them says "with no precondition or trigger, so both bounds always hold" about a
+ * document that has two preconditions and no instant where both hold.
+ *
+ * The cost is not confined to a misleading sentence. The message carries a ready-to-run
+ * `symspec glossary` command, and `numeric-contradiction.ts` groups on (quantity, baseUnit)
+ * with no context partition of its own — so an author who follows the repair the tool printed
+ * on a false premise gets an error-severity `FND_NUMERIC_CONTRADICTION` and exit 1 on a correct
+ * document. That is one author command away from the cardinal sin, which is why the guard key,
+ * not the message, is where this is fixed.
+ *
+ * The pair is otherwise a perfect candidate — opposed comparators, one comparable unit, a
+ * shared object suffix ("drain") under differing verb prefixes — so nothing but the guard
+ * partition can be what declines it.
+ */
+describe('mutually exclusive preconditions are NOT one context', () => {
+  const drainBound = (id: string, state: string, response: string): Requirement =>
+    req({
+      id,
+      patternType: 'state-driven',
+      preCondition: `the tank is ${state}`,
+      systemName: 'pump',
+      systemResponse: response,
+      sentence: `While the tank is ${state}, the pump shall ${response}.`,
+    })
+
+  /** Opposed bounds, comparable unit, shared object, differing verbs — under disjoint states. */
+  const exclusiveStatesDoc = (): RequirementsDocument =>
+    docOf(
+      drainBound(
+        'aaaaaaaa-7777-4777-8777-777777777771',
+        'full',
+        'complete the drain within at most 30 minutes',
+      ),
+      drainBound(
+        'bbbbbbbb-7777-4777-8777-777777777772',
+        'empty',
+        'run the drain for at least 60 minutes',
+      ),
+    )
+
+  it('raises no candidate and no demotion for a pair that cannot co-occur', async () => {
+    const data = await expectOk(exclusiveStatesDoc(), { strict: true })
+    expect(data.findings.map((f) => f.code)).not.toContain('FND_QUANTITY_ALIAS_CANDIDATE')
+    expect(data.coverage.demotions.map((d) => d.reason)).not.toContain('quantity-alias-candidate')
+    // And it certainly does not prove anything: the document is consistent.
+    expect(data.counts.error).toBe(0)
+  })
+
+  it('never claims a guarded document has no guard', async () => {
+    // The negative guard is the load-bearing one. Asserting only the absence of the code above
+    // would also pass for a tier that emits the candidate with a corrected message, and the
+    // false CO-ASSERTION — not the sentence — is what feeds the repair command.
+    const data = await expectOk(exclusiveStatesDoc(), { strict: true })
+    for (const f of data.findings) {
+      expect(f.message).not.toContain('with no precondition or trigger')
+      expect(f.message).not.toContain('both bounds always hold')
+    }
+  })
+
+  it('still groups a pair that shares one precondition, so the fix is not a blanket skip', async () => {
+    // The discriminating half: same state, so the guards DO co-occur and the candidate must
+    // fire. Without this, dropping every precondition-guarded requirement on the floor would
+    // satisfy the two tests above.
+    const sharedStateDoc = docOf(
+      drainBound(
+        'aaaaaaaa-7777-4777-8777-777777777773',
+        'full',
+        'complete the drain within at most 30 minutes',
+      ),
+      drainBound(
+        'bbbbbbbb-7777-4777-8777-777777777774',
+        'full',
+        'run the drain for at least 60 minutes',
+      ),
+    )
+    const data = await expectOk(sharedStateDoc, { strict: true })
+    expect(data.findings.map((f) => f.code)).toContain('FND_QUANTITY_ALIAS_CANDIDATE')
+    const message =
+      data.findings.find((f) => f.code === 'FND_QUANTITY_ALIAS_CANDIDATE')?.message ?? ''
+    expect(message).toContain('under the same system and the same precondition and trigger')
+    expect(message).not.toContain('with no precondition or trigger')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The committed glossary is keyed on the quantity LABEL, so label width matters
+// ---------------------------------------------------------------------------
+
+/**
+ * `quantityKey` resolves a committed glossary alias on `normalize(label)`, so the label's width
+ * is also the alias table's lookup width. Two consequences, both pinned here, because the
+ * split-only argument that governs the bare key does NOT survive the alias hop and a future
+ * width change must not be waved through on it.
+ *
+ * Neither direction is a fabrication: a committed glossary entry is the author asserting that
+ * the listed phrasings name one thing, and `FND_QUANTITY_ALIAS_CANDIDATE` exists to solicit
+ * exactly that assertion. What the entry does NOT come with is a diagnostic when it matches
+ * nothing, so an alias written against a narrower label is inert and silent — the author's
+ * discharged finding returns and their committed decide-tier artifact does no work.
+ *
+ * Measured on this build: the label is the whole phrase before the comparator, so an alias must
+ * name that whole phrase to hit.
+ */
+describe('a glossary alias hits only when it names the whole quantity label', () => {
+  const infusionDoc = (glossary: RequirementsDocument['glossary']): RequirementsDocument => ({
+    ...docOf(
+      req({
+        id: 'eeeeeeee-8888-4888-8888-888888888881',
+        patternType: 'event-driven',
+        trigger: 'an infusion is started',
+        systemName: 'infusion pump',
+        systemResponse: 'complete the infusion within at most 30 minutes',
+        sentence:
+          'When an infusion is started, the infusion pump shall complete the infusion within at most 30 minutes.',
+      }),
+      req({
+        id: 'ffffffff-8888-4888-8888-888888888882',
+        patternType: 'event-driven',
+        trigger: 'an infusion is started',
+        systemName: 'infusion pump',
+        systemResponse: 'run the infusion for at least 60 minutes',
+        sentence:
+          'When an infusion is started, the infusion pump shall run the infusion for at least 60 minutes.',
+      }),
+    ),
+    glossary,
+  })
+
+  it('proves the conflict when the alias names the whole label', async () => {
+    const data = await expectOk(
+      infusionDoc([{ canonical: 'complete the infusion within', aliases: ['run the infusion'] }]),
+    )
+    expect(data.findings.map((f) => f.code)).toContain('FND_NUMERIC_CONTRADICTION')
+    expect(data.counts.error).toBe(1)
+  })
+
+  it('is INERT when the alias names only a tail of the label, and says nothing about it', async () => {
+    // A bare-noun-tail alias matches no label, so the committed entry does no work. The run
+    // is silent about that: it re-asks for the alias the author already committed. This is the
+    // recorded cost of coupling the quantity keyer to the whole-body glossary table, and the
+    // reason a dedicated quantity-alias table would decouple them.
+    const data = await expectOk(
+      infusionDoc([{ canonical: 'run the infusion', aliases: ['infusion within'] }]),
+    )
+    expect(data.findings.map((f) => f.code)).not.toContain('FND_NUMERIC_CONTRADICTION')
+    expect(data.counts.error).toBe(0)
+    // The author's discharged finding is back, and nothing names their inert entry.
+    expect(data.findings.map((f) => f.code)).toContain('FND_QUANTITY_ALIAS_CANDIDATE')
+  })
+
+  it('MERGES two response phrasings the author committed as one, at error severity', async () => {
+    // The other direction of the same coupling: a whole-verb-phrase alias — the shape the
+    // glossary is documented to hold ("a canonical response phrasing plus the aliases that mean
+    // the same thing") — unifies two quantity keys and lets the LIA tier prove the conflict.
+    // Author-authorized, and the propose→decide loop working as designed; pinned because it is
+    // a MERGE and merges are the direction that can reach `error`.
+    const data = await expectOk({
+      ...docOf(
+        req({
+          id: 'cccccccc-8888-4888-8888-888888888883',
+          systemName: 'auth service',
+          systemResponse: 'keep the token valid for at most 30 minutes',
+          sentence: 'The auth service shall keep the token valid for at most 30 minutes.',
+        }),
+        req({
+          id: 'dddddddd-8888-4888-8888-888888888884',
+          systemName: 'auth service',
+          systemResponse: 'expire the user session in no less than 60 minutes',
+          sentence: 'The auth service shall expire the user session in no less than 60 minutes.',
+        }),
+      ),
+      glossary: [
+        {
+          canonical: 'token lifetime',
+          aliases: ['keep the token valid', 'expire the user session'],
+        },
+      ],
+    })
+    expect(data.findings.map((f) => f.code)).toContain('FND_NUMERIC_CONTRADICTION')
+    expect(data.counts.error).toBe(1)
   })
 })
 

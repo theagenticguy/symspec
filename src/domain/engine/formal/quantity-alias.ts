@@ -25,8 +25,9 @@
  * (`semantic.ts`). So this tier follows the same PROPOSE/DECIDE discipline:
  *
  *   - PROPOSE (here, deterministic + conservative): flag CO-ACTIVE numeric bounds
- *     — one system and one trigger key, where two untriggered requirements share
- *     the always-on context — whose quantity labels share a common object SUFFIX
+ *     — one system and one GUARD key (precondition and trigger together), where
+ *     two wholly unguarded requirements share the always-on context — whose
+ *     quantity labels share a common object SUFFIX
  *     but differ in their leading verb, and whose comparators are
  *     directionally OPPOSED (one upper, one lower) in a comparable unit — the
  *     only shape that could be jointly unsatisfiable if unified. Emit an
@@ -55,8 +56,13 @@ export interface QuantityAliasInput {
   readonly id: string
   /** Per-system scope (predicates already bake this into their quantity key). */
   readonly systemName: string
-  /** Normalized trigger text; `''` when the requirement has no trigger. */
-  readonly triggerKey: string
+  /**
+   * Normalized guard context spanning BOTH EARS guard slots (precondition and
+   * trigger). `''` means genuinely unguarded — no precondition AND no trigger —
+   * which is the only state that licenses the "both bounds always hold" claim in
+   * this tier's message. Built by `pipeline/check.ts`'s `guardKeyOf`.
+   */
+  readonly guardKey: string
   readonly predicates: readonly NumericPredicate[]
 }
 
@@ -169,16 +175,23 @@ export function findQuantityAliasCandidates(
       const ra = inputs[i]!
       const rb = inputs[j]!
       if (ra.id === rb.id) continue
-      // Same context: same system and the SAME trigger key, where two EMPTY keys
-      // are the same context — a pair of ubiquitous requirements is unconditional,
-      // so the two bounds always hold together. Requirements under DIFFERENT
-      // triggers do not co-occur, so their bounds cannot form a single-quantity
-      // conflict worth surfacing. Refusing the always-on context would leave the
-      // most co-active pair in the document unexamined and uncounted: an
-      // under-demotion, the one direction a propose-only tier can be wrong in,
-      // since it can only ever push `verified` false.
+      // Same context: same system and the SAME guard key, where two EMPTY keys
+      // are the same context — a pair of wholly unguarded requirements is
+      // unconditional, so the two bounds always hold together. Requirements under
+      // DIFFERENT guards do not co-occur, so their bounds cannot form a
+      // single-quantity conflict worth surfacing. Refusing the always-on context
+      // would leave the most co-active pair in the document unexamined and
+      // uncounted: an under-demotion, the one direction a propose-only tier can be
+      // wrong in, since it can only ever push `verified` false.
+      //
+      // The key spans BOTH guard slots, which is what makes two mutually exclusive
+      // PRECONDITIONS ("while the tank is full" vs "while the tank is empty")
+      // different contexts, so this pair is skipped. A key built from `trigger`
+      // alone maps every precondition-guarded requirement to `''`: it co-asserts
+      // guards the document keeps apart, and it makes the message below claim "no
+      // trigger" about a document that has two.
       if (ra.systemName !== rb.systemName) continue
-      if (ra.triggerKey !== rb.triggerKey) continue
+      if (ra.guardKey !== rb.guardKey) continue
 
       const pairKey = [ra.id, rb.id].sort().join('|')
       if (emittedPairs.has(pairKey)) continue
@@ -207,11 +220,13 @@ export function findQuantityAliasCandidates(
       // Deterministic canonical/alias order for the suggested command.
       const [labelLo, labelHi] = [pa.label, pb.label].sort() as [string, string]
       // The message names the context it actually found, because a reader checks the claim
-      // against the document: an unconditional pair has no trigger to be "the same" as.
+      // against the document: an unconditional pair has no guard to be "the same" as. An
+      // empty `guardKey` means no precondition AND no trigger, so "always hold" is a
+      // statement the document supports.
       const context =
-        ra.triggerKey === ''
-          ? 'in the same system with no trigger, so both bounds always hold'
-          : 'under the same system and trigger'
+        ra.guardKey === ''
+          ? 'in the same system with no precondition or trigger, so both bounds always hold'
+          : 'under the same system and the same precondition and trigger'
       findings.push({
         code: 'FND_QUANTITY_ALIAS_CANDIDATE',
         severity: 'info',

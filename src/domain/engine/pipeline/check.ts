@@ -295,13 +295,13 @@ export interface CoverageDemotion {
     // lint/parse finding, so the solver never saw it — `verified` cannot cover
     // it. Discharged by fixing the blocking finding (rephrase), NOT by waiving.
     | 'excluded-from-formal'
-    // Co-active opposed numeric bounds — same system, same trigger, or both
-    // unconditional — whose labels differ only by verb landed on distinct
+    // Co-active opposed numeric bounds — same system, same guard, or both
+    // unguarded — whose labels differ only by verb landed on distinct
     // quantity keys and were never compared, so a possible single-quantity
     // conflict went unexamined. Discharged by a `glossary add` alias (or waiving
     // if genuinely distinct quantities).
     | 'quantity-alias-candidate'
-    // A shared trigger carries numeric bounds alongside unmatched atoms — the
+    // A shared guard carries numeric bounds alongside unmatched atoms — the
     // shape where aggregate/conservation or cross-quantity relational conflicts
     // hide, which symspec's pairwise numeric tier does not attempt. An honest
     // "not attempted" caveat so `verified` never outruns what was compared.
@@ -596,6 +596,36 @@ export function toEncodable(view: ReqView): EncodableRequirement {
     systemResponse: view.systemResponse.slice(match[0].length),
     negated: true,
   }
+}
+
+/**
+ * The CO-LIVENESS context key: BOTH guard slots, never `trigger` alone.
+ *
+ * Two requirements' obligations hold together only when their guards can hold
+ * together, and EARS spreads a guard across two slots — `state-driven` and
+ * `optional-feature` carry theirs in `preCondition`, `event-driven` in `trigger`,
+ * and an `event-driven` requirement may carry both (`renderSentence` emits
+ * "While <pre>, when <trigger>, …"). A key built from `trigger` alone collapses
+ * every `preCondition`-guarded requirement to the same empty string, so two
+ * MUTUALLY EXCLUSIVE states read as one always-on context.
+ *
+ * `''` therefore means genuinely unguarded — no precondition AND no trigger —
+ * which is the only state in which a tier may tell an author that two bounds
+ * "always hold". The consumers of that claim are `findQuantityAliasCandidates`
+ * (whose message names the context it found) and `findRelationalUnchecked`
+ * (which groups on it), and a shared derivation is what keeps the two tiers from
+ * disagreeing about what "the same context" means.
+ *
+ * `normalize` emits only `[a-z0-9_]`, so `|` cannot appear inside either half
+ * and the composite can never alias one slot pair onto another.
+ */
+function guardKeyOf(r: {
+  readonly preCondition?: string | undefined
+  readonly trigger?: string | undefined
+}): string {
+  const pre = r.preCondition !== undefined ? normalize(r.preCondition) : ''
+  const trigger = r.trigger !== undefined ? normalize(r.trigger) : ''
+  return pre === '' && trigger === '' ? '' : `${pre}|${trigger}`
 }
 
 /**
@@ -965,7 +995,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       // different verbs ("complete the infusion within ≤30 min" vs "run the
       // infusion for ≥60 min") splits into two keys and the joint bound is never
       // compared. Propose-only: flag co-active opposed bounds — same system and
-      // trigger, or both unconditional — whose labels share an object but differ
+      // guard, or both unguarded — whose labels share an object but differ
       // in verb, suggesting a `glossary add` alias that routes both to one
       // quantity key (DECIDE tier). Demotes `verified`; never a verdict. Reuses
       // the predicates already extracted (with the committed alias map applied),
@@ -976,7 +1006,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
         reqs.map((r) => ({
           id: r.id,
           systemName: r.systemName,
-          triggerKey: r.trigger !== undefined ? normalize(r.trigger) : '',
+          guardKey: guardKeyOf(r),
           predicates: predsById.get(r.id) ?? [],
         })),
       )
@@ -984,7 +1014,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       // Issue #2 (reproducer b + aggregate/relational families): detect the
       // STRUCTURAL SHAPE where aggregate/conservation or emergent-structural
       // (odd-cycle 2-coloring, pigeonhole, transitivity) conflicts hide — bounds
-      // or inter-entity relational language under one shared trigger that the
+      // or inter-entity relational language under one shared guard that the
       // pairwise same-quantity numeric tier does not attempt. Demotion-only: it
       // declines to certify (DEMOTES `verified`), never asserts a conflict, so
       // it cannot manufacture a false one. Per-requirement `hasUnmatchedAtom` is
@@ -997,7 +1027,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
         reqs.map((r) => ({
           id: r.id,
           systemName: r.systemName,
-          triggerKey: r.trigger !== undefined ? normalize(r.trigger) : '',
+          guardKey: guardKeyOf(r),
           responseText: r.systemResponse,
           hasNumericBound: (predsById.get(r.id) ?? []).length > 0,
           hasUnmatchedAtom: singletonOwnerIds.has(r.id),
