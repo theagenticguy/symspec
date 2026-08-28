@@ -22,10 +22,20 @@
  * Honest framing: a SAT result here says "there is a valuation making all preconditions false at
  * once", which under a positive-only encoding is a property of the encoding rather than of the
  * requirements. The spec (AC-4-5a, research-smt.md §1.5, Appendix B) documents this as a
- * heuristic "no else-branch" lint at INFO severity and not a correctness guarantee, and info is
- * the only reason unconditional firing is noise rather than a fabrication. `incomplete.test.ts`
- * pins the unconditional firing, the eligibility rules that DO discriminate, and the one
- * hand-built atom table that reaches the covered branch.
+ * heuristic "no else-branch" lint at INFO severity and not a correctness guarantee.
+ *
+ * Severity is NOT what keeps unconditional firing from being a certification. The pipeline
+ * classifies findings by id count and set membership, never by severity: `verified` rests on
+ * `f.requirementIds.length >= 2 && !PROPOSE_ONLY_FND_CODES.has(f.code)`, and the
+ * `FND_NO_PAIRS_CHECKED` disclaimer on the same id count minus `COVERAGE_GAP_FND_CODES`
+ * (`pipeline/check.ts`). This finding always names ≥2 ids — a group needs two preconditioned
+ * members to be eligible — so it is listed in BOTH sets. That listing is the containment: without
+ * it, an eligibility-only finding clears `inconclusive`, deletes the `no-decide-tier-comparison`
+ * demotion, and suppresses the disclaimer, certifying a document across which zero requirement
+ * pairs were compared. `pipeline/check.test.ts` pins that at the `runCheck` level.
+ *
+ * `incomplete.test.ts` pins the unconditional firing, the eligibility rules that DO discriminate,
+ * and the one hand-built atom table that reaches the covered branch.
  *
  * ## Grouping discipline
  *

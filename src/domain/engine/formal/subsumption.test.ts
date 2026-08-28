@@ -120,6 +120,12 @@ describe('the fixture', () => {
 
 describe('the subsumption direction', () => {
   it('names the general requirement when it occupies the `b` slot', async () => {
+    // The discriminating half, and the only assertion in the repo a positional `moreGeneral`
+    // breaks. `checkSubsumptionPair`'s `aImpliesB` branch spells the by-id mapping
+    // `subsumption(a.id, b.id, …)`, which is positionally indistinguishable from by-id — so the
+    // ordering that puts the general requirement in `a` agrees with a fully positional
+    // implementation and pins nothing. Only `bImpliesA`, reached here, has to invert.
+    // Measured: making `bImpliesA` positional too reds exactly this case out of the whole suite.
     const ctx = await getContext('symspec-subsumption-direction-b')
     const result = await checkSubsumptionPair(ctx, narrow, broad)
     expect(result).toEqual({
@@ -133,9 +139,10 @@ describe('the subsumption direction', () => {
   })
 
   it('names the same requirement when the pair is handed over the other way round', async () => {
-    // The discriminating half. A positional assignment agrees with by-id on exactly one of the
-    // two orderings, so a file that only ever put the general requirement in `a` would pin
-    // nothing at all.
+    // The stability half: the verdict is a property of the pair, not of which slot the caller
+    // happened to use, so the two orderings agree on `moreGeneral`/`moreSpecific`. This case
+    // rides the `aImpliesB` branch, where by-id and positional coincide, so it cannot on its own
+    // tell the two apart — the `b`-slot case above is what does that.
     const ctx = await getContext('symspec-subsumption-direction-a')
     const result = await checkSubsumptionPair(ctx, broad, narrow)
     expect(result).toEqual({

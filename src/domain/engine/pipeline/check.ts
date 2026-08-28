@@ -469,23 +469,33 @@ const PROPOSE_ONLY_FND_CODES: ReadonlySet<string> = new Set<FndCode>([
   'FND_EXCLUDED_FROM_FORMAL',
   'FND_QUANTITY_ALIAS_CANDIDATE',
   'FND_RELATIONAL_UNCHECKED',
+  // The completeness heuristic names its whole same-trigger group, so it always
+  // spans ≥2 ids — but its solver answer is fixed by the encoding, not read off
+  // the document: `encode` emits every `pre` row positive, and a disjunction of
+  // positive atoms is always falsifiable, so `¬(C1 ∨ … ∨ Cn)` is SAT for every
+  // eligible group (see `formal/incomplete.ts`). An answer no document can change
+  // verifies nothing, so it must not certify — membership here, not its `info`
+  // severity, is what keeps it out of the `verified` predicate.
+  'FND_INCOMPLETE',
 ])
 
 /**
  * The coverage-GAP subset of the propose-only codes: findings that span ≥2
  * requirement ids yet mean "a comparison did NOT happen" (a requirement was
- * excluded from the solver, two numeric bounds landed on different keys, or
- * aggregate/relational reasoning was not attempted). They must NOT suppress the
- * `FND_NO_PAIRS_CHECKED` disclaimer through the id-count clause — doing so would
- * let the report both claim nothing was compared (`residualRisk.noPairsChecked`)
- * and hide the disclaimer that says so. Distinct from the semantic-tier propose
- * codes (similar/opposition/missing-trace-link), which DO reflect a real
- * embedding comparison and legitimately suppress the disclaimer.
+ * excluded from the solver, two numeric bounds landed on different keys,
+ * aggregate/relational reasoning was not attempted, or the group's SAT answer was
+ * fixed by the encoding). They must NOT suppress the `FND_NO_PAIRS_CHECKED`
+ * disclaimer through the id-count clause — doing so would let the report both
+ * claim nothing was compared (`residualRisk.noPairsChecked`) and hide the
+ * disclaimer that says so. Distinct from the semantic-tier propose codes
+ * (similar/opposition/missing-trace-link), which DO reflect a real embedding
+ * comparison and legitimately suppress the disclaimer.
  */
 const COVERAGE_GAP_FND_CODES: ReadonlySet<string> = new Set<FndCode>([
   'FND_EXCLUDED_FROM_FORMAL',
   'FND_QUANTITY_ALIAS_CANDIDATE',
   'FND_RELATIONAL_UNCHECKED',
+  'FND_INCOMPLETE',
 ])
 
 /**

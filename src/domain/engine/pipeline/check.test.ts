@@ -1,6 +1,8 @@
 /**
- * The one-requirement document — the smallest input the coverage contract has
- * to be honest about.
+ * Two documents `runCheck`'s coverage contract has to be honest about: the smallest one, and the
+ * smallest one that can buy a certificate it did not earn.
+ *
+ * ## The one-requirement document
  *
  * `verified: true` on a single requirement is the documented vacuous-truth
  * convention: there is nothing to cross-compare, the run says so in
@@ -14,6 +16,22 @@
  * relates to" — requirements that do not exist. An agent following that
  * instruction churns the only requirement in the document and re-checks into
  * the same row forever.
+ *
+ * ## The eligibility-only cross-requirement finding
+ *
+ * The pipeline decides "a comparison happened" from a finding's id COUNT and its membership in
+ * `PROPOSE_ONLY_FND_CODES` / `COVERAGE_GAP_FND_CODES`. It never reads severity. So an `info`
+ * finding that names ≥2 ids is, absent that membership, indistinguishable from a solver verdict:
+ * it clears `inconclusive`, deletes the `no-decide-tier-comparison` demotion, and suppresses the
+ * `FND_NO_PAIRS_CHECKED` disclaimer.
+ *
+ * `FND_INCOMPLETE` is exactly that shape. It names its whole same-trigger group, and its SAT
+ * answer is fixed by the encoding rather than read off the document (`formal/incomplete.ts`), so
+ * it fires on eligibility alone. `twoRequirementDoc` below is the minimal document where it is
+ * the ONLY cross-requirement finding: identical responses and one shared trigger atom (so no
+ * "same event, different reactions" candidate), non-overlapping preconditions and low sentence
+ * Jaccard (so no candidate pair and no shared context group), which leaves `pairsChecked === 0`.
+ * Zero requirement pairs are compared, so the run must say so on every channel at once.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -21,6 +39,8 @@ import { runCheck } from './check.ts'
 
 const TS = '2026-01-01T00:00:00.000Z'
 const ID = 'aaaaaaaa-0000-4000-8000-000000000001'
+const ID_A = 'aaaaaaaa-0000-4000-8000-00000000000a'
+const ID_B = 'aaaaaaaa-0000-4000-8000-00000000000b'
 
 const oneRequirementDoc = () => ({
   requirements: {
@@ -65,5 +85,76 @@ describe('a one-requirement document', () => {
     // against yet — not hand out the multi-requirement rewrite advice.
     expect(row?.suggestion).toContain('only requirement')
     expect(row?.suggestion).not.toContain('Rewrite')
+  })
+})
+
+const guardedReq = (o: { id: string; preCondition: string; sentence: string }) => ({
+  id: o.id,
+  patternType: 'event-driven' as const,
+  systemName: 'auth service',
+  preCondition: o.preCondition,
+  trigger: 'the user signs in',
+  systemResponse: 'issue a session token',
+  negated: false,
+  sentence: o.sentence,
+  priority: 'medium' as const,
+  status: 'draft' as const,
+  createdAt: TS,
+  updatedAt: TS,
+  derives: [],
+  satisfies: [],
+  verifies: [],
+  refines: [],
+})
+
+const twoRequirementDoc = () => ({
+  requirements: {
+    [ID_A]: guardedReq({
+      id: ID_A,
+      preCondition: 'the account is verified',
+      sentence:
+        'While the account is verified, when the user signs in, the auth service shall issue a session token.',
+    }),
+    [ID_B]: guardedReq({
+      id: ID_B,
+      preCondition: 'the tenant quota remains below its monthly ceiling',
+      sentence:
+        'While the tenant quota remains below its monthly ceiling, upon sign-in the auth service shall issue a session token.',
+    }),
+  },
+  glossary: [],
+  antonyms: [],
+  waivers: [],
+  terms: [],
+  stateModel: { variables: [] },
+})
+
+describe('a document whose only cross-requirement finding is the completeness heuristic', () => {
+  it('is the shape the fixture claims: FND_INCOMPLETE over two ids, and nothing else compared', async () => {
+    // The premise the two assertions below rest on. Without it, a green run could be green
+    // because some other tier did compare the pair, or because the tier never fired at all.
+    const report = await runCheck(twoRequirementDoc() as never, {})
+    expect(report.pairsChecked).toBe(0)
+    expect(report.residualRisk.noPairsChecked).toBe(true)
+    // The disclaimer itself spans both ids, so it is excluded here — this premise has to hold
+    // whether or not the disclaimer fires, otherwise it stops being an independent premise.
+    const crossReq = report.findings.filter(
+      (f) => f.requirementIds.length >= 2 && f.code !== 'FND_NO_PAIRS_CHECKED',
+    )
+    expect(crossReq.map((f) => f.code)).toEqual(['FND_INCOMPLETE'])
+  })
+
+  it('still emits the "nothing was compared" disclaimer', async () => {
+    const report = await runCheck(twoRequirementDoc() as never, {})
+    // `residualRisk.noPairsChecked` and a missing FND_NO_PAIRS_CHECKED are the internal
+    // contradiction COVERAGE_GAP_FND_CODES exists to prevent: the report would state that
+    // nothing was compared while hiding the finding that says so.
+    expect(report.findings.map((f) => f.code)).toContain('FND_NO_PAIRS_CHECKED')
+  })
+
+  it('records the no-decide-tier-comparison demotion, so eligibility alone never certifies', async () => {
+    const report = await runCheck(twoRequirementDoc() as never, {})
+    expect(report.coverage.demotions.map((d) => d.reason)).toContain('no-decide-tier-comparison')
+    expect(report.verified).toBe(false)
   })
 })

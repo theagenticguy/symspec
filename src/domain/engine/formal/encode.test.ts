@@ -200,6 +200,30 @@ describe('the per-pattern body shape', () => {
     expect(negative.atoms.map((a) => a.negated)).toEqual([true])
     expect(negative.body).toEqual(not(atom(negative.atoms[0]?.atom ?? '')))
   })
+
+  it('confines that polarity to `resp`, leaving both guard slots positive', () => {
+    // `encode` hands `negated: false` to the `pre` and `trig` atomize calls, so a negated
+    // RESPONSE never leaks into the guard. Two tiers read that invariant off the atom table:
+    // `vacuity.ts`'s `guardLiterals` and `incomplete.ts`'s precondition disjunction, whose SAT
+    // answer is only fixed by construction while every `pre` row stays positive. The corpus
+    // snapshot covers the `trig` twin (it pairs `negated: true` with triggers); no corpus
+    // requirement pairs `negated: true` with a `preCondition`, so this is the `pre` twin's gate.
+    const e = encode(
+      req({
+        id: 'REQ-1',
+        patternType: 'event-driven',
+        preCondition: 'the doors are obstructed',
+        trigger: 'the call button is pressed',
+        negated: true,
+      }),
+      real,
+    )
+    const polarity = new Map(e.atoms.map((a) => [a.kind, a.negated]))
+    expect([...polarity.keys()].sort()).toEqual(['pre', 'resp', 'trig'])
+    expect(polarity.get('pre'), 'the `pre` row is positive').toBe(false)
+    expect(polarity.get('trig'), 'the `trig` row is positive').toBe(false)
+    expect(polarity.get('resp'), 'the `resp` row carries the polarity').toBe(true)
+  })
 })
 
 describe('the guarded formula', () => {

@@ -11,8 +11,11 @@
  *
  * The tier therefore fires unconditionally on eligibility — two or more preconditioned members
  * under one non-empty trigger key — and the `unsat` "covered" branch is unreachable from any
- * document. `FND_INCOMPLETE` is `info`, so this is noise rather than a fabrication, but it is
- * noise whose message claims a solver result that carried no information.
+ * document. It is noise whose message claims a solver result that carried no information. What
+ * keeps that noise out of the certification is `pipeline/check.ts` listing `FND_INCOMPLETE` in
+ * `PROPOSE_ONLY_FND_CODES` and `COVERAGE_GAP_FND_CODES`, not its `info` severity — the pipeline
+ * keys on id count and set membership and never reads severity, and this finding always names its
+ * whole group.
  *
  * The cases below therefore pin two different things. The eligibility rules are real behaviour
  * that a document reaches. The polarity-preserving line in `preconditionLiterals` is reachable
