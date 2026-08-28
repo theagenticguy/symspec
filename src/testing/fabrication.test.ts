@@ -293,6 +293,7 @@ describe('what a GUARD merge would cost, without booting the solver', () => {
     'mutually-exclusive-guards-opposed-response',
     'distinct-agents-same-report',
     'compound-guard-shared-threshold',
+    'symbolic-threshold-split',
   ]
 
   const guardOf = (r: { trigger?: string; preCondition?: string }): string => {

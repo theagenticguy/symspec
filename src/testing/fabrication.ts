@@ -325,6 +325,39 @@ export const fabricationCases = (): readonly FabricationCase[] => [
   },
   {
     /**
+     * FABRICATION A, the regression fixture — reproduced on the built CLI before the fix.
+     *
+     * The canonical hysteresis-free threshold split, which is how engineers write thresholds. Two
+     * guards that cannot both hold, one response atom at opposite polarity. `normalize` deleted the
+     * comparator (it is punctuation), so both guards became
+     * `sys__gateway__pre__request_latency_30_ms`, one context group hosted both requirements, and
+     * the opposed responses proved an `error` FND_CONTRADICTION with `verified: true` and exit 1.
+     *
+     * Kept as a fixture rather than only an `atomize` unit test because the atom-level assertion
+     * cannot see the consequence: the atoms merging is the mechanism, the fabricated verdict is the
+     * defect, and only the corpus asserts the second.
+     */
+    id: 'symbolic-threshold-split',
+    why:
+      'A threshold split written with symbolic comparators. `>= 30 ms` and `< 30 ms` cannot both ' +
+      'hold, so the document is consistent no matter what the responses say — and its responses ' +
+      'are one atom at opposite polarity, which is the other half of a contradiction. If the ' +
+      'comparator ever stops surviving normalization these two guards share an atom again and the ' +
+      'conflict is manufactured.',
+    doc: docOf([
+      stateReqIn('gateway', 9, 'the request latency is >= 30 ms', 'enable the response cache'),
+      stateReqIn('gateway', 10, 'the request latency is < 30 ms', 'disable the response cache'),
+    ]),
+    table: {
+      'enable the response cache': [1, 0.02],
+      'disable the response cache': [1, 0.03],
+      'the request latency is >= 30 ms': [1, 0.02],
+      'the request latency is < 30 ms': [1, 0.03],
+    },
+    expectsEmptyPlan: true,
+  },
+  {
+    /**
      * THE EROSION FENCE — the same ground truth as the fixture above, with a comparator added.
      *
      * This fixture exists to catch a failure no other one can: a recognizer that consumes the

@@ -87,8 +87,8 @@ fabrication/a-committed-table-must-not-invert-a-state-bridge	pre	sys__latch_serv
 fabrication/a-committed-table-must-not-invert-a-state-bridge	resp	sys__latch_service__resp__keep_the_latch_engaged	<- keep the latch engaged
 fabrication/a-committed-table-must-not-invert-a-state-bridge	resp	sys__latch_service__resp__keep_the_latch_engaged	<- keeps the latch engaged
 fabrication/a-committed-table-must-not-invert-a-state-bridge	resp	sys__latch_service__resp__log_the_state	<- log the state
-fabrication/compound-guard-shared-threshold	pre	sys__gateway__pre__request_latency_30_ms_and_the_cache_is_cold	<- the request latency is >= 30 ms and the cache is cold
-fabrication/compound-guard-shared-threshold	pre	sys__gateway__pre__request_latency_30_ms_and_the_cache_is_warm	<- the request latency is >= 30 ms and the cache is warm
+fabrication/compound-guard-shared-threshold	pre	sys__gateway__pre__request_latency_at_least_30_ms_and_the_cache_is_cold	<- the request latency is >= 30 ms and the cache is cold
+fabrication/compound-guard-shared-threshold	pre	sys__gateway__pre__request_latency_at_least_30_ms_and_the_cache_is_warm	<- the request latency is >= 30 ms and the cache is warm
 fabrication/compound-guard-shared-threshold	resp	sys__gateway__resp__disable_the_response_cache	<- disable the response cache
 fabrication/compound-guard-shared-threshold	resp	sys__gateway__resp__disable_the_response_cache [NEG]	<- enable the response cache
 fabrication/distinct-agents-same-report	resp	sys__alarm_service__resp__lower_the_siren	<- raise the siren
@@ -108,6 +108,10 @@ fabrication/same-object-opposed-verbs	trig	sys__relay_service__trig__link_opens	
 fabrication/same-object-opposed-verbs-opposite-polarity	resp	sys__gateway_service__resp__receive_the_packet [NEG]	<- receive the packet
 fabrication/same-object-opposed-verbs-opposite-polarity	resp	sys__gateway_service__resp__transmit_the_packet	<- transmit the packet
 fabrication/same-object-opposed-verbs-opposite-polarity	trig	sys__gateway_service__trig__audit_begins	<- the audit begins
+fabrication/symbolic-threshold-split	pre	sys__gateway__pre__request_latency_at_least_30_ms	<- the request latency is >= 30 ms
+fabrication/symbolic-threshold-split	pre	sys__gateway__pre__request_latency_less_than_30_ms	<- the request latency is < 30 ms
+fabrication/symbolic-threshold-split	resp	sys__gateway__resp__disable_the_response_cache	<- disable the response cache
+fabrication/symbolic-threshold-split	resp	sys__gateway__resp__disable_the_response_cache [NEG]	<- enable the response cache
 generated-t1/contradiction-t1-0	resp	sys__auth_service__resp__allow_access	<- grant access
 generated-t1/contradiction-t1-0	resp	sys__auth_service__resp__allow_access [NEG]	<- revoke access
 generated-t1/contradiction-t1-0	trig	sys__auth_service__trig__user_submits_valid_credentials	<- the user submits valid credentials
