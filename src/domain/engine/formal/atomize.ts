@@ -157,6 +157,15 @@ export interface AtomRef {
  * atom names are byte-identical by construction rather than by comment.
  */
 export function renderAtom(ref: AtomRef): string {
+  // POSTCONDITIONS, not comments. An empty scope makes `sys____<kind>__<body>`, which merges every
+  // system whose name normalizes away into ONE namespace — two unrelated systems' responses then
+  // land on one atom and, at opposite polarity, prove a contradiction neither document contains.
+  // A scope carrying anything outside `[a-z0-9_]` makes the rendered name ambiguous to parse, and
+  // the format is parsed: `catalog.ts` and the atom-corpus gate both split on `__`.
+  if (ref.scope === '') throw new Error('renderAtom: empty scope — see normalizeScope')
+  if (!/^[a-z0-9_]+$/.test(ref.scope)) {
+    throw new Error(`renderAtom: scope outside [a-z0-9_]: ${JSON.stringify(ref.scope)}`)
+  }
   return `sys__${ref.scope}__${ref.kind}__${ref.body}`
 }
 
@@ -481,6 +490,41 @@ export function normalize(text: string): string {
 }
 
 /**
+ * Normalize a SYSTEM NAME into an atom scope.
+ *
+ * Two deliberate differences from {@link normalize}, both of which only ever SPLIT namespaces:
+ *
+ * 1. **No leading-article strip.** `normalize` drops a leading `a`/`an`/`the` because an article
+ *    carries no meaning inside a slot phrase. In a system NAME it is part of the identifier:
+ *    without this, `A Gateway` and `Gateway` are one system, and two products whose names differ
+ *    only by an article share every atom they own.
+ * 2. **Never empty.** `normalize` deletes every character outside `[a-z0-9\s]`, so an entirely
+ *    non-Latin name vanishes: `normalize('ゲートウェイ') === ''` and `normalize('认证服务') === ''`.
+ *    Measured before this function existed, those two systems produced
+ *    `sys____resp__allow_access` at OPPOSITE polarity for `grant access` and `revoke access` —
+ *    one atom, two systems, a provable contradiction across documents that share nothing.
+ *
+ * The fallback is a 32-bit FNV-1a over the name's code points, spelled out here rather than taken
+ * from `node:crypto`, so the engine tier gains no import and stays byte-reproducible on any host.
+ * It is a LAST resort: any name with one surviving Latin character keeps its readable scope, and a
+ * hashed scope is deliberately ugly so it reads as "this name did not survive normalization" in an
+ * atom table rather than as a normal identifier.
+ */
+export function normalizeScope(systemName: string): string {
+  const lowered = systemName.toLowerCase()
+  const dePunct = lowered.replace(/[^a-z0-9\s]+/g, ' ')
+  const scope = dePunct.split(/\s+/).filter(Boolean).join('_')
+  if (scope !== '') return scope
+  let hash = 0x811c9dc5
+  for (const ch of systemName) {
+    hash ^= ch.codePointAt(0) ?? 0
+    // FNV-1a's 32-bit prime, as shifts so the arithmetic stays in int32 and cannot vary by host.
+    hash = (hash + (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24)) | 0
+  }
+  return `h${(hash >>> 0).toString(16).padStart(8, '0')}`
+}
+
+/**
  * The copula tokens a GUARD (pre/trig) body drops — exactly one, the first
  * occurrence — so "the session is authenticated" and "the session
  * authenticated" (the state a bridge like "mark the session as authenticated"
@@ -555,7 +599,7 @@ function canonicalizeAntonymRest(rest: string): string {
  * flag and any antonym flip compose by XOR.
  */
 export function atomize(args: AtomizeArgs): Atom {
-  const scope = normalize(args.systemName)
+  const scope = normalizeScope(args.systemName)
   let body = normalize(args.text)
   let negated = args.negated ?? false
 

@@ -17,7 +17,15 @@
 
 import { describe, expect, it } from 'vitest'
 import { ANTONYM_INDEX } from './antonyms.ts'
-import { atomize, glossaryIndex, normalize, SYMBOL_PHRASES, termIndex } from './atomize.ts'
+import {
+  atomize,
+  glossaryIndex,
+  normalize,
+  normalizeScope,
+  renderAtom,
+  SYMBOL_PHRASES,
+  termIndex,
+} from './atomize.ts'
 import { ESTABLISH_VERBS } from './guard-implication.ts'
 
 /** The body of a `resp` atom, which is what the solver compares. */
@@ -268,5 +276,61 @@ describe('symbolic comparators survive normalization', () => {
           .join('_'),
       )
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// normalizeScope — a namespace is never empty, and never eats an article
+// ---------------------------------------------------------------------------
+
+describe('the atom scope', () => {
+  it('keeps two non-Latin system names in DIFFERENT namespaces', () => {
+    // Measured before `normalizeScope` existed: `normalize` deletes every character outside
+    // [a-z0-9\s], so both names vanished and these two atoms were `sys____resp__allow_access` at
+    // OPPOSITE polarity — one atom, two unrelated systems, a provable contradiction across
+    // documents that share nothing at all.
+    const a = atomize({
+      kind: 'resp',
+      text: 'grant access',
+      systemName: 'ゲートウェイ',
+      negated: false,
+    })
+    const b = atomize({
+      kind: 'resp',
+      text: 'revoke access',
+      systemName: '认证服务',
+      negated: false,
+    })
+    expect(a.name).not.toBe(b.name)
+    expect(normalize('ゲートウェイ'), 'the premise: normalize alone erases it').toBe('')
+  })
+
+  it('does not strip a leading article from a system NAME', () => {
+    // An article carries no meaning inside a slot phrase, which is why `normalize` drops it. In an
+    // identifier it is part of the name, and two products differing only by one would otherwise
+    // share every atom they own.
+    expect(normalizeScope('A Gateway')).not.toBe(normalizeScope('Gateway'))
+    expect(normalizeScope('The Gateway')).toBe('the_gateway')
+  })
+
+  it('leaves an ordinary Latin name exactly as normalize would', () => {
+    // The split is confined to the two cases above: no existing scope may move, which is what
+    // makes the atom-corpus snapshot unchanged by this slice.
+    for (const name of ['auth service', 'gateway', 'vault service', 'latch service', 'ledger']) {
+      expect(normalizeScope(name)).toBe(normalize(name))
+    }
+  })
+
+  it('hashes deterministically and readably when nothing survives', () => {
+    expect(normalizeScope('ゲートウェイ')).toBe(normalizeScope('ゲートウェイ'))
+    expect(normalizeScope('ゲートウェイ')).toMatch(/^h[0-9a-f]{8}$/)
+  })
+
+  it('renderAtom REFUSES a scope it cannot render unambiguously', () => {
+    // Postconditions rather than comments: an empty scope merges namespaces, and a scope outside
+    // [a-z0-9_] makes the `__`-delimited name ambiguous to the parsers that split on it.
+    expect(() => renderAtom({ scope: '', kind: 'resp', body: 'x' })).toThrow(/empty scope/)
+    expect(() => renderAtom({ scope: 'a b', kind: 'resp', body: 'x' })).toThrow(/outside/)
+    expect(renderAtom({ scope: 'gateway', kind: 'resp', body: 'x' })).toBe('sys__gateway__resp__x')
   })
 })
