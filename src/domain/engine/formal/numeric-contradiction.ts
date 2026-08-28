@@ -218,14 +218,21 @@ export async function findNumericContradictions(
  * wider (less precise) culprit set for a conflict that is already established.
  * The budget bounds which groups get CHECKED (the caller's loop); once a finding
  * is owed, it is reported at full precision.
+ *
+ * The visit order is canonicalized on requirement id for the same reason
+ * `contradiction.ts`'s `minimizeCore` does it: a quantity can admit more than
+ * one minimal core (`lag >= 100` conflicts with `lag <= 10` and with `lag <= 20`
+ * independently, while the two upper bounds co-hold), deletion keeps whichever the
+ * input order reaches, and `core` arrives in `unsatCore()` order — the solver's
+ * ordering, not the document's. The culprit ids are output bytes.
  */
-async function minimizeNumericCore(
+export async function minimizeNumericCore(
   ctx: Z3Context,
   entries: ReadonlyArray<{ id: string; pred: NumericPredicate }>,
-  core: string[],
+  core: readonly string[],
   bounds: SolverBounds = {},
 ): Promise<string[]> {
-  let current = [...new Set(core)]
+  let current = [...new Set(core)].sort()
   for (const candidate of [...current]) {
     const trial = current.filter((id) => id !== candidate)
     if (trial.length < 2) continue
