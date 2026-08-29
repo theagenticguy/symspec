@@ -1,6 +1,7 @@
 /**
- * Two documents `runCheck`'s coverage contract has to be honest about: the smallest one, and the
- * smallest one that can buy a certificate it did not earn.
+ * Documents `runCheck`'s coverage contract has to be honest about: the smallest one, the ones
+ * that can buy a certificate they did not earn, and the one whose evidence has to name which
+ * EARS slot each blamed bound came out of.
  *
  * ## The one-requirement document
  *
@@ -32,6 +33,12 @@
  * "same event, different reactions" candidate), non-overlapping preconditions and low sentence
  * Jaccard (so no candidate pair and no shared context group), which leaves `pairsChecked === 0`.
  * Zero requirement pairs are compared, so the run must say so on every channel at once.
+ *
+ * `FND_NEEDS_REVIEW` is the other one, and it is the strongest case for reading membership
+ * rather than severity: it is the solver's own `unknown`, which `formal/needs-review.ts` says
+ * is "NEVER interpreted as no conflict". `ubiquitousPairDoc` is the minimal document where a
+ * context group has two members, so the finding can name two ids and become eligible for every
+ * ≥2-id predicate the report computes.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -229,5 +236,186 @@ describe('a candidate pair the pairwise tier prunes', () => {
     expect(report.residualRisk.noPairsChecked).toBe(true)
     expect(report.findings.map((f) => f.code)).toContain('FND_NO_PAIRS_CHECKED')
     expect(report.coverage.demotions.map((d) => d.reason)).toContain('no-decide-tier-comparison')
+  })
+})
+
+/**
+ * Two UBIQUITOUS requirements, on two different systems.
+ *
+ * The shape is chosen so one solver answer decides everything the assertions read. Both
+ * requirements have an empty guard, so both are members of the baseline context group —
+ * that is the only way a group's `memberIds` reaches two, and `FND_NEEDS_REVIEW` needs
+ * two to name two. The systems differ, so `emitCandidatePairs` skips the pair on its
+ * first test and `pairsChecked` is 0, which is what puts `FND_NO_PAIRS_CHECKED` and the
+ * `no-decide-tier-comparison` demotion in play. Both sentences are lint-clean, so the
+ * AC-3-7 gate admits them and the needs-review tier actually runs over them.
+ */
+const ubiquitousPairDoc = () => {
+  const ubi = (id: string, systemName: string, systemResponse: string) => ({
+    id,
+    patternType: 'ubiquitous' as const,
+    systemName,
+    systemResponse,
+    negated: false,
+    sentence: `The ${systemName} shall ${systemResponse}.`,
+    priority: 'medium' as const,
+    status: 'draft' as const,
+    createdAt: TS,
+    updatedAt: TS,
+    derives: [],
+    satisfies: [],
+    verifies: [],
+    refines: [],
+  })
+  return {
+    requirements: {
+      [ID_A]: ubi(ID_A, 'billing ledger', 'record the settled invoice'),
+      [ID_B]: ubi(ID_B, 'telemetry probe', 'publish the heartbeat'),
+    },
+    glossary: [],
+    antonyms: [],
+    waivers: [],
+    terms: [],
+    stateModel: { variables: [] },
+  }
+}
+
+/**
+ * An `unknown` is the strongest possible NON-verdict, and the verdict is computed here.
+ *
+ * `formal/needs-review.ts` pins that an inconclusive group becomes `FND_NEEDS_REVIEW` and
+ * is "NEVER interpreted as no conflict". That pin stops one tier short of the claim: the
+ * finding then flows into the same `formal[]` array `runCheck` reads its coverage
+ * predicates off, and those predicates are id-count plus set membership — they never read
+ * severity. So an `info` finding naming ≥2 ids is, absent membership, indistinguishable
+ * from a solver verdict, and an undecided group would CERTIFY the run it declined to
+ * decide.
+ *
+ * Every assertion below therefore lives at the `runCheck` level, and each one is the
+ * observable of a different mechanism: `inconclusive-group` for the demotion,
+ * `no-decide-tier-comparison` for `PROPOSE_ONLY_FND_CODES`, `FND_NO_PAIRS_CHECKED` for
+ * `COVERAGE_GAP_FND_CODES`, `participates` for the coverage row.
+ */
+describe('a context group the solver could not decide', () => {
+  /** Forces the AC-4-7 `unknown` branch. z3 reads `timeout: 0` as no timeout and decides
+   * a two-atom document in microseconds at `1`, so the real solver cannot supply this
+   * outcome as a fixture — only as a race. */
+  const alwaysUnknown = async () => 'unknown' as const
+
+  it('is the shape the fixture claims: no pair compared, and the group names both ids', async () => {
+    // Two premises, because either failing would make the assertions below pass for the
+    // wrong reason. (1) Without the forced `unknown` the document is the control — it
+    // already discloses "nothing compared" and raises no needs-review finding. (2) With
+    // it, exactly one finding fires and it names BOTH requirements, which is what makes
+    // it eligible for every ≥2-id predicate in the report.
+    const control = await runCheck(ubiquitousPairDoc() as never, {})
+    expect(control.pairsChecked).toBe(0)
+    expect(control.findings.map((f) => f.code)).not.toContain('FND_NEEDS_REVIEW')
+
+    const report = await runCheck(ubiquitousPairDoc() as never, {
+      needsReviewCheckGroup: alwaysUnknown,
+    })
+    expect(
+      report.findings.filter((f) => f.code === 'FND_NEEDS_REVIEW').map((f) => f.requirementIds),
+    ).toEqual([[ID_A, ID_B]])
+  })
+
+  it('cannot certify the run, and says so with its own demotion', async () => {
+    const report = await runCheck(ubiquitousPairDoc() as never, {
+      needsReviewCheckGroup: alwaysUnknown,
+    })
+    expect(report.verified).toBe(false)
+    const demotion = report.coverage.demotions.find((d) => d.reason === 'inconclusive-group')
+    expect(demotion?.requirementIds).toEqual([ID_A, ID_B])
+    // The action has to name the lever that actually moves a per-group `unknown`. The
+    // whole-run budget does not: raising it gives the group no more time.
+    expect(demotion?.action).toContain('--timeout-ms')
+  })
+
+  it('does not count as the decide-tier comparison the run never made', async () => {
+    const report = await runCheck(ubiquitousPairDoc() as never, {
+      needsReviewCheckGroup: alwaysUnknown,
+    })
+    expect(report.coverage.demotions.map((d) => d.reason)).toContain('no-decide-tier-comparison')
+    // The participation clause reads the same predicate: an undecided group must not mark
+    // its members as having been compared with a peer.
+    expect(report.coverage.requirements.map((r) => r.participates)).toEqual([false, false])
+  })
+
+  it('keeps the "nothing was compared" disclaimer it would otherwise hide', async () => {
+    const report = await runCheck(ubiquitousPairDoc() as never, {
+      needsReviewCheckGroup: alwaysUnknown,
+    })
+    // `noPairsChecked` is derived from the counter, so it stays true regardless. The
+    // disclaimer is what a reader sees, and dropping it while the counter says nothing was
+    // compared is the report contradicting itself in two adjacent fields.
+    expect(report.residualRisk.noPairsChecked).toBe(true)
+    expect(report.findings.map((f) => f.code)).toContain('FND_NO_PAIRS_CHECKED')
+  })
+})
+
+/**
+ * A genuine numeric conflict between a GUARD bound and a RESPONSE bound.
+ *
+ * Both requirements carry the same precondition, so they are co-live in one context
+ * group; the committed `flush latency` alias routes the response's verb-led label onto
+ * the guard's quantity key, which is the documented job of a `glossary add` (it is what
+ * `FND_QUANTITY_ALIAS_CANDIDATE` proposes). The result is one cell holding a `pre` bound
+ * of `> 500 ms` and a `resp` bound of `< 100 ms`.
+ *
+ * The point of the fixture is the SLOT ROLE. `numeric-contradiction.ts` receives the slot
+ * as data and `numeric.test.ts` pins the extractor, but the three string literals that
+ * decide which EARS slot each bound is reported under live in `runCheck` alone
+ * (`extractNumericPredicates(r.trigger, …, 'trig', …)` and its `pre`/`resp` siblings), and
+ * an author reading the core has to be able to tell the obligation from the precondition
+ * without re-reading the sentence. Nothing between the extractor's unit test and here
+ * crosses that wiring.
+ */
+const guardVsResponseBoundDoc = () => {
+  const stateReq = (id: string, systemResponse: string) => ({
+    id,
+    patternType: 'state-driven' as const,
+    systemName: 'flush worker',
+    preCondition: 'the flush latency is above 500 ms',
+    systemResponse,
+    negated: false,
+    sentence: `While the flush latency is above 500 ms, the flush worker shall ${systemResponse}.`,
+    priority: 'medium' as const,
+    status: 'draft' as const,
+    createdAt: TS,
+    updatedAt: TS,
+    derives: [],
+    satisfies: [],
+    verifies: [],
+    refines: [],
+  })
+  return {
+    requirements: {
+      [ID_A]: stateReq(ID_A, 'raise the backlog alarm'),
+      [ID_B]: stateReq(ID_B, 'hold the flush latency below 100 ms'),
+    },
+    glossary: [{ canonical: 'flush latency', aliases: ['hold the flush latency'] }],
+    antonyms: [],
+    waivers: [],
+    terms: [],
+    stateModel: { variables: [] },
+  }
+}
+
+describe('a numeric conflict spanning a guard and a response', () => {
+  it('names the EARS slot each blamed bound was read out of', async () => {
+    const report = await runCheck(guardVsResponseBoundDoc() as never, {})
+    const numeric = report.findings.find((f) => f.code === 'FND_NUMERIC_CONTRADICTION')
+    expect(numeric?.requirementIds).toEqual([ID_A, ID_B])
+    // Every bound in the core, with the slot it came from. Both roles appear, so a wiring
+    // that stamped one label on all three would be visible here — which is the only place
+    // it is visible, because the extractor's own tests never cross this call.
+    expect(
+      numeric?.evidence?.numeric?.predicates.map((p) => [p.slot, p.comparator, p.value]),
+    ).toEqual([
+      ['pre', '>', 500],
+      ['resp', '<', 100],
+      ['pre', '>', 500],
+    ])
   })
 })

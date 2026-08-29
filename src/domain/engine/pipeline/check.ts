@@ -99,7 +99,11 @@ import {
 import { attachEvidenceToAll, type Evidence } from '../formal/finding.ts'
 import { buildSimilarityGraph, type GraphRequirement } from '../formal/graph.ts'
 import { checkCompleteness } from '../formal/incomplete.ts'
-import { findNeedsReview, SolverBudgetExceededError } from '../formal/needs-review.ts'
+import {
+  findNeedsReview,
+  type GroupChecker,
+  SolverBudgetExceededError,
+} from '../formal/needs-review.ts'
 import { extractNumericPredicates } from '../formal/numeric.ts'
 import { findNumericContradictions } from '../formal/numeric-contradiction.ts'
 import { findQuantityAliasCandidates } from '../formal/quantity-alias.ts'
@@ -208,6 +212,20 @@ export interface CheckOptions {
    * on ANY unmatched atom.
    */
   failOnUnmatched?: number
+  /**
+   * Injectable per-group solver check for the AC-4-7 needs-review tier — the same
+   * seam `findNeedsReview` exposes, threaded one level up.
+   *
+   * It lives on the PIPELINE's options because the verdict consequences of an
+   * undecided group are computed here, not in the tier: an `unknown` group decides
+   * whether `verified` demotes with `inconclusive-group`, whether the run still
+   * counts as having made a decide-tier comparison, and whether the
+   * `FND_NO_PAIRS_CHECKED` disclaimer fires. A test cannot reach the `unknown`
+   * branch through {@link timeoutMs}: z3 reads `timeout: 0` as "no timeout", and
+   * any document small enough to assert on is decided in microseconds at `1`, so
+   * the outcome would be a race rather than a fixture.
+   */
+  needsReviewCheckGroup?: GroupChecker
 }
 
 /**
@@ -313,6 +331,14 @@ export interface CoverageDemotion {
     // Discharged by raising `--solver-budget-ms` (or shrinking the document),
     // never by waiving: a suppressed disclosure is not a completed comparison.
     | 'solver-budget-exhausted'
+    // AC-4-7: a per-group solver check returned `unknown` (undecidable at the
+    // per-group `--timeout-ms`, or the timeout fired — the z3-solver API does not
+    // distinguish them). That group's requirements were NOT decided, so `verified`
+    // cannot cover them however many other pairs were compared. Discharged by
+    // raising `--timeout-ms` and re-running, never by waiving the
+    // `FND_NEEDS_REVIEW` disclosure: suppressing "I could not decide" does not
+    // decide it.
+    | 'inconclusive-group'
   requirementIds: string[]
   /** The exact command (or rewrite guidance) that discharges this demotion. */
   action: string
@@ -489,14 +515,22 @@ const PROPOSE_ONLY_FND_CODES: ReadonlySet<string> = new Set<FndCode>([
   // verifies nothing, so it must not certify — membership here, not its `info`
   // severity, is what keeps it out of the `verified` predicate.
   'FND_INCOMPLETE',
+  // The per-group `unknown` (AC-4-7). It names its whole context group, so a group
+  // with ≥2 members spans ≥2 ids — and it is the tier's own statement that the
+  // solver DECLINED to decide, which `formal/needs-review.ts` says is "NEVER
+  // interpreted as no conflict". An answer of "I don't know" is the strongest
+  // possible non-verdict, so it must not certify: absence from this set is what
+  // would make an undecided group COUNT AS a decide-tier comparison.
+  'FND_NEEDS_REVIEW',
 ])
 
 /**
  * The coverage-GAP subset of the propose-only codes: findings that span ≥2
  * requirement ids yet mean "a comparison did NOT happen" (a requirement was
  * excluded from the solver, two numeric bounds landed on different keys,
- * aggregate/relational reasoning was not attempted, or the group's SAT answer was
- * fixed by the encoding). They must NOT suppress the `FND_NO_PAIRS_CHECKED`
+ * aggregate/relational reasoning was not attempted, the group's SAT answer was
+ * fixed by the encoding, or the solver returned `unknown` for the group). They must
+ * NOT suppress the `FND_NO_PAIRS_CHECKED`
  * disclaimer through the id-count clause — doing so would let the report both
  * claim nothing was compared (`residualRisk.noPairsChecked`) and hide the
  * disclaimer that says so. Distinct from the semantic-tier propose codes
@@ -508,6 +542,7 @@ const COVERAGE_GAP_FND_CODES: ReadonlySet<string> = new Set<FndCode>([
   'FND_QUANTITY_ALIAS_CANDIDATE',
   'FND_RELATIONAL_UNCHECKED',
   'FND_INCOMPLETE',
+  'FND_NEEDS_REVIEW',
 ])
 
 /**
@@ -963,6 +998,9 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
           review = await findNeedsReview(encodable, {
             atomize,
             timeoutMs,
+            ...(options.needsReviewCheckGroup !== undefined
+              ? { checkGroup: options.needsReviewCheckGroup }
+              : {}),
             ...(solverBudget !== undefined
               ? { solverBudgetMs: Math.max(0, solverBudget.remainingMs()) }
               : {}),
@@ -1543,6 +1581,34 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
           'to runCheck; pre-warm an air-gapped host with `symspec download-model`.',
       })
     }
+  }
+
+  // AC-4-7 — the per-group `unknown`. Membership in PROPOSE_ONLY_FND_CODES stops an
+  // undecided group from CERTIFYING, but on its own it does not make one DEMOTE: a
+  // document with one decided pair and one undecided group would otherwise report
+  // `verified: true` while the solver said "I don't know" about part of it. An
+  // undecided group is a coverage fact, so it gets the same treatment as a truncated
+  // tier — its own demotion, naming the group's members and the raise-the-timeout
+  // action.
+  //
+  // Outside the `requirements.length >= 2` guard for the same reason truncation is:
+  // that guard encodes "a spec with <2 requirements is VACUOUSLY verified", which
+  // holds only when the tiers ran to completion. An `unknown` is a statement about
+  // the RUN.
+  //
+  // Keyed off the raw `formal` set rather than the post-waiver `kept` set, matching
+  // `excluded-from-formal`: waiving the FND_NEEDS_REVIEW disclosure hides the report
+  // line but the group is still undecided, and a suppression is not a decision.
+  for (const f of formal.filter((f) => f.code === 'FND_NEEDS_REVIEW')) {
+    demotions.push({
+      reason: 'inconclusive-group',
+      requirementIds: [...f.requirementIds],
+      action:
+        `The solver returned unknown for the context group covering ${f.requirementIds.join(', ')} ` +
+        '(undecidable within the per-group timeout, or the timeout fired), so that group was never ' +
+        'decided — an unknown is never read as "no conflict". Raise --timeout-ms and re-run ' +
+        '`symspec check`. Waiving FND_NEEDS_REVIEW cannot discharge this: the group is still undecided.',
+    })
   }
 
   // AC-1-7 — the soundness-critical demotion. A run whose `--solver-budget-ms`

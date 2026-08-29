@@ -531,3 +531,84 @@ export const fabricationCases = (): readonly FabricationCase[] => [
     expectsEmptyPlan: true,
   },
 ]
+
+/**
+ * THE CROSS-SLOT BRIDGE — a fabrication this package does NOT yet fence.
+ *
+ * `disjoint-temperature-guards` above is the fenced half: two mutually exclusive guards, one
+ * in each requirement's `preCondition`, land in two context groups and no tier compares
+ * them. That fixture is structurally incapable of exercising the other half, because a
+ * requirement owns exactly one `preCondition` — nothing in it can name both spellings of one
+ * slot, so no group containing both atoms is constructible.
+ *
+ * A requirement with a `preCondition` AND a `trigger` can. `planGroups` mints one group per
+ * distinct guard-atom SET, so req 72 below mints `{above 5, below 3}`, and `liveIn` is a
+ * subset test — so reqs 70 and 71, whose guards are single atoms, are both live there. The
+ * two exclusive bounds are then asserted as simultaneous facts, which is exactly the pattern
+ * `numeric-contradiction.ts`'s header calls unacceptable.
+ *
+ * Req 72's own guard is arithmetically unsatisfiable, so it can never fire: the document
+ * contains no requirement conflict at all, and `FND_VACUITY` says so about 72 on the same
+ * run. The blame nonetheless lands on 70 and 71, which do not conflict.
+ *
+ * It is kept OUT of {@link fabricationCases} deliberately. That corpus asserts
+ * `counts.error === 0`, and this document produces two; filing it there would turn the
+ * standing fabrication number red without fixing anything. `fabrication.test.ts` drives it
+ * as a recorded gap instead — the shape is pinned, so a fence for it announces itself by
+ * turning that test red, and the fix is then to move the document up into the corpus.
+ *
+ * Fencing it needs a per-group FEASIBILITY check: a group whose own guard bounds are jointly
+ * unsatisfiable is not a reachable context and must host no cell. No code path performs one.
+ */
+export const crossSlotBridgeDoc = (): RequirementsDocument =>
+  docOf([
+    stateReqIn(
+      'vent controller',
+      70,
+      'the temperature is above 5 degrees celsius',
+      'open the vent',
+    ),
+    [
+      'ffffffff-0000-4000-8000-000000000071',
+      {
+        id: 'ffffffff-0000-4000-8000-000000000071',
+        patternType: 'event-driven' as const,
+        systemName: 'vent controller',
+        systemResponse: 'close the vent',
+        trigger: 'the temperature is below 3 degrees celsius',
+        negated: false,
+        sentence:
+          'When the temperature is below 3 degrees celsius, the vent controller shall close the vent.',
+        priority: 'medium' as const,
+        status: 'draft' as const,
+        createdAt: TS,
+        updatedAt: TS,
+        derives: [],
+        satisfies: [],
+        verifies: [],
+        refines: [],
+      },
+    ] as const,
+    [
+      'ffffffff-0000-4000-8000-000000000072',
+      {
+        id: 'ffffffff-0000-4000-8000-000000000072',
+        patternType: 'event-driven' as const,
+        systemName: 'vent controller',
+        systemResponse: 'log the fault',
+        preCondition: 'the temperature is above 5 degrees celsius',
+        trigger: 'the temperature is below 3 degrees celsius',
+        negated: false,
+        sentence:
+          'While the temperature is above 5 degrees celsius, when the temperature is below 3 degrees celsius, the vent controller shall log the fault.',
+        priority: 'medium' as const,
+        status: 'draft' as const,
+        createdAt: TS,
+        updatedAt: TS,
+        derives: [],
+        satisfies: [],
+        verifies: [],
+        refines: [],
+      },
+    ] as const,
+  ])

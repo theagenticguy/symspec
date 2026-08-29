@@ -38,7 +38,7 @@ import type { DocumentOp } from '../domain/requirements/ops.ts'
 import { DocPath, DocStore, makeDocPath } from '../ports/doc-store.ts'
 import { embedderLayerOf } from '../ports/embedder.ts'
 import { ErrDocNotFound } from '../ports/errors.ts'
-import { fabricationCases, req } from './fabrication.ts'
+import { crossSlotBridgeDoc, fabricationCases, req } from './fabrication.ts'
 
 const TS = '2026-01-01T00:00:00.000Z'
 
@@ -229,6 +229,54 @@ describe('applying a whole-document glossary plan FABRICATES nothing', () => {
       reasons.push(...plan.unresolved.map((u) => u.reason))
     }
     expect(reasons).toContain('opposition-candidate')
+  })
+})
+
+/**
+ * The cross-slot bridge, RECORDED rather than endorsed.
+ *
+ * `fabrication.ts`'s {@link crossSlotBridgeDoc} carries the document and the mechanism. This
+ * pins what the tool does with it today, for one reason: the comments in
+ * `formal/numeric-contradiction.ts` state the fence's real reach — same-slot-kind guards
+ * cannot meet, a cross-slot bridge still puts them in one group — and a claim about this
+ * package's own behavior needs a gate or it is only prose.
+ *
+ * Every assertion here is a statement of a GAP. A fence turns them red, and the fix is then
+ * to move the document up into {@link fabricationCases}, where `counts.error === 0` is the
+ * standing assertion.
+ */
+describe('a cross-slot bridge is a fabrication surface still open', () => {
+  const A = 'ffffffff-0000-4000-8000-000000000070'
+  const B = 'ffffffff-0000-4000-8000-000000000071'
+  const BRIDGE = 'ffffffff-0000-4000-8000-000000000072'
+
+  it('puts two mutually exclusive guards in one context group', async () => {
+    // The mechanism, proved without the solver — the same composition the fenced fixtures use.
+    // The bridge requirement's guard-atom set is a group, and `liveIn` is a subset test, so
+    // both single-guard requirements are live in it alongside the bridge.
+    const groups = groupsByKey(crossSlotBridgeDoc())
+    const shared = [...groups.values()].filter((ids) => ids.includes(A) && ids.includes(B))
+    expect(shared).toEqual([[A, B, BRIDGE]])
+  })
+
+  it('blames the two requirements that do not conflict', async () => {
+    const report = await check(crossSlotBridgeDoc())
+    // TWO error-severity findings on a document whose only defect is that req 72 can never
+    // fire. Both tiers reach the same wrong conclusion through the same bridge group.
+    expect(
+      report.findings
+        .filter((f) => f.severity === 'error')
+        .map((f) => [f.code, f.requirementIds] as const),
+    ).toEqual([
+      ['FND_CONTRADICTION', [A, B]],
+      ['FND_NUMERIC_CONTRADICTION', [A, B]],
+    ])
+    // And the honest reading of the document is present on the same run, at warn severity:
+    // the bridge requirement's guard is unreachable. That finding is the whole story; the two
+    // above are the fabrication.
+    expect(
+      report.findings.filter((f) => f.code === 'FND_VACUITY').map((f) => f.requirementIds),
+    ).toEqual([[BRIDGE]])
   })
 })
 

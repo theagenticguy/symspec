@@ -29,16 +29,28 @@
  * So the sweep runs per CONTEXT GROUP — the same distinct-guard-atom-set partition
  * `planContextGroups` builds for the propositional tier, planned by the same
  * `planGroups` over this tier's own per-requirement contexts — and within a group
- * only the requirements that are `liveIn` it contribute. Two disjoint guards
- * produce two groups, each hosting one requirement, and a cell with fewer than two
- * distinct requirement ids never reaches the solver.
+ * only the requirements that are `liveIn` it contribute. Two disjoint guards in the
+ * same slot kind produce two groups, each hosting one requirement, and a cell with
+ * fewer than two distinct requirement ids never reaches the solver.
  *
- * DIRECTION: this SPLITS. The co-liveness relation becomes strictly finer, and a
- * finer partition can only remove co-assertions, so it can only remove findings —
- * never invent one. A ubiquitous requirement has an empty guard, `[] ⊆ anything`,
- * so it stays live in every group; an all-unconditional document therefore has the
- * one baseline group and exactly one cell per (quantity, baseUnit), which is what
- * the tier did before the partition existed.
+ * DIRECTION: this SPLITS, and the two halves of that claim are not equally strong.
+ *
+ *   - SAFETY holds unconditionally. Every cell's assertion set is a SUBSET of the
+ *     single global set one pass per (quantity, baseUnit) would have fed the solver,
+ *     and unsat is monotone under supersets, so anything a cell proves unsat the
+ *     global set proved unsat too. The partition cannot invent a conflict.
+ *   - The COUNT can rise. One global pass per quantity reports one core per
+ *     quantity; the partition can hand two cells two DIFFERENT minimal cores, and
+ *     each becomes its own finding. Measured through `findNumericContradictions`:
+ *     one quantity, `r1`/`r2` guarded by the same atom with `>=1000`/`<=500` and
+ *     `r8`/`r9` unconditional with `>=100`/`<=10`, yields TWO findings where a
+ *     single cell yields one. Both are real conflicts, so `counts.error` going up
+ *     is a precision gain, not a fabrication — but "can only remove findings" is
+ *     false and must not be relied on.
+ *
+ * A ubiquitous requirement has an empty guard, `[] ⊆ anything`, so it stays live in
+ * every group; an all-unconditional document therefore has the one baseline group
+ * and exactly one cell per (quantity, baseUnit).
  *
  * ## Why the group is (quantity, baseUnit) and NOT quantity alone
  *
@@ -133,7 +145,7 @@ function comparisonKey(pred: NumericPredicate): string {
 }
 
 /** One (context group, quantity, base unit) cell: the bounds that genuinely co-hold. */
-interface ComparisonCell {
+export interface ComparisonCell {
   /** The {@link comparisonKey} this cell is the arithmetic partition of. */
   readonly key: string
   /** The bare quantity key, for the evidence block. */
@@ -159,8 +171,15 @@ interface ComparisonCell {
  * (comparison key, live id set), which is exactly the input the solver call is a
  * function of. `entries` is built by walking `reqPreds` in order, so the retained
  * cell's evidence is in document order regardless of which group reached it first.
+ *
+ * EXPORTED for its own gate. Collapsing duplicate cells has no effect on the emitted
+ * findings — the finding map de-duplicates a repeated core anyway — so its only
+ * observables are the solver-call count and the `budget.truncate` skipped figure, and
+ * a test driving `findNumericContradictions` cannot tell this key's presence from its
+ * absence. The cell list is that observable, and `numeric-contradiction.test.ts`
+ * asserts on it directly rather than leaving a mechanism no test can reach.
  */
-function planComparisonCells(reqPreds: readonly RequirementPredicates[]): ComparisonCell[] {
+export function planComparisonCells(reqPreds: readonly RequirementPredicates[]): ComparisonCell[] {
   const cells: ComparisonCell[] = []
   const seen = new Set<string>()
   for (const group of planGroups(reqPreds.map((rp) => rp.contextAtoms))) {
@@ -176,8 +195,30 @@ function planComparisonCells(reqPreds: readonly RequirementPredicates[]): Compar
     >()
     for (const rp of reqPreds) {
       // A requirement whose guard is not fully asserted in this group is not live
-      // here, and its bounds are not facts here. This is the whole fabrication
-      // fence: two mutually exclusive guards never share a group.
+      // here, and its bounds are not facts here.
+      //
+      // The exact reach of that fence, because it is narrower than "mutually
+      // exclusive guards never meet". A group is some ONE requirement's guard-atom
+      // set (plus the baseline), and `liveIn` is a SUBSET test. So two exclusive
+      // guards in the same slot kind can never share a group — a requirement has
+      // one `preCondition` and one `trigger`, so nothing can name both spellings of
+      // one slot — but a requirement that names one in `preCondition` and the other
+      // in `trigger` mints a group containing BOTH atoms, and the two single-guard
+      // requirements are then co-live there.
+      //
+      // That bridge is an OPEN fabrication surface this tier does not fence.
+      // Measured through `runCheck`: `While the temperature is above 5 degrees
+      // celsius, the vent controller shall open the vent.` + `When the temperature
+      // is below 3 degrees celsius, the vent controller shall close the vent.` +
+      // `While the temperature is above 5 degrees celsius, when the temperature is
+      // below 3 degrees celsius, the vent controller shall log the fault.` reports
+      // FND_NUMERIC_CONTRADICTION at error severity naming the first two, which do
+      // not conflict. The bridging requirement's guard is arithmetically
+      // unsatisfiable — it is vacuous, and `FND_VACUITY` says so on the same run —
+      // so the document contains no requirement conflict at all. Fencing it needs a
+      // per-group feasibility check on the guard bounds, which no code path here
+      // performs; `src/testing/fabrication.ts` carries the document as a
+      // known-open case so the gap has a name and a reproducer.
       if (!liveIn(group, rp.contextAtoms)) continue
       for (const pred of rp.predicates) {
         const key = comparisonKey(pred)
@@ -191,16 +232,32 @@ function planComparisonCells(reqPreds: readonly RequirementPredicates[]): Compar
     }
     for (const [key, g] of byQuantity) {
       const distinctIds = new Set(g.entries.map((e) => e.id))
-      // A cell with one contributing requirement is skipped because the FINDING
-      // SHAPE has nowhere to put it, not because it cannot conflict: one
-      // requirement can carry two opposed bounds on one key (`While the
-      // temperature is above 5 degrees celsius, keep the temperature below 3
-      // degrees celsius`), and that is genuinely unsatisfiable. `requirementIds`
-      // is an unsat core naming the ≥2 requirements whose claims cannot co-hold,
-      // and `minimizeNumericCore` never returns fewer than two ids, so a single-id
-      // conflict has no shape to be reported in. OPEN GAP: that self-conflict goes
-      // unreported — a MISS, the honest direction — and closing it needs a
-      // finding code for a requirement inconsistent with itself, not a wider cell.
+      // A cell needs two contributors to be worth a solver call, and the reason is
+      // narrower than it looks. One requirement CAN carry two opposed bounds on one
+      // key — two guard slots do it: `While the temperature is above 5 degrees
+      // celsius, when the temperature is below 3 degrees celsius, …` puts `> 5` and
+      // `< 3` on the quantity `temperature` from `pre` and `trig`. (A response-slot
+      // example does not: `keep the temperature below 3` labels the quantity `keep
+      // the temperature`, a different key from the guard's `temperature`, so those
+      // two bounds never meet in one cell.)
+      //
+      // Such a requirement IS reported. `minimizeNumericCore` refuses to SHRINK a
+      // core below two ids, but it does not constrain the core it is handed: a core
+      // that already names one id passes through, and `culprits` keeps it. Measured
+      // through `runCheck`, the two-requirement document above plus `While the
+      // temperature is above 5 degrees celsius, the vent controller shall open the
+      // vent.` emits FND_NUMERIC_CONTRADICTION at error severity with a
+      // SINGLE-id `requirementIds` and a message reading `Requirements <one id>
+      // place jointly unsatisfiable …`.
+      //
+      // So this skip only hides the case where the self-conflicting requirement is
+      // the cell's ONLY contributor. What that leaves genuinely open is a different
+      // gap: a self-inconsistent guard is a VACUOUS requirement, and reporting it as
+      // an error-severity numeric contradiction (rather than as the `FND_VACUITY`
+      // the same run also emits) overstates it. A one-id finding cannot CERTIFY a
+      // run — check.ts's `decideTierCrossReqFired` requires ≥2 ids — but it does
+      // suppress the `FND_NO_PAIRS_CHECKED` disclaimer, through this code's
+      // membership in `CROSS_REQUIREMENT_FND_CODES` rather than through the id count.
       if (distinctIds.size < 2) continue
       const cellKey = JSON.stringify([key, [...distinctIds].sort()])
       if (seen.has(cellKey)) continue
