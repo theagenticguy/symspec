@@ -254,8 +254,10 @@ export const wasTruncated = (report: CheckReport): boolean =>
  * ## Why `completedUnits` is NOT `pairsChecked`, and how that was found
  *
  * The first version divided by `report.pairsChecked`, which reads like "pairs the solver
- * compared" and is not. `pairsChecked` counts candidate pairs the free-tier filter
- * IDENTIFIED — measured on a 10-requirement document at a 1ms budget, it is 45 while five
+ * compared" and is not a completion count. It deducts the pairs the pairwise tier SKIPPED
+ * before any solve, and deducts nothing for the pairs a budget deadline cut — a run that
+ * truncates on its first pair skips nothing, so the field still reports the filter's whole
+ * candidate set. Measured on a 10-requirement document at a 1ms budget, it is 45 while five
  * tiers truncated and no pair was solved at all. Dividing by 45 there produced a ratio of
  * 45/(45+76) ≈ 0.37, i.e. it concluded the run had done a THIRD of the work when it had
  * done none, and recommended roughly a third of what was needed.
@@ -362,10 +364,11 @@ export const budgetHintFor = (
   // to respect rather than route around.
   //
   // The first version divided by `report.pairsChecked`, which reads like "pairs the solver
-  // compared" and is not: it counts the candidate pairs the free-tier filter IDENTIFIED, and
-  // it reads 45 on a 10-requirement document even at a 1ms budget where all five tiers
-  // truncated and nothing was solved. So it computed 45/(45+76) ≈ 0.37 and concluded the run
-  // had done a third of the work when it had done none.
+  // compared" and is not: it deducts only the pairs the pairwise tier skipped before any
+  // solve, never the pairs a deadline cut, so it reads 45 on a 10-requirement document even
+  // at a 1ms budget where all five tiers truncated and nothing was solved. So it computed
+  // 45/(45+76) ≈ 0.37 and concluded the run had done a third of the work when it had done
+  // none.
   //
   // The obvious repair — `completedUnits = totalUnits - unrunUnits` — is circular: with
   // `totalUnits = pairs + unrunUnits` it reduces to `pairs` exactly, i.e. back to the bug.

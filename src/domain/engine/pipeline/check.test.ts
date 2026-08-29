@@ -35,6 +35,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { emitCandidatePairs } from '../solvers/free/pairwise-filter.ts'
+import { asView } from '../solvers/types.ts'
 import { runCheck } from './check.ts'
 
 const TS = '2026-01-01T00:00:00.000Z'
@@ -156,5 +158,76 @@ describe('a document whose only cross-requirement finding is the completeness he
     const report = await runCheck(twoRequirementDoc() as never, {})
     expect(report.coverage.demotions.map((d) => d.reason)).toContain('no-decide-tier-comparison')
     expect(report.verified).toBe(false)
+  })
+})
+
+/**
+ * A candidate pair the pairwise tier PRUNES: same system (so the free-tier filter emits it) with
+ * one precondition containing the other (so rule 2 fires), and every other slot different — so
+ * the two bodies share no atom and `sharesAtom` skips the pair before any solve.
+ *
+ * The pair is the whole point. `pairsChecked` is what `coverage.pairsCheckedNote` renders as
+ * "N candidate pair(s) shared an atom and were compared", and what `residualRisk.noPairsChecked`
+ * and the `no-decide-tier-comparison` demotion key on. Counting a pruned pair there certifies a
+ * comparison that did not happen, on the strength of a pair that shared no vocabulary.
+ */
+const prunedPairDoc = () => ({
+  requirements: {
+    [ID_A]: {
+      ...guardedReq({
+        id: ID_A,
+        preCondition: 'the account is verified',
+        sentence:
+          'While the account is verified, when the user signs in, the auth service shall issue a session token.',
+      }),
+    },
+    [ID_B]: {
+      ...guardedReq({
+        id: ID_B,
+        preCondition: 'the account is verified and the tenant is active',
+        sentence:
+          'While the account is verified and the tenant is active, when the client requests a refresh, the auth service shall rotate the signing key.',
+      }),
+      trigger: 'the client requests a refresh',
+      systemResponse: 'rotate the signing key',
+    },
+  },
+  glossary: [],
+  antonyms: [],
+  waivers: [],
+  terms: [],
+  stateModel: { variables: [] },
+})
+
+describe('a candidate pair the pairwise tier prunes', () => {
+  it('is the shape the fixture claims: one candidate pair, and no atom shared', async () => {
+    // Two independent premises, because either one failing would make the assertion below pass
+    // for the wrong reason. (1) The free tier really emits the pair — otherwise "0 compared" is
+    // true trivially. (2) Every atom in the document is a singleton — that is atom-disjointness
+    // measured through the report, and it is what makes the pair prunable.
+    const views = Object.values(prunedPairDoc().requirements).map((r) => asView(r as never))
+    const pairs = emitCandidatePairs(views)
+    expect(pairs.map((p) => p.reason)).toEqual(['same-system-overlapping-precondition'])
+
+    const report = await runCheck(prunedPairDoc() as never, {})
+    expect(report.coverage.encoded).toBe(2)
+    expect(report.residualRisk.unmatchedAtoms).toBe(6)
+  })
+
+  it('counts as a pair NOT compared, so the coverage note stops claiming it was', async () => {
+    const report = await runCheck(prunedPairDoc() as never, {})
+    expect(report.pairsChecked).toBe(0)
+    expect(report.coverage.pairsCheckedNote).toContain('0 candidate pair(s) shared an atom')
+    // The negative guard: the candidate count is 1, and that is the number this note must not
+    // report. Asserting only the correct string passes just as happily against the candidate
+    // total when the document happens to have one prunable pair and one compared one.
+    expect(report.coverage.pairsCheckedNote).not.toContain('1 candidate pair(s) shared an atom')
+  })
+
+  it('leaves the run inconclusive, because nothing cross-requirement was decided', async () => {
+    const report = await runCheck(prunedPairDoc() as never, {})
+    expect(report.residualRisk.noPairsChecked).toBe(true)
+    expect(report.findings.map((f) => f.code)).toContain('FND_NO_PAIRS_CHECKED')
+    expect(report.coverage.demotions.map((d) => d.reason)).toContain('no-decide-tier-comparison')
   })
 })

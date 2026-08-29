@@ -236,7 +236,7 @@ export interface ResidualRisk {
    */
   semanticSuggestions: number
   /**
-   * How many candidate pairs the formal tier evaluated (mirrors
+   * How many candidate pairs the pairwise tier compared (mirrors
    * {@link CheckReport.pairsChecked} for one-glance reading).
    */
   pairsChecked: number
@@ -370,7 +370,19 @@ export interface CheckReport {
   findings: CheckFinding[]
   /** AC-3-7 exclusions: statements the formal tier never saw, with evidence. */
   excluded: Exclusion[]
-  /** How many candidate pairs the formal tier evaluated (AC-8-3 counter). */
+  /**
+   * How many candidate pairs the pairwise tier COMPARED (AC-8-3 counter): the
+   * candidate pairs over gate-included requirements, minus the ones that tier
+   * skipped before either implication solve (atom-disjoint, or carrying a
+   * degenerate body). A skipped pair and a compared-but-inconclusive pair emit the
+   * same empty output, so this counter is the only place a widening prune is
+   * visible.
+   *
+   * Pairs a whole-run budget deadline cut are still counted, so this is a
+   * comparison count only on a run that finished. Truncation is reported through
+   * the `solver-budget-exhausted` demotion and its unrun-unit count instead,
+   * which demotes `verified` rather than merely shrinking a statistic.
+   */
   pairsChecked: number
   /**
    * How many findings were dropped by a committed waiver (wishlist #3). A
@@ -904,7 +916,8 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       const contradictions = budgetSpent(solverBudget, 'contradiction', encodable.length)
         ? []
         : await findContradictions(encodable, contradictionOpts)
-      const subsumptions = await checkSubsumption(ctx, encodedById, includedPairs, bounds)
+      const subsumption = await checkSubsumption(ctx, encodedById, includedPairs, bounds)
+      const subsumptions = subsumption.findings
       const vacuities = await checkVacuity(ctx, encoded, bounds)
       const incompletes = await checkCompleteness(ctx, encoded, bounds)
       const similar = findSimilarUnunified(
@@ -1223,7 +1236,12 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
         })
       }
 
-      return { findings: [], pairsChecked: includedPairs.length }
+      // `pairsChecked` counts pairs the pairwise tier COMPARED, so the tier's own
+      // count of pairs it skipped before any implication solve comes off the
+      // candidate total. Without the subtraction the coverage note reports every
+      // atom-disjoint pair as "shared an atom and were compared", which is the
+      // one statement that would hide a prune widening to eat real pairs.
+      return { findings: [], pairsChecked: includedPairs.length - subsumption.pruned }
     },
   })
 
