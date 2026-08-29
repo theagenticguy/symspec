@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.1](https://github.com/theagenticguy/symspec/compare/v1.2.0...v1.2.1) (2026-08-29)
+
+
+### Bug Fixes
+
+* **atomize:** a scope is never empty, and never eats an article ([e0e48ea](https://github.com/theagenticguy/symspec/commit/e0e48eaa7a0903848f10ddbb330a1de3d99f89d5))
+* **atomize:** a symbolic comparator must survive normalization ([282a3b6](https://github.com/theagenticguy/symspec/commit/282a3b6562d7ebf5cc89997bde27446fd5affc2d))
+* **check:** a guard is both EARS slots, so two exclusive states are two contexts ([e035458](https://github.com/theagenticguy/symspec/commit/e0354588f9c9354039eaf8318a23f39c49ebba7a))
+* **check:** an "I don't know" is not a comparison, so it must not certify ([ffaad06](https://github.com/theagenticguy/symspec/commit/ffaad066295efec4e483ad723002420076d81953))
+* **check:** an eligibility-only finding is not a comparison, so it must not certify ([c3c5203](https://github.com/theagenticguy/symspec/commit/c3c5203d3c56f30c3331652069ca6827b2ffea68))
+* **contradiction:** a culprit set is the document's, not the solver's iteration order ([cabb8c6](https://github.com/theagenticguy/symspec/commit/cabb8c67878d92aa34c191d171e47235635fec7a))
+* **numeric:** a quantity subject is the whole phrase, not a three-word window ([33ece44](https://github.com/theagenticguy/symspec/commit/33ece44f16698fdf28462893ef4e1154d747070b))
+* **relational:** a discloser wants a COARSER key than the prover it shares one with ([6cdcc49](https://github.com/theagenticguy/symspec/commit/6cdcc493c198b9bdfd58289c793fce3b6f8c5cc2))
+* **subsumption:** a degenerate body relates two formulas, not two requirements ([8681348](https://github.com/theagenticguy/symspec/commit/8681348823aacd73b0995fdabd44dd7953d0878f))
+* three error-severity fabrications, and the gates that were missing ([b20e371](https://github.com/theagenticguy/symspec/commit/b20e37123b7f7de94d82f7449c4e5a2dd87a293f))
+
 ## [1.2.0](https://github.com/theagenticguy/symspec/compare/v1.1.0...v1.2.0) (2026-08-18)
 
 > ### Upgrade note — this release contains a correctness fix on an already-published surface

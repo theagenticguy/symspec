@@ -777,7 +777,7 @@ pre-push hook, in the same order.
 
 ## Status
 
-`1.2.0` <!-- x-release-please-version -->
+`1.2.1` <!-- x-release-please-version -->
 
 The document format is v3. `symspec import` reads a v2 op stream in one pass, so an older
 document migrates without hand-editing. The CLI is built on `effect/unstable/cli` at an exact
