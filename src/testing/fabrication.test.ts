@@ -278,6 +278,19 @@ describe('a cross-slot bridge is a fabrication surface still open', () => {
       report.findings.filter((f) => f.code === 'FND_VACUITY').map((f) => f.requirementIds),
     ).toEqual([[BRIDGE]])
   })
+
+  it('does not ALSO certify the document it fabricates on', async () => {
+    // The one thing worse than a fabricated error is a fabricated error carrying a certificate.
+    // This document is a recorded OPEN gap, so its two error findings are expected here — but
+    // `verified: true` beside them would be the tool asserting it checked everything and stands
+    // behind the conflict. Pinned because the flip is otherwise invisible: a finer guard key
+    // silently deleted the `FND_RELATIONAL_UNCHECKED` disclosure and with it the only demotion
+    // this document had, and no assertion noticed.
+    const report = await check(crossSlotBridgeDoc())
+    expect(report.counts.error, 'the recorded gap is still open').toBeGreaterThan(0)
+    expect(report.verified, 'a fabricated error must never be certified').toBe(false)
+    expect(report.coverage.demotions.length).toBeGreaterThan(0)
+  })
 })
 
 describe('the propose tier and the decide tier atomize the SAME document', () => {

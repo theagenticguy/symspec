@@ -675,6 +675,24 @@ export function toEncodable(view: ReqView): EncodableRequirement {
  *
  * `normalize` emits only `[a-z0-9_]`, so `|` cannot appear inside either half
  * and the composite can never alias one slot pair onto another.
+ *
+ * ## The two consumers group at DIFFERENT granularities, and must
+ *
+ * A finer key is not uniformly safer — the safe direction is opposite for a prover and a
+ * discloser, so one shared granularity would be wrong for one of them:
+ *
+ * - `findQuantityAliasCandidates` proposes a committed alias that makes a numeric conflict
+ *   PROVABLE, so a too-coarse key co-asserts guards no requirement declared together and
+ *   fabricates. It groups on this composite. Finer is safer.
+ * - `findRelationalUnchecked` only ever emits `info` plus a demotion, so a too-coarse key
+ *   over-discloses (harmless) while a too-FINE key deletes a disclosure — and deleting a
+ *   demotion moves `verified` toward `true`, the direction the demotion-only doctrine forbids.
+ *   It groups per SLOT rather than per slot pair, which is strictly coarser.
+ *
+ * Measured: grouping that tier on this composite dropped `FND_RELATIONAL_UNCHECKED` for a pair
+ * sharing a trigger and differing in precondition, and a document the fabrication corpus files as
+ * a known open gap then reported `verified: true` beside two error-severity findings.
+ * `relational.ts` owns the grouping and `relational.test.ts` gates it.
  */
 function guardKeyOf(r: {
   readonly preCondition?: string | undefined
@@ -1099,6 +1117,11 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
           id: r.id,
           systemName: r.systemName,
           guardKey: guardKeyOf(r),
+          // The RAW slots too: this tier groups per slot rather than per slot PAIR, because a
+          // discloser wants a coarser key than the prover it shares `guardKeyOf` with. See
+          // `relational.ts`'s grouping comment for the direction argument.
+          ...(r.preCondition !== undefined ? { preCondition: r.preCondition } : {}),
+          ...(r.trigger !== undefined ? { trigger: r.trigger } : {}),
           responseText: r.systemResponse,
           hasNumericBound: (predsById.get(r.id) ?? []).length > 0,
           hasUnmatchedAtom: singletonOwnerIds.has(r.id),
