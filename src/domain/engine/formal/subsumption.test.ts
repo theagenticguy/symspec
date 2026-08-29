@@ -24,6 +24,11 @@
  * case: a body that is not actually valid (or not actually unsatisfiable) produces the same
  * empty output as one the screen caught. So the fixture's degeneracy is measured against a raw
  * solver first, alongside the contrast that a body `encode` really emits is contingent.
+ *
+ * The inconclusive-solver block covers the branch a decidable fixture can never reach: what an
+ * `unknown` answer means. Every solve here decides in microseconds, so `unknown` is injected —
+ * and it is injected onto the pair this file already proves is a real `FND_REDUNDANCY`, so
+ * "withheld" is measured against a known-positive control rather than against silence.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -133,8 +138,9 @@ const atomsOf = (e: EncodedRequirement, kind: 'context' | 'resp'): string[] =>
     .sort()
 
 /**
- * A context that counts how many `Solver`s are constructed through it. `implies()` builds one
- * per direction, so a checked pair costs two and a pruned pair costs none.
+ * A context that counts how many `Solver`s are constructed through it. A checked pair costs SIX —
+ * two satisfiability probes per requirement for the contingency screen, then one `implies()` solve
+ * per direction — and a pruned pair costs none.
  */
 function countingSolvers(ctx: Z3Context): { ctx: Z3Context; solvers: () => number } {
   let count = 0
@@ -145,6 +151,51 @@ function countingSolvers(ctx: Z3Context): { ctx: Z3Context; solvers: () => numbe
     },
   })
   return { ctx: spy, solvers: () => count }
+}
+
+/**
+ * A context whose `check()` answers `unknown` on the 1-based call indices `isUnknown` selects and
+ * delegates every other call to the real solver.
+ *
+ * `unknown` is what a solver returns when `bounds.timeoutMs` cuts it off (AC-1-7), and it is the
+ * only answer on which the two reads in `subsumption.ts` differ from a read that fails OPEN:
+ * `satisfiable`'s `=== 'sat'` and `implies`'s `=== 'unsat'` both say "not proven", where `!==` of
+ * the opposite verdict would say "assume it". Every fixture here decides in microseconds and none
+ * passes a `timeoutMs`, so injection is the only way to reach those branches at all.
+ *
+ * Indices count `check()` calls across every solver the context builds, which is what lets one
+ * case cut off the contingency probes (1-4) while another cuts off the implication solves (5-6).
+ */
+function unknownOnChecks(
+  ctx: Z3Context,
+  isUnknown: (nth: number) => boolean,
+): { ctx: Z3Context; checks: () => number } {
+  let checks = 0
+  const Solver = ctx.Solver
+  const build = () => {
+    const solver = new Solver()
+    return new Proxy(solver, {
+      get(target, prop) {
+        if (prop === 'check') {
+          return async () => {
+            checks += 1
+            return isUnknown(checks) ? 'unknown' : await target.check()
+          }
+        }
+        const value = Reflect.get(target, prop)
+        // Bound to the real solver, so a forwarded `add`/`set` reaches the WASM pointer on the
+        // target rather than resolving `this._ptr` through this handler.
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+  }
+  const StubSolver = new Proxy(Solver, { construct: () => build() })
+  const spy = new Proxy(ctx, {
+    get(target, prop) {
+      return prop === 'Solver' ? StubSolver : Reflect.get(target, prop)
+    },
+  })
+  return { ctx: spy, checks: () => checks }
 }
 
 const pair = (a: string, b: string) =>
@@ -377,5 +428,51 @@ describe('a degenerate body', () => {
       pruned: 1,
     })
     expect(solvers()).toBe(0)
+  })
+})
+
+describe('an inconclusive solver', () => {
+  /**
+   * Every case below runs the pair the `FND_REDUNDANCY` case above pins as a PROVEN finding, so
+   * the withheld verdict is measured against a known-positive control: the only difference is
+   * which solve came back `unknown`. Fail-closed is the whole soundness content of a `timeoutMs`
+   * — a bound that flipped a verdict to "assume it" would turn a deadline into a fabricated
+   * finding, and this pair's finding names a counterparty for the author to delete.
+   */
+  it('answers `unknown` while the injection is live and the real verdict once it lapses', async () => {
+    // The premise the two withholding cases rest on, in both directions. Without the second
+    // assertion, a green "no finding" case could be green because the stub broke the solver
+    // outright — and the implication case below needs the real answers for probes 1-4.
+    const { ctx, checks } = unknownOnChecks(
+      await getContext('symspec-subsumption-unknown-premise'),
+      (n) => n <= 1,
+    )
+    expect(await solve(ctx, broad.body), 'cut off').toBe('unknown')
+    expect(await solve(ctx, broad.body), 'the same body, decided').toBe('sat')
+    expect(checks()).toBe(2)
+  })
+
+  it('withholds the proven FND_REDUNDANCY when a contingency probe is cut off', async () => {
+    // `satisfiable`'s fail-closed read. An `unknown` first probe makes `contingent` false, which
+    // disqualifies the pair — so the tell is that the run STOPS at one solve instead of buying
+    // two implications with an unproven premise.
+    const { ctx, checks } = unknownOnChecks(
+      await getContext('symspec-subsumption-unknown-contingency'),
+      (n) => n <= 4,
+    )
+    expect(await checkSubsumptionPair(ctx, broad, twin)).toBeUndefined()
+    expect(checks(), 'the `&&` in `contingent` short-circuits on the first probe').toBe(1)
+  })
+
+  it('withholds the proven FND_REDUNDANCY when an implication solve is cut off', async () => {
+    // `implies`'s fail-closed read, reached with contingency genuinely established: probes 1-4 get
+    // the real solver, so both bodies are proven contingent and only the two implications come
+    // back `unknown`. The count is what proves those two solves happened at all.
+    const { ctx, checks } = unknownOnChecks(
+      await getContext('symspec-subsumption-unknown-implication'),
+      (n) => n > 4,
+    )
+    expect(await checkSubsumptionPair(ctx, broad, twin)).toBeUndefined()
+    expect(checks(), 'four contingency probes decided, then two implications cut off').toBe(6)
   })
 })

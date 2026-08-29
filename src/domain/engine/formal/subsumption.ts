@@ -89,9 +89,10 @@ export type SubsumptionResult = SubsumptionFinding | RedundancyFinding
  *
  * `timeoutMs` bounds this single `check()` via `solver.set('timeout', …)`
  * (AC-1-7), the same idiom `contradiction.ts` uses. A solver that hits the
- * timeout returns `unknown`, which falls into the existing `!== 'unsat'`
- * conservative branch — so a per-solver timeout can only WITHHOLD a finding,
- * never manufacture one.
+ * timeout returns `unknown`, which `=== 'unsat'` reads as `false` — so a
+ * per-solver timeout can only WITHHOLD a finding, never manufacture one. Every
+ * fixture in the suite decides in microseconds, so `subsumption.test.ts` injects
+ * an `unknown` to gate that read rather than waiting for a hard problem.
  */
 async function implies(
   ctx: Z3Context,
@@ -113,7 +114,9 @@ async function implies(
  *
  * `unsat` and `unknown` both answer `false`, so a timed-out probe reads as "not
  * known to be satisfiable". Every caller uses this to DISQUALIFY a pair, so
- * failing closed here withholds a finding rather than admitting one.
+ * failing closed here withholds a finding rather than admitting one — gated in
+ * `subsumption.test.ts` by injecting an `unknown` into the contingency probes of
+ * a pair the same file proves is a real `FND_REDUNDANCY`.
  */
 async function satisfiable(ctx: Z3Context, f: Formula, timeoutMs?: number): Promise<boolean> {
   const solver = new ctx.Solver()
