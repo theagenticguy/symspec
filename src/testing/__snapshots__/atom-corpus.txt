@@ -91,6 +91,10 @@ fabrication/compound-guard-shared-threshold	pre	sys__gateway__pre__request_laten
 fabrication/compound-guard-shared-threshold	pre	sys__gateway__pre__request_latency_at_least_30_ms_and_the_cache_is_warm	<- the request latency is >= 30 ms and the cache is warm
 fabrication/compound-guard-shared-threshold	resp	sys__gateway__resp__disable_the_response_cache	<- disable the response cache
 fabrication/compound-guard-shared-threshold	resp	sys__gateway__resp__disable_the_response_cache [NEG]	<- enable the response cache
+fabrication/disjoint-temperature-guards	pre	sys__vent_controller__pre__temperature_above_5_degrees_celsius	<- the temperature is above 5 degrees celsius
+fabrication/disjoint-temperature-guards	pre	sys__vent_controller__pre__temperature_below_3_degrees_celsius	<- the temperature is below 3 degrees celsius
+fabrication/disjoint-temperature-guards	resp	sys__vent_controller__resp__close_the_vent	<- close the vent
+fabrication/disjoint-temperature-guards	resp	sys__vent_controller__resp__close_the_vent [NEG]	<- open the vent
 fabrication/distinct-agents-same-report	resp	sys__alarm_service__resp__lower_the_siren	<- raise the siren
 fabrication/distinct-agents-same-report	resp	sys__alarm_service__resp__lower_the_siren [NEG]	<- raise the siren
 fabrication/distinct-agents-same-report	trig	sys__alarm_service__trig__operator_reports_a_fault	<- the operator reports a fault

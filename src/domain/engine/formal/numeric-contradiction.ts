@@ -1,20 +1,44 @@
 /**
  * Numeric contradiction detection (AC-30-3).
  *
- * Consumes the per-slot numeric predicates (AC-30-2), groups them by canonical
- * per-system quantity, and asks Z3 whether the conjunction of every requirement's
- * predicate on that quantity is jointly satisfiable. On `unsat`, the minimal
- * unsat core names exactly the culprit requirement ids — the same
- * assumption-literal-guard technique the propositional contradiction check uses
- * (`contradiction.ts`), so the two tiers report conflicts identically.
+ * Consumes the per-slot numeric predicates (AC-30-2), sorts them into
+ * (reachable context, canonical per-system quantity, base unit) cells, and asks Z3
+ * whether the conjunction of every CO-LIVE requirement's predicate in a cell is
+ * jointly satisfiable. On `unsat`, the minimal unsat core names exactly the
+ * culprit requirement ids — the same assumption-literal-guard technique the
+ * propositional contradiction check uses (`contradiction.ts`), so the two tiers
+ * report conflicts identically.
  *
  * ## Why per-quantity grouping
  *
  * Two predicates only conflict if they constrain the SAME quantity. "latency ≤
  * 200" and "retries ≤ 3" are independently satisfiable; grouping by quantity
- * before the solver call keeps each check tiny and the core precise. A quantity
- * with a single predicate can never self-conflict, so groups of size < 2 are
- * skipped without a solver call.
+ * before the solver call keeps each check tiny and the core precise.
+ *
+ * ## Why the sweep is (context group) × (quantity, baseUnit)
+ *
+ * A requirement's bound holds where its GUARD holds. Asserting every
+ * requirement's bounds on one quantity as simultaneous facts is the "assert all
+ * triggers true at once" pattern `contradiction.ts` names unacceptable in its own
+ * header, and it fabricated an error-severity FND_NUMERIC_CONTRADICTION: `While
+ * the temperature is above 5 degrees celsius, open the vent` and `While the
+ * temperature is below 3 degrees celsius, close the vent` are two mutually
+ * exclusive antecedents, and handing Z3 `temp > 5 ∧ temp < 3` proves a conflict
+ * the document does not contain.
+ *
+ * So the sweep runs per CONTEXT GROUP — the same distinct-guard-atom-set partition
+ * `planContextGroups` builds for the propositional tier, planned by the same
+ * `planGroups` over this tier's own per-requirement contexts — and within a group
+ * only the requirements that are `liveIn` it contribute. Two disjoint guards
+ * produce two groups, each hosting one requirement, and a cell with fewer than two
+ * distinct requirement ids never reaches the solver.
+ *
+ * DIRECTION: this SPLITS. The co-liveness relation becomes strictly finer, and a
+ * finer partition can only remove co-assertions, so it can only remove findings —
+ * never invent one. A ubiquitous requirement has an empty guard, `[] ⊆ anything`,
+ * so it stays live in every group; an all-unconditional document therefore has the
+ * one baseline group and exactly one cell per (quantity, baseUnit), which is what
+ * the tier did before the partition existed.
  *
  * ## Why the group is (quantity, baseUnit) and NOT quantity alone
  *
@@ -60,6 +84,7 @@
 
 import type { Z3Context } from './backend.ts'
 import type { SolverBounds } from './budget.ts'
+import { liveIn, planGroups } from './contradiction.ts'
 import { cmp, materialize } from './encode.ts'
 import type { Evidence } from './finding.ts'
 import type { NumericPredicate } from './numeric.ts'
@@ -78,6 +103,16 @@ export interface NumericContradictionFinding {
 /** One requirement's numeric predicates, tagged with the owning requirement id. */
 export interface RequirementPredicates {
   readonly id: string
+  /**
+   * The requirement's GUARD atoms — the context its predicates hold under, in the
+   * same projection `contradiction.ts`'s `contextAtomsOf` returns.
+   *
+   * Required, with no default: `[]` reads as "unconditional, therefore live in
+   * every context group", which is the COARSEST possible reading and the one that
+   * co-asserts bounds no requirement placed together. A caller that cannot supply
+   * the context has to say so by writing `[]`.
+   */
+  readonly contextAtoms: readonly string[]
   readonly predicates: readonly NumericPredicate[]
 }
 
@@ -97,59 +132,120 @@ function comparisonKey(pred: NumericPredicate): string {
   return `${pred.quantity}|${pred.baseUnit}`
 }
 
+/** One (context group, quantity, base unit) cell: the bounds that genuinely co-hold. */
+interface ComparisonCell {
+  /** The {@link comparisonKey} this cell is the arithmetic partition of. */
+  readonly key: string
+  /** The bare quantity key, for the evidence block. */
+  readonly quantity: string
+  /** The human quantity label, for the evidence block and the message. */
+  readonly label: string
+  /** The live requirements' predicates, in document order (the evidence order). */
+  readonly entries: ReadonlyArray<{ id: string; pred: NumericPredicate }>
+  /** The distinct requirement ids contributing to the cell — always ≥2. */
+  readonly distinctIds: ReadonlySet<string>
+}
+
+/**
+ * Plan every cell the solver will be asked about: one per
+ * (context group × quantity × base unit) that ≥2 co-live requirements constrain.
+ *
+ * Pure and solver-free, so the partition is unit testable without a WASM boot, and
+ * so the whole-run budget can be told exactly how many cells went unrun.
+ *
+ * Two groups can host the SAME set of live requirements for a quantity — a
+ * ubiquitous pair is live in every group — and re-checking that cell would spend a
+ * solver call to emit a duplicate finding. Cells are therefore keyed on
+ * (comparison key, live id set), which is exactly the input the solver call is a
+ * function of. `entries` is built by walking `reqPreds` in order, so the retained
+ * cell's evidence is in document order regardless of which group reached it first.
+ */
+function planComparisonCells(reqPreds: readonly RequirementPredicates[]): ComparisonCell[] {
+  const cells: ComparisonCell[] = []
+  const seen = new Set<string>()
+  for (const group of planGroups(reqPreds.map((rp) => rp.contextAtoms))) {
+    // (quantity, baseUnit) → the live bounds on it, preserving a human label and
+    // the bare quantity key for the evidence block.
+    const byQuantity = new Map<
+      string,
+      {
+        quantity: string
+        label: string
+        entries: Array<{ id: string; pred: NumericPredicate }>
+      }
+    >()
+    for (const rp of reqPreds) {
+      // A requirement whose guard is not fully asserted in this group is not live
+      // here, and its bounds are not facts here. This is the whole fabrication
+      // fence: two mutually exclusive guards never share a group.
+      if (!liveIn(group, rp.contextAtoms)) continue
+      for (const pred of rp.predicates) {
+        const key = comparisonKey(pred)
+        let g = byQuantity.get(key)
+        if (g === undefined) {
+          g = { quantity: pred.quantity, label: pred.label, entries: [] }
+          byQuantity.set(key, g)
+        }
+        g.entries.push({ id: rp.id, pred })
+      }
+    }
+    for (const [key, g] of byQuantity) {
+      const distinctIds = new Set(g.entries.map((e) => e.id))
+      // A cell with one contributing requirement is skipped because the FINDING
+      // SHAPE has nowhere to put it, not because it cannot conflict: one
+      // requirement can carry two opposed bounds on one key (`While the
+      // temperature is above 5 degrees celsius, keep the temperature below 3
+      // degrees celsius`), and that is genuinely unsatisfiable. `requirementIds`
+      // is an unsat core naming the ≥2 requirements whose claims cannot co-hold,
+      // and `minimizeNumericCore` never returns fewer than two ids, so a single-id
+      // conflict has no shape to be reported in. OPEN GAP: that self-conflict goes
+      // unreported — a MISS, the honest direction — and closing it needs a
+      // finding code for a requirement inconsistent with itself, not a wider cell.
+      if (distinctIds.size < 2) continue
+      const cellKey = JSON.stringify([key, [...distinctIds].sort()])
+      if (seen.has(cellKey)) continue
+      seen.add(cellKey)
+      cells.push({ key, quantity: g.quantity, label: g.label, entries: g.entries, distinctIds })
+    }
+  }
+  return cells
+}
+
 /**
  * Find numeric contradictions across a set of requirements' predicates.
  *
- * For each (quantity, base unit) referenced by ≥2 requirements, assert every
- * contributing requirement's predicate under its own guard literal and `check`.
- * On `unsat`, emit a finding naming the core's requirement ids. Bounds on one
- * quantity that normalized to DIFFERENT base units (including unitless vs
- * united) land in different groups and are never compared — see the module
- * header for why that is the only sound choice in a verdict-eligible tier.
+ * For each (context group, quantity, base unit) cell constrained by ≥2 co-live
+ * requirements, assert every contributing requirement's predicate under its own
+ * guard literal and `check`. On `unsat`, emit a finding naming the core's
+ * requirement ids. Bounds on one quantity that normalized to DIFFERENT base units
+ * (including unitless vs united) land in different cells and are never compared —
+ * see the module header for why that, and the context partition, are the only sound
+ * choices in a verdict-eligible tier.
  */
 export async function findNumericContradictions(
   ctx: Z3Context,
   reqPreds: readonly RequirementPredicates[],
   bounds: SolverBounds = {},
 ): Promise<NumericContradictionFinding[]> {
-  // Group ((quantity, baseUnit) → list of {id, predicate}), preserving a human
-  // label and the bare quantity key for the evidence block.
-  const byQuantity = new Map<
-    string,
-    {
-      quantity: string
-      label: string
-      entries: Array<{ id: string; pred: NumericPredicate }>
-    }
-  >()
-  for (const rp of reqPreds) {
-    for (const pred of rp.predicates) {
-      const key = comparisonKey(pred)
-      let g = byQuantity.get(key)
-      if (g === undefined) {
-        g = { quantity: pred.quantity, label: pred.label, entries: [] }
-        byQuantity.set(key, g)
-      }
-      g.entries.push({ id: rp.id, pred })
-    }
-  }
+  const cells = planComparisonCells(reqPreds)
+  // Keyed by (comparison key, culprit ids), because two cells can reach the same
+  // conflict: a nested pair of context groups hosts overlapping live sets, and a
+  // ubiquitous pair is live in every group, so the same core is provable more than
+  // once. One conflict is one finding — the same `unique.join(',')` de-duplication
+  // `findContradictions` applies across its own group loop.
+  const findings = new Map<string, NumericContradictionFinding>()
 
-  const findings: NumericContradictionFinding[] = []
-
-  let checkedGroups = 0
-  for (const { quantity, label, entries } of byQuantity.values()) {
+  let checkedCells = 0
+  for (const { key, quantity, label, entries, distinctIds } of cells) {
     // AC-1-7 check-before-work: consult the whole-run deadline before starting a
-    // group, never mid-group, so a group is either fully decided or not started.
+    // cell, never mid-cell, so a cell is either fully decided or not started.
     // A truncated sweep is a strict prefix, so it can only MISS a numeric
     // conflict — never invent one — and the pipeline demotes `verified` for it.
     if (bounds.budget?.expired() === true) {
-      bounds.budget.truncate('numeric-contradiction', byQuantity.size - checkedGroups)
+      bounds.budget.truncate('numeric-contradiction', cells.length - checkedCells)
       break
     }
-    checkedGroups += 1
-    // A quantity constrained by fewer than two requirements cannot self-conflict.
-    const distinctIds = new Set(entries.map((e) => e.id))
-    if (distinctIds.size < 2) continue
+    checkedCells += 1
 
     // The solver-facing sequence is id-sorted, never document-ordered: a quantity
     // can admit more than one minimal unsat core (`lag >= 100` conflicts with
@@ -191,13 +287,17 @@ export async function findNumericContradictions(
     const minimal = await minimizeNumericCore(ctx, solverEntries, coreIds, bounds)
     const culprits = minimal.length > 0 ? minimal : [...distinctIds]
 
+    const blamed = [...culprits].sort()
+    const findingKey = JSON.stringify([key, blamed])
+    if (findings.has(findingKey)) continue
+
     const contributing = entries.filter((e) => culprits.includes(e.id))
-    findings.push({
+    findings.set(findingKey, {
       code: 'FND_NUMERIC_CONTRADICTION',
       severity: 'error',
-      requirementIds: [...culprits].sort(),
+      requirementIds: blamed,
       message:
-        `Requirements ${[...culprits].sort().join(', ')} place jointly unsatisfiable numeric ` +
+        `Requirements ${blamed.join(', ')} place jointly unsatisfiable numeric ` +
         `constraints on "${label}".`,
       evidence: {
         atomTable: [],
@@ -209,6 +309,7 @@ export async function findNumericContradictions(
             comparator: e.pred.comparator,
             value: e.pred.value,
             unit: e.pred.baseUnit,
+            slot: e.pred.slot,
             sourceText: e.pred.sourceText,
           })),
         },
@@ -216,7 +317,7 @@ export async function findNumericContradictions(
     })
   }
 
-  return findings
+  return [...findings.values()]
 }
 
 /**

@@ -28,7 +28,7 @@ import { solverServiceLayer } from '../adapters/z3/solver-service.ts'
 import { type CheckPayload, checkOp } from '../app/operations/check.ts'
 import { runOperation } from '../app/runtime/operation.ts'
 import { toEngineDoc } from '../domain/compat.ts'
-import { planContextGroups } from '../domain/engine/formal/contradiction.ts'
+import { contextAtomsOf, liveIn, planContextGroups } from '../domain/engine/formal/contradiction.ts'
 import type { Embedder } from '../domain/engine/formal/embed.ts'
 import { encodeIncluded } from '../domain/engine/pipeline/check.ts'
 import { buildGlossaryPlan } from '../domain/glossary/glossary-plan.ts'
@@ -104,17 +104,23 @@ const applyOps = (document: RequirementsDocument, ops: readonly DocumentOp[]) =>
   return folded.document
 }
 
-/** Every requirement id, grouped by the context-group key its guard atoms produce. */
+/**
+ * Every GUARDED requirement id, grouped by the context-group key its guard atoms produce.
+ *
+ * Liveness is `contradiction.ts`'s own {@link liveIn}, so this helper cannot answer the
+ * co-liveness question differently from the tier it is making a claim about. The extra
+ * non-empty-guard clause is this helper's own: every fixture below is safe because two GUARDS
+ * are distinct, and an unconditional requirement is live in every group by definition, so
+ * counting one would put a member in every row and say nothing about the guards.
+ */
 const groupsByKey = (document: RequirementsDocument): Map<string, string[]> => {
   const encoded = encodeIncluded(toEngineDoc(document))
   const byKey = new Map<string, string[]>()
   for (const group of planContextGroups(encoded)) {
     const live = encoded
       .filter((e) => {
-        const context = new Set(
-          e.atoms.filter((a) => a.kind === 'trig' || a.kind === 'pre').map((a) => a.atom),
-        )
-        return context.size > 0 && [...context].every((a) => group.contextAtoms.includes(a))
+        const context = contextAtomsOf(e)
+        return context.length > 0 && liveIn(group, context)
       })
       .map((e) => e.id)
       .sort()
@@ -309,6 +315,7 @@ describe('what a GUARD merge would cost, without booting the solver', () => {
     'distinct-agents-same-report',
     'compound-guard-shared-threshold',
     'symbolic-threshold-split',
+    'disjoint-temperature-guards',
   ]
 
   const guardOf = (r: { trigger?: string; preCondition?: string }): string => {

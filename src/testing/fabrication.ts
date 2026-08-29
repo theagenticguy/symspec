@@ -467,6 +467,53 @@ export const fabricationCases = (): readonly FabricationCase[] => [
     expectsEmptyPlan: false,
   },
   {
+    /**
+     * FABRICATION C, the regression fixture — reproduced on the built CLI before the fix.
+     *
+     * The numeric tier reads bounds out of the GUARD slots too, and then asserted every
+     * requirement's bounds as simultaneous facts on one Real variable. Two mutually exclusive
+     * antecedents — `temp > 5` and `temp < 3` — went to Z3 together, `error
+     * FND_NUMERIC_CONTRADICTION` named both requirements, and the document says only that the
+     * vent opens when it is warm and closes when it is cold.
+     *
+     * This is `contradiction.ts`'s own "assert ALL triggers true at once manufactures spurious
+     * conflicts between mutually exclusive triggers" defect, in the tier that had no context
+     * partition of its own. The guards are distinct, so each lands in its own context group and
+     * hosts exactly one requirement.
+     *
+     * It is the ARITHMETIC twin of `symbolic-threshold-split`: the responses here also resolve to
+     * one atom at opposite polarity (`open`/`close` are seed antonyms), so aligning the two guards
+     * would fabricate a propositional conflict as well — which is why it joins the guard cases.
+     */
+    id: 'disjoint-temperature-guards',
+    why:
+      'A vent that opens when it is warmer than 5 degrees and closes when it is colder than 3. ' +
+      'Those two temperatures cannot both hold, so the two bounds on "temperature" are never ' +
+      'facts at the same time, and the document is consistent. Any tier that asserts both ' +
+      'antecedents on one Real variable proves a conflict the document does not contain.',
+    doc: docOf([
+      stateReqIn(
+        'vent controller',
+        13,
+        'the temperature is above 5 degrees celsius',
+        'open the vent',
+      ),
+      stateReqIn(
+        'vent controller',
+        14,
+        'the temperature is below 3 degrees celsius',
+        'close the vent',
+      ),
+    ]),
+    table: {
+      'open the vent': [1, 0.02],
+      'close the vent': [1, 0.03],
+      'the temperature is above 5 degrees celsius': [1, 0.02],
+      'the temperature is below 3 degrees celsius': [1, 0.03],
+    },
+    expectsEmptyPlan: true,
+  },
+  {
     id: 'distinct-agents-same-report',
     why:
       'A sensor reporting a fault and an operator reporting a fault are different events. ' +

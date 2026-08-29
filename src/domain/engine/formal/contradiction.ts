@@ -136,28 +136,75 @@ export interface ContextGroup {
 }
 
 /**
- * Plan the context groups for a set of encoded requirements. Pure and
- * deterministic — no solver contact — so the grouping discipline is unit
- * testable on its own (mutually exclusive triggers land in DISTINCT groups; the
- * baseline empty group is always present).
+ * THE group key for one requirement's context atoms — sorted, deduplicated,
+ * {@link GROUP_KEY_SEP}-joined.
+ *
+ * Exported because a consumer that recovers a group's MEMBERS has to rebuild
+ * this key per requirement and compare it to {@link ContextGroup.key}, and the
+ * separator is the one byte the two sides must agree on. A second copy joining
+ * on a different string matches only single-atom contexts: every group of ≥2
+ * atoms silently finds no members, and a tier that names its members reports
+ * nothing at all for exactly the groups where two slots meet.
+ */
+export function contextGroupKey(contextAtoms: readonly string[]): string {
+  return [...new Set(contextAtoms)].sort().join(GROUP_KEY_SEP)
+}
+
+/**
+ * Whether a requirement whose guard atoms are `contextAtoms` is LIVE in `group`
+ * — i.e. every one of its guard atoms is asserted there, so its obligation holds
+ * wherever the group's context holds.
+ *
+ * THE definition of co-liveness, so no tier can hold a second one. It is the
+ * condition {@link findContradictions} creates physically by `add()`ing a
+ * group's context atoms: a requirement whose guard is a subset participates,
+ * one carrying an unasserted guard atom does not.
+ *
+ * A UBIQUITOUS requirement (`contextAtoms` empty) is live in EVERY group,
+ * `[] ⊆ anything`, which is correct — an unconditional obligation holds under
+ * every context — and is why an all-ubiquitous document has exactly the one
+ * baseline group and every requirement in it. A tier that additionally requires
+ * a NON-EMPTY guard is asking a different question (which GUARDED pairs met) and
+ * says so at its call site.
+ */
+export function liveIn(group: ContextGroup, contextAtoms: readonly string[]): boolean {
+  return contextAtoms.every((a) => group.contextAtoms.includes(a))
+}
+
+/**
+ * Plan the context groups over raw context-atom sets. Pure and deterministic —
+ * no solver contact — so the grouping discipline is unit testable on its own
+ * (mutually exclusive triggers land in DISTINCT groups; the baseline empty group
+ * is always present).
  *
  * Groups are the DISTINCT context-atom sets across the spec, plus one baseline
  * empty-context group. Two requirements sharing a trigger unify into one group
  * (their conflict becomes reachable); two requirements with different triggers
  * stay in separate groups (each group asserts only its own trigger, so mutually
  * exclusive triggers are never asserted together and cannot fake a conflict).
+ *
+ * Takes the atom sets rather than {@link EncodedRequirement}s so a tier that
+ * carries its own per-requirement context — the numeric tier, whose population is
+ * every requirement rather than the propositional gate's included subset — plans
+ * the SAME groups through the same code instead of a second implementation of the
+ * rule that decides.
  */
-export function planContextGroups(encoded: readonly EncodedRequirement[]): ContextGroup[] {
+export function planGroups(contexts: readonly (readonly string[])[]): ContextGroup[] {
   // Baseline empty-context group is always first, so unconditional (ubiquitous
   // vs ubiquitous) conflicts are checked even for an all-ubiquitous spec.
   const groups = new Map<string, string[]>()
   groups.set('', [])
-  for (const enc of encoded) {
-    const uniq = [...new Set(contextAtomsOf(enc))].sort()
+  for (const context of contexts) {
+    const uniq = [...new Set(context)].sort()
     if (uniq.length === 0) continue
-    groups.set(uniq.join(GROUP_KEY_SEP), uniq)
+    groups.set(contextGroupKey(uniq), uniq)
   }
   return [...groups].map(([key, contextAtoms]) => ({ key, contextAtoms }))
+}
+
+/** {@link planGroups} over the context atoms of an encoded requirement set. */
+export function planContextGroups(encoded: readonly EncodedRequirement[]): ContextGroup[] {
+  return planGroups(encoded.map(contextAtomsOf))
 }
 
 /** Options for {@link findContradictions}. */

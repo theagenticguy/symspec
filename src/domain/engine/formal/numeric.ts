@@ -27,8 +27,21 @@
  * a fabricated constraint.
  */
 
-import { normalize } from './atomize.ts'
+import { type AtomKind, normalize } from './atomize.ts'
 import type { NumericComparator } from './encode.ts'
+
+/**
+ * The EARS slot a numeric predicate was read out of, in the atomizer's own
+ * vocabulary ({@link AtomKind}) narrowed to the three slots this tier reads.
+ *
+ * A bound in a GUARD slot (`trig`/`pre`) and a bound in a RESPONSE slot are
+ * different claims about the same quantity: the first is part of the antecedent
+ * that decides where the requirement is live, the second is the obligation it
+ * imposes there. `numeric-contradiction.ts` reports which one it compared, so an
+ * author reading an unsat core can tell an obligation from a precondition without
+ * re-reading the sentence.
+ */
+export type PredicateSlot = Extract<AtomKind, 'resp' | 'trig' | 'pre'>
 
 /** A numeric predicate extracted from one slot, normalized to a base unit. */
 export interface NumericPredicate {
@@ -41,6 +54,8 @@ export interface NumericPredicate {
   readonly value: number
   /** The canonical base unit the value was normalized to (`''` if unitless). */
   readonly baseUnit: string
+  /** Which EARS slot the bound was read out of — guard role vs response role. */
+  readonly slot: PredicateSlot
   /** The original slot substring the predicate came from (evidence). */
   readonly sourceText: string
 }
@@ -265,8 +280,14 @@ function labelBefore(text: string, comparatorStart: number): string | null {
 }
 
 /**
- * Extract every numeric predicate in one slot text, scoped to `systemName`.
- * Returns `[]` when no numeric predicate is present. Deterministic.
+ * Extract every numeric predicate in one slot text, scoped to `systemName` and
+ * stamped with the slot it came from. Returns `[]` when no numeric predicate is
+ * present. Deterministic.
+ *
+ * `slot` is required rather than defaulted: the caller is the only party that
+ * knows which EARS slot it handed over, and a default would let a guard-sourced
+ * bound arrive labelled as a response — a claim about the document that the
+ * evidence block then prints.
  *
  * `quantityAliases` (#3): an optional NORMALIZED label → canonical-label map
  * (built from the committed glossary, same shape as the atom glossary index) so
@@ -276,6 +297,7 @@ function labelBefore(text: string, comparatorStart: number): string | null {
 export function extractNumericPredicates(
   text: string,
   systemName: string,
+  slot: PredicateSlot,
   quantityAliases?: ReadonlyMap<string, string>,
 ): NumericPredicate[] {
   const out: NumericPredicate[] = []
@@ -330,6 +352,7 @@ export function extractNumericPredicates(
         comparator,
         value,
         baseUnit,
+        slot,
         sourceText: text.slice(idx, idx + phrase.length + (m[0]?.length ?? 0)).trim(),
       })
     }
@@ -338,12 +361,25 @@ export function extractNumericPredicates(
   return dedupe(out)
 }
 
-/** Drop exact-duplicate predicates (same quantity+comparator+value+unit). */
+/**
+ * Drop exact-duplicate predicates.
+ *
+ * The key names every field of the record that carries a claim — slot, quantity,
+ * comparator, value, base unit — so two predicates that differ anywhere both
+ * survive. `sourceText` is excluded deliberately: it is the audit substring, and
+ * two spellings of one bound in one slot are one claim.
+ *
+ * The `slot` component cannot change the outcome for any caller
+ * {@link extractNumericPredicates} has, because each call carries one slot and so
+ * every predicate it produces shares it. It is in the key because the key is the
+ * record's identity, and a key over a proper subset of the fields is a merge
+ * waiting for the first caller that folds two slots together.
+ */
 function dedupe(preds: NumericPredicate[]): NumericPredicate[] {
   const seen = new Set<string>()
   const out: NumericPredicate[] = []
   for (const p of preds) {
-    const key = `${p.quantity}|${p.comparator}|${p.value}|${p.baseUnit}`
+    const key = `${p.slot}|${p.quantity}|${p.comparator}|${p.value}|${p.baseUnit}`
     if (seen.has(key)) continue
     seen.add(key)
     out.push(p)

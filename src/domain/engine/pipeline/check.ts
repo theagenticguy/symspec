@@ -83,7 +83,7 @@ import { glossaryIndex, makeAtomize, normalize, termIndex } from '../formal/atom
 import { getContext } from '../formal/backend.ts'
 import { type SolverBounds, SolverBudget } from '../formal/budget.ts'
 import { type FndCode, structuralKindToFndCode } from '../formal/codes.ts'
-import { findContradictions } from '../formal/contradiction.ts'
+import { contextAtomsOf, findContradictions } from '../formal/contradiction.ts'
 import {
   excludedFromFormalFinding,
   noPairsCheckedFinding,
@@ -953,7 +953,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       // So the pipeline treats a mid-loop budget death the same way it treats
       // every other tier's truncation: record it and demote. The throw itself is
       // preserved (its contract is directly tested in
-      // `formal/__tests__/needs-review.test.ts`) and remains the behavior for a
+      // `formal/needs-review.test.ts`) and remains the behavior for a
       // direct library caller of `findNeedsReview`; only the PIPELINE, which has
       // a report to return and a demotion channel to return it through, absorbs
       // it. `verified` is false either way, so this trades no soundness.
@@ -998,16 +998,26 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       // an in-flight transfer. That is the defect
       // `.erpaval/solutions/architecture/normalization-for-a-propose-signal-must-not-touch-the-decide-key.md`
       // records, and it must not arrive through a new door.
+      //
+      // Each input also carries the requirement's CONTEXT — its guard atoms, in the
+      // projection `contextAtomsOf` returns — so the tier sweeps per reachable
+      // context instead of asserting every requirement's bounds as simultaneous
+      // facts. Derived here rather than read off `encodedById` because this tier's
+      // population is `reqs`, not the AC-3-7 gate's included subset, and a
+      // gate-excluded requirement with no context would read as unconditional and
+      // co-assert its bounds with everything. `encode` is pure and Z3-free, so the
+      // extra encodings cost no solver time.
       const quantityAliases = glossaryIndex(doc.glossary)
       const numericReqPreds = reqs.map((r) => ({
         id: r.id,
+        contextAtoms: contextAtomsOf(encode(toEncodable(r), atomize)),
         predicates: [
-          ...extractNumericPredicates(r.systemResponse, r.systemName, quantityAliases),
+          ...extractNumericPredicates(r.systemResponse, r.systemName, 'resp', quantityAliases),
           ...(r.trigger !== undefined
-            ? extractNumericPredicates(r.trigger, r.systemName, quantityAliases)
+            ? extractNumericPredicates(r.trigger, r.systemName, 'trig', quantityAliases)
             : []),
           ...(r.preCondition !== undefined
-            ? extractNumericPredicates(r.preCondition, r.systemName, quantityAliases)
+            ? extractNumericPredicates(r.preCondition, r.systemName, 'pre', quantityAliases)
             : []),
         ],
       }))

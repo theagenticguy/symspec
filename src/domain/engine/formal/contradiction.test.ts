@@ -168,7 +168,7 @@ describe('minimizeCore over a group with two minimal unsat cores', () => {
   }
 })
 
-/** A bound on one shared quantity in one shared base unit, owned by `id`. */
+/** A response-slot bound on one shared quantity in one shared base unit, owned by `id`. */
 function bound(comparator: NumericPredicate['comparator'], value: number): NumericPredicate {
   return {
     quantity: 'sys__probe__qty__replication_lag',
@@ -176,6 +176,7 @@ function bound(comparator: NumericPredicate['comparator'], value: number): Numer
     comparator,
     value,
     baseUnit: 'ms',
+    slot: 'resp',
     sourceText: `${comparator} ${value} ms`,
   }
 }
@@ -229,12 +230,19 @@ describe('minimizeNumericCore over a quantity with two minimal unsat cores', () 
   })
 })
 
-/** The three numeric requirements of the two-minimal-core shape, by id. */
+/**
+ * The three numeric requirements of the two-minimal-core shape, by id.
+ *
+ * All three are unconditional (`contextAtoms: []`), so all three are live in the one
+ * baseline context group and the cell that admits two minimal cores exists. A guard on
+ * any of them would split them into separate groups, which is the property
+ * `disjoint-temperature-guards` covers and this fixture must not depend on.
+ */
 const NUMERIC_TRIO: readonly [RequirementPredicates, RequirementPredicates, RequirementPredicates] =
   [
-    { id: 'req-a', predicates: [bound('>=', 100)] },
-    { id: 'req-b', predicates: [bound('<=', 10)] },
-    { id: 'req-c', predicates: [bound('<=', 20)] },
+    { id: 'req-a', contextAtoms: [], predicates: [bound('>=', 100)] },
+    { id: 'req-b', contextAtoms: [], predicates: [bound('<=', 10)] },
+    { id: 'req-c', contextAtoms: [], predicates: [bound('<=', 20)] },
   ]
 
 /**
