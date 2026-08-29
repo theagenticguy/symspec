@@ -17,7 +17,15 @@
 
 import { describe, expect, it } from 'vitest'
 import { ANTONYM_INDEX } from './antonyms.ts'
-import { atomize, glossaryIndex, normalize, termIndex } from './atomize.ts'
+import {
+  atomize,
+  glossaryIndex,
+  normalize,
+  normalizeScope,
+  renderAtom,
+  SYMBOL_PHRASES,
+  termIndex,
+} from './atomize.ts'
 import { ESTABLISH_VERBS } from './guard-implication.ts'
 
 /** The body of a `resp` atom, which is what the solver compares. */
@@ -193,5 +201,136 @@ describe('the invariant that keeps a committed term from inverting a state bridg
     for (const verb of [...ESTABLISH_VERBS]) {
       expect(normalize(verb), `${verb} is not a single token`).toBe(verb)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SYMBOL_PHRASES — the comparator must survive normalization
+// ---------------------------------------------------------------------------
+
+describe('symbolic comparators survive normalization', () => {
+  const guard = (text: string): string => normalize(text)
+
+  it('gives every table row a body distinct from its opposite', () => {
+    // Reproduced on the built CLI before this table existed: `>= 30 ms` and `< 30 ms` both became
+    // `request_latency_30_ms`, so two mutually exclusive guards shared one atom, one context group
+    // hosted both requirements, and the opposed responses proved an error-severity
+    // FND_CONTRADICTION on a document with no conflict.
+    const opposites: readonly (readonly [string, string])[] = [
+      ['the latency is >= 30 ms', 'the latency is <= 30 ms'],
+      ['the latency is > 30 ms', 'the latency is < 30 ms'],
+      ['the latency is ≥ 30 ms', 'the latency is ≤ 30 ms'],
+      ['the mode != safe', 'the mode == safe'],
+      ['the gain is +3 db', 'the gain is -3 db'],
+    ]
+    for (const [a, b] of opposites) {
+      expect(guard(a), `${a} and ${b} share a body`).not.toBe(guard(b))
+    }
+  })
+
+  it('unifies a symbol with the word phrase it IS, which is the one sound merge', () => {
+    // Deliberate, and the only merging this change performs: the two spellings assert the same
+    // bound, so treating them as one condition asserts nothing the author did not write.
+    expect(guard('the latency is >= 30 ms')).toBe(guard('the latency is at least 30 ms'))
+    expect(guard('the latency is <= 30 ms')).toBe(guard('the latency is at most 30 ms'))
+    expect(guard('the latency is ≥ 30 ms')).toBe(guard('the latency is >= 30 ms'))
+  })
+
+  it('reads +/- as a SIGN only, so hyphenated words are untouched', () => {
+    // Without the digit lookahead and the letter lookbehind, every hyphenated word in the corpus
+    // gains a `minus` token — `de-duplicate the ledger` is in the shipped eval rounds.
+    expect(guard('de-duplicate the ledger')).toBe('de_duplicate_the_ledger')
+    expect(guard('roll-back the change')).toBe('roll_back_the_change')
+    expect(guard('version 1-2')).toBe('version_1_2')
+    expect(guard('trim the gain by -3 db')).toBe('trim_the_gain_by_minus_3_db')
+  })
+
+  it('orders multi-character rows before the single-character ones they contain', () => {
+    // `>=` must not be read as `>` followed by a stray `=`. Asserted on the TABLE order, because
+    // the behavior above would still pass if the rows were reordered and the regexes happened to
+    // stay disjoint — this is the property that makes the behavior robust rather than lucky.
+    const idx = (source: string): number => SYMBOL_PHRASES.findIndex(([re]) => re.source === source)
+    expect(idx('>=|≥')).toBeLessThan(idx('>'))
+    expect(idx('<=|≤')).toBeLessThan(idx('<'))
+    expect(idx('==')).toBeLessThan(idx('='))
+    expect(idx('!=|≠')).toBeLessThan(idx('='))
+  })
+
+  it('leaves a slot with no symbol byte-identical', () => {
+    // The change may only ADD tokens where punctuation was deleted. Every phrase in the shipped
+    // corpus without one of these symbols must be untouched, which is what makes the induced
+    // partition strictly finer.
+    for (const text of [
+      'the user signs in',
+      'issue a session token',
+      'complete the infusion within at most 30 minutes',
+      'the shift ends',
+    ]) {
+      expect(guard(text)).toBe(
+        text
+          .toLowerCase()
+          .replace(/^(?:a|an|the)\s+/, '')
+          .replace(/[^a-z0-9\s]+/g, ' ')
+          .split(/\s+/)
+          .filter(Boolean)
+          .join('_'),
+      )
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// normalizeScope — a namespace is never empty, and never eats an article
+// ---------------------------------------------------------------------------
+
+describe('the atom scope', () => {
+  it('keeps two non-Latin system names in DIFFERENT namespaces', () => {
+    // Measured before `normalizeScope` existed: `normalize` deletes every character outside
+    // [a-z0-9\s], so both names vanished and these two atoms were `sys____resp__allow_access` at
+    // OPPOSITE polarity — one atom, two unrelated systems, a provable contradiction across
+    // documents that share nothing at all.
+    const a = atomize({
+      kind: 'resp',
+      text: 'grant access',
+      systemName: 'ゲートウェイ',
+      negated: false,
+    })
+    const b = atomize({
+      kind: 'resp',
+      text: 'revoke access',
+      systemName: '认证服务',
+      negated: false,
+    })
+    expect(a.name).not.toBe(b.name)
+    expect(normalize('ゲートウェイ'), 'the premise: normalize alone erases it').toBe('')
+  })
+
+  it('does not strip a leading article from a system NAME', () => {
+    // An article carries no meaning inside a slot phrase, which is why `normalize` drops it. In an
+    // identifier it is part of the name, and two products differing only by one would otherwise
+    // share every atom they own.
+    expect(normalizeScope('A Gateway')).not.toBe(normalizeScope('Gateway'))
+    expect(normalizeScope('The Gateway')).toBe('the_gateway')
+  })
+
+  it('leaves an ordinary Latin name exactly as normalize would', () => {
+    // The split is confined to the two cases above: no existing scope may move, which is what
+    // makes the atom-corpus snapshot unchanged by this slice.
+    for (const name of ['auth service', 'gateway', 'vault service', 'latch service', 'ledger']) {
+      expect(normalizeScope(name)).toBe(normalize(name))
+    }
+  })
+
+  it('hashes deterministically and readably when nothing survives', () => {
+    expect(normalizeScope('ゲートウェイ')).toBe(normalizeScope('ゲートウェイ'))
+    expect(normalizeScope('ゲートウェイ')).toMatch(/^h[0-9a-f]{8}$/)
+  })
+
+  it('renderAtom REFUSES a scope it cannot render unambiguously', () => {
+    // Postconditions rather than comments: an empty scope merges namespaces, and a scope outside
+    // [a-z0-9_] makes the `__`-delimited name ambiguous to the parsers that split on it.
+    expect(() => renderAtom({ scope: '', kind: 'resp', body: 'x' })).toThrow(/empty scope/)
+    expect(() => renderAtom({ scope: 'a b', kind: 'resp', body: 'x' })).toThrow(/outside/)
+    expect(renderAtom({ scope: 'gateway', kind: 'resp', body: 'x' })).toBe('sys__gateway__resp__x')
   })
 })

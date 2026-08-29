@@ -634,10 +634,12 @@ export function evalRoundCases(): AdversarialCase[] {
       culpritIds: [rid(t, 1), rid(t, 2)],
       doc: (() => {
         const d = docOf(reqs)
-        // The exact alias the quantity-alias candidate suggests for this pair
-        // (`glossary add "infusion within" "run the infusion"`), unifying the two
-        // verb-phrasings onto one quantity key so the LIA tier proves the conflict.
-        d.glossary = [{ canonical: 'run the infusion', aliases: ['infusion within'] }]
+        // The table `symspec glossary` writes when the author runs the command round 10
+        // prints, verbatim: `canonical` is the command's FIRST positional and `alias` its
+        // second, which the candidate emits in lexicographic order. The loop-closure gate in
+        // `./adversarial.test.ts` parses that command out of a real round-10 run and asserts
+        // this entry against it, so the propose half and the decide half cannot drift apart.
+        d.glossary = [{ canonical: 'complete the infusion within', aliases: ['run the infusion'] }]
         return d
       })(),
       note:

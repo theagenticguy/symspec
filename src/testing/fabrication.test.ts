@@ -28,7 +28,7 @@ import { solverServiceLayer } from '../adapters/z3/solver-service.ts'
 import { type CheckPayload, checkOp } from '../app/operations/check.ts'
 import { runOperation } from '../app/runtime/operation.ts'
 import { toEngineDoc } from '../domain/compat.ts'
-import { planContextGroups } from '../domain/engine/formal/contradiction.ts'
+import { contextAtomsOf, liveIn, planContextGroups } from '../domain/engine/formal/contradiction.ts'
 import type { Embedder } from '../domain/engine/formal/embed.ts'
 import { encodeIncluded } from '../domain/engine/pipeline/check.ts'
 import { buildGlossaryPlan } from '../domain/glossary/glossary-plan.ts'
@@ -38,7 +38,7 @@ import type { DocumentOp } from '../domain/requirements/ops.ts'
 import { DocPath, DocStore, makeDocPath } from '../ports/doc-store.ts'
 import { embedderLayerOf } from '../ports/embedder.ts'
 import { ErrDocNotFound } from '../ports/errors.ts'
-import { fabricationCases, req } from './fabrication.ts'
+import { crossSlotBridgeDoc, fabricationCases, req } from './fabrication.ts'
 
 const TS = '2026-01-01T00:00:00.000Z'
 
@@ -104,17 +104,23 @@ const applyOps = (document: RequirementsDocument, ops: readonly DocumentOp[]) =>
   return folded.document
 }
 
-/** Every requirement id, grouped by the context-group key its guard atoms produce. */
+/**
+ * Every GUARDED requirement id, grouped by the context-group key its guard atoms produce.
+ *
+ * Liveness is `contradiction.ts`'s own {@link liveIn}, so this helper cannot answer the
+ * co-liveness question differently from the tier it is making a claim about. The extra
+ * non-empty-guard clause is this helper's own: every fixture below is safe because two GUARDS
+ * are distinct, and an unconditional requirement is live in every group by definition, so
+ * counting one would put a member in every row and say nothing about the guards.
+ */
 const groupsByKey = (document: RequirementsDocument): Map<string, string[]> => {
   const encoded = encodeIncluded(toEngineDoc(document))
   const byKey = new Map<string, string[]>()
   for (const group of planContextGroups(encoded)) {
     const live = encoded
       .filter((e) => {
-        const context = new Set(
-          e.atoms.filter((a) => a.kind === 'trig' || a.kind === 'pre').map((a) => a.atom),
-        )
-        return context.size > 0 && [...context].every((a) => group.contextAtoms.includes(a))
+        const context = contextAtomsOf(e)
+        return context.length > 0 && liveIn(group, context)
       })
       .map((e) => e.id)
       .sort()
@@ -139,12 +145,13 @@ describe('applying a whole-document glossary plan FABRICATES nothing', () => {
             } as RequirementsDocument)
 
       const before = await check(doc)
-      // A fixture that is already failing proves nothing. For a `committed` fixture this IS the
-      // assertion: the table was accepted by the CLI, and it must not have proven anything.
+      // A fixture that is already failing proves nothing. For a fixture with committed tables
+      // this IS the assertion — the table was accepted by the CLI and must not have proven
+      // anything — and for one without, it is the checker's own reading of the bare document.
       expect(
         before.counts.error,
-        `a committed table FABRICATED ${before.counts.error} error-severity finding(s) in a ` +
-          `document that has no conflict. Ground truth: ${testCase.why}\n` +
+        `the document FABRICATED ${before.counts.error} error-severity finding(s) before any ` +
+          `plan was applied, and it has no conflict. Ground truth: ${testCase.why}\n` +
           JSON.stringify(
             before.findings.filter((f) => f.severity === 'error'),
             null,
@@ -189,7 +196,21 @@ describe('applying a whole-document glossary plan FABRICATES nothing', () => {
         plan.corpus.responseNodes,
         `${testCase.id} produced no response nodes`,
       ).toBeGreaterThan(0)
-      expect(plan.corpus.guardNodes, `${testCase.id} produced no guard nodes`).toBeGreaterThan(0)
+      // Guard nodes are expected exactly when a guard slot exists. Read off the document
+      // rather than asserted as a floor, so an unconditional fixture — which has no guard to
+      // embed — is held to `0` instead of being excused from the sweep, and a guard family
+      // that silently stops being embedded still fails for every fixture that has one.
+      const guardSlots = Object.values(testCase.doc.requirements).filter(
+        (r) => r.trigger !== undefined || r.preCondition !== undefined,
+      ).length
+      if (guardSlots === 0) {
+        expect(
+          plan.corpus.guardNodes,
+          `${testCase.id} has no guard slot, so it must contribute no guard node`,
+        ).toBe(0)
+      } else {
+        expect(plan.corpus.guardNodes, `${testCase.id} produced no guard nodes`).toBeGreaterThan(0)
+      }
       // ...and it compared something, so "fabricated nothing" is not "never ran".
       expect(
         plan.corpus.pairsCompared + plan.corpus.alreadyUnified,
@@ -208,6 +229,67 @@ describe('applying a whole-document glossary plan FABRICATES nothing', () => {
       reasons.push(...plan.unresolved.map((u) => u.reason))
     }
     expect(reasons).toContain('opposition-candidate')
+  })
+})
+
+/**
+ * The cross-slot bridge, RECORDED rather than endorsed.
+ *
+ * `fabrication.ts`'s {@link crossSlotBridgeDoc} carries the document and the mechanism. This
+ * pins what the tool does with it today, for one reason: the comments in
+ * `formal/numeric-contradiction.ts` state the fence's real reach — same-slot-kind guards
+ * cannot meet, a cross-slot bridge still puts them in one group — and a claim about this
+ * package's own behavior needs a gate or it is only prose.
+ *
+ * Every assertion here is a statement of a GAP. A fence turns them red, and the fix is then
+ * to move the document up into {@link fabricationCases}, where `counts.error === 0` is the
+ * standing assertion.
+ */
+describe('a cross-slot bridge is a fabrication surface still open', () => {
+  const A = 'ffffffff-0000-4000-8000-000000000070'
+  const B = 'ffffffff-0000-4000-8000-000000000071'
+  const BRIDGE = 'ffffffff-0000-4000-8000-000000000072'
+
+  it('puts two mutually exclusive guards in one context group', async () => {
+    // The mechanism, proved without the solver — the same composition the fenced fixtures use.
+    // The bridge requirement's guard-atom set is a group, and `liveIn` is a subset test, so
+    // both single-guard requirements are live in it alongside the bridge.
+    const groups = groupsByKey(crossSlotBridgeDoc())
+    const shared = [...groups.values()].filter((ids) => ids.includes(A) && ids.includes(B))
+    expect(shared).toEqual([[A, B, BRIDGE]])
+  })
+
+  it('blames the two requirements that do not conflict', async () => {
+    const report = await check(crossSlotBridgeDoc())
+    // TWO error-severity findings on a document whose only defect is that req 72 can never
+    // fire. Both tiers reach the same wrong conclusion through the same bridge group.
+    expect(
+      report.findings
+        .filter((f) => f.severity === 'error')
+        .map((f) => [f.code, f.requirementIds] as const),
+    ).toEqual([
+      ['FND_CONTRADICTION', [A, B]],
+      ['FND_NUMERIC_CONTRADICTION', [A, B]],
+    ])
+    // And the honest reading of the document is present on the same run, at warn severity:
+    // the bridge requirement's guard is unreachable. That finding is the whole story; the two
+    // above are the fabrication.
+    expect(
+      report.findings.filter((f) => f.code === 'FND_VACUITY').map((f) => f.requirementIds),
+    ).toEqual([[BRIDGE]])
+  })
+
+  it('does not ALSO certify the document it fabricates on', async () => {
+    // The one thing worse than a fabricated error is a fabricated error carrying a certificate.
+    // This document is a recorded OPEN gap, so its two error findings are expected here — but
+    // `verified: true` beside them would be the tool asserting it checked everything and stands
+    // behind the conflict. Pinned because the flip is otherwise invisible: a finer guard key
+    // silently deleted the `FND_RELATIONAL_UNCHECKED` disclosure and with it the only demotion
+    // this document had, and no assertion noticed.
+    const report = await check(crossSlotBridgeDoc())
+    expect(report.counts.error, 'the recorded gap is still open').toBeGreaterThan(0)
+    expect(report.verified, 'a fabricated error must never be certified').toBe(false)
+    expect(report.coverage.demotions.length).toBeGreaterThan(0)
   })
 })
 
@@ -282,10 +364,26 @@ describe('the propose tier and the decide tier atomize the SAME document', () =>
 
 describe('what a GUARD merge would cost, without booting the solver', () => {
   /**
-   * The two guard fixtures are safe only because their triggers are distinct. Merging them
-   * collapses two context groups into one, which is the antecedent a contradiction needs.
+   * These fixtures are safe only because their guards are distinct. Merging them collapses two
+   * context groups into one, which is the antecedent a contradiction needs.
+   *
+   * `compound-guard-shared-threshold` guards on a `preCondition` rather than a `trigger`, so the
+   * guard is read through {@link guardOf} — `planContextGroups` keys on `pre` and `trig` alike, so
+   * the hazard does not care which one carries the condition and neither should the test.
    */
-  const guardCases = ['mutually-exclusive-guards-opposed-response', 'distinct-agents-same-report']
+  const guardCases = [
+    'mutually-exclusive-guards-opposed-response',
+    'distinct-agents-same-report',
+    'compound-guard-shared-threshold',
+    'symbolic-threshold-split',
+    'disjoint-temperature-guards',
+  ]
+
+  const guardOf = (r: { trigger?: string; preCondition?: string }): string => {
+    const guard = r.trigger ?? r.preCondition
+    if (guard === undefined) throw new Error('fixture requirement carries no guard slot')
+    return guard
+  }
 
   it.each(guardCases)('%s keeps its requirements in SEPARATE context groups', (id) => {
     const testCase = fabricationCases().find((c) => c.id === id)
@@ -299,20 +397,18 @@ describe('what a GUARD merge would cost, without booting the solver', () => {
   it.each(guardCases)('%s WOULD host both once the guards are aligned', (id) => {
     const testCase = fabricationCases().find((c) => c.id === id)
     const doc = testCase?.doc as RequirementsDocument
-    const triggers = Object.values(doc.requirements)
-      .map((r) => r.trigger as string)
-      .sort()
-    expect(triggers).toHaveLength(2)
+    const guards = Object.values(doc.requirements).map(guardOf).sort()
+    expect(guards).toHaveLength(2)
 
     // The op a guard-slot proposal would suggest, constructed by hand — nothing emits it today.
     const merged = applyOps(doc, [
-      { op: 'glossary', canonical: triggers[0] as string, alias: triggers[1] as string },
+      { op: 'glossary', canonical: guards[0] as string, alias: guards[1] as string },
     ])
     const groups = groupsByKey(merged)
     const both = [...groups.values()].filter((ids) => ids.length > 1)
     expect(
       both.length,
-      `aligning ${JSON.stringify(triggers)} should have put both requirements in one group`,
+      `aligning ${JSON.stringify(guards)} should have put both requirements in one group`,
     ).toBeGreaterThan(0)
 
     // And the other half of the antecedent: one response atom, opposite polarities.

@@ -102,6 +102,74 @@ const stateReq = (n: number, preCondition: string, systemResponse: string) => {
 const stateDoc = (rows: readonly (readonly [number, string, string])[]): RequirementsDocument =>
   docOf(rows.map(([n, pre, resp]) => stateReq(n, pre, resp)))
 
+/**
+ * A state-driven requirement in a NAMED system.
+ *
+ * A peer of {@link stateReq} rather than a widening of it. `stateReq` hardcodes
+ * `latch service`, and the bridge fixtures depend on that scope appearing in their atom names —
+ * threading a system parameter through it would rewrite every one of their atoms for no reason.
+ */
+const stateReqIn = (
+  systemName: string,
+  n: number,
+  preCondition: string,
+  systemResponse: string,
+  negated = false,
+) => {
+  const id = `ffffffff-0000-4000-8000-${String(n).padStart(12, '0')}`
+  return [
+    id,
+    {
+      id,
+      patternType: 'state-driven' as const,
+      systemName,
+      systemResponse,
+      preCondition,
+      negated,
+      sentence: `While ${preCondition}, the ${systemName} shall ${negated ? 'not ' : ''}${systemResponse}.`,
+      priority: 'medium' as const,
+      status: 'draft' as const,
+      createdAt: TS,
+      updatedAt: TS,
+      derives: [],
+      satisfies: [],
+      verifies: [],
+      refines: [],
+    },
+  ] as const
+}
+
+/**
+ * A ubiquitous requirement — no guard slot at all.
+ *
+ * The numeric tier reads bounds out of the response slot regardless of pattern, so an
+ * unconditional pair is the sharpest quantity-key fixture available: both requirements are
+ * always active, which removes "the guards keep them apart" as an alternative explanation
+ * for an absent conflict and leaves the quantity key as the only thing holding the line.
+ */
+const ubiquitousReq = (n: number, systemName: string, systemResponse: string) => {
+  const id = `ffffffff-0000-4000-8000-${String(n).padStart(12, '0')}`
+  return [
+    id,
+    {
+      id,
+      patternType: 'ubiquitous' as const,
+      systemName,
+      systemResponse,
+      negated: false,
+      sentence: `The ${systemName} shall ${systemResponse}.`,
+      priority: 'medium' as const,
+      status: 'draft' as const,
+      createdAt: TS,
+      updatedAt: TS,
+      derives: [],
+      satisfies: [],
+      verifies: [],
+      refines: [],
+    },
+  ] as const
+}
+
 const docOf = (rows: readonly (readonly [string, unknown])[]): RequirementsDocument =>
   ({
     docVersion: DOC_VERSION,
@@ -287,6 +355,165 @@ export const fabricationCases = (): readonly FabricationCase[] => [
     expectsEmptyPlan: true,
   },
   {
+    /**
+     * FABRICATION A, the regression fixture — reproduced on the built CLI before the fix.
+     *
+     * The canonical hysteresis-free threshold split, which is how engineers write thresholds. Two
+     * guards that cannot both hold, one response atom at opposite polarity. `normalize` deleted the
+     * comparator (it is punctuation), so both guards became
+     * `sys__gateway__pre__request_latency_30_ms`, one context group hosted both requirements, and
+     * the opposed responses proved an `error` FND_CONTRADICTION with `verified: true` and exit 1.
+     *
+     * Kept as a fixture rather than only an `atomize` unit test because the atom-level assertion
+     * cannot see the consequence: the atoms merging is the mechanism, the fabricated verdict is the
+     * defect, and only the corpus asserts the second.
+     */
+    id: 'symbolic-threshold-split',
+    why:
+      'A threshold split written with symbolic comparators. `>= 30 ms` and `< 30 ms` cannot both ' +
+      'hold, so the document is consistent no matter what the responses say — and its responses ' +
+      'are one atom at opposite polarity, which is the other half of a contradiction. If the ' +
+      'comparator ever stops surviving normalization these two guards share an atom again and the ' +
+      'conflict is manufactured.',
+    doc: docOf([
+      stateReqIn('gateway', 9, 'the request latency is >= 30 ms', 'enable the response cache'),
+      stateReqIn('gateway', 10, 'the request latency is < 30 ms', 'disable the response cache'),
+    ]),
+    table: {
+      'enable the response cache': [1, 0.02],
+      'disable the response cache': [1, 0.03],
+      'the request latency is >= 30 ms': [1, 0.02],
+      'the request latency is < 30 ms': [1, 0.03],
+    },
+    expectsEmptyPlan: true,
+  },
+  {
+    /**
+     * THE EROSION FENCE — the same ground truth as the fixture above, with a comparator added.
+     *
+     * This fixture exists to catch a failure no other one can: a recognizer that consumes the
+     * threshold clause and DROPS the rest of the guard. Erasure is indistinguishable from
+     * over-merging in its effect — a weaker antecedent activates in strictly more contexts — so
+     * `>= 30 ms and the cache is cold` reduced to `>= 30 ms` would put these two requirements in
+     * ONE context group and prove their opposed responses contradictory.
+     *
+     * The document is consistent for exactly the reason the shift fixture is: a cold cache and a
+     * warm cache never co-occur. The shared threshold is the part a partial lift is tempted by.
+     */
+    id: 'compound-guard-shared-threshold',
+    why:
+      'Two guards sharing a latency threshold but differing in cache state, with one response ' +
+      'at opposite polarity. Consistent because a cold cache and a warm cache cannot both ' +
+      'hold, so the two requirements sit in separate context groups. Any rewrite that keeps ' +
+      'the threshold and discards the cache clause merges those groups and manufactures the ' +
+      'conflict — which is why this fixture guards the recognizer, not the planner.',
+    doc: docOf([
+      stateReqIn(
+        'gateway',
+        7,
+        'the request latency is >= 30 ms and the cache is cold',
+        'enable the response cache',
+      ),
+      stateReqIn(
+        'gateway',
+        8,
+        'the request latency is >= 30 ms and the cache is warm',
+        'disable the response cache',
+      ),
+    ]),
+    table: {
+      'enable the response cache': [1, 0.02],
+      'disable the response cache': [1, 0.03],
+      'the request latency is >= 30 ms and the cache is cold': [1, 0.02],
+      'the request latency is >= 30 ms and the cache is warm': [1, 0.03],
+    },
+    expectsEmptyPlan: true,
+  },
+  {
+    /**
+     * FABRICATION B, the regression fixture — reproduced on the built CLI before the fix.
+     *
+     * The numeric tier's quantity key is the phrase before the comparator. A trailing-word
+     * window over that phrase drops the qualifier that distinguishes two shards, so
+     * `primary shard replication lag` and `analytics shard replication lag` land on one Real
+     * variable, ≤ 10 ms ∧ ≥ 500 ms is UNSAT, and `error FND_NUMERIC_CONTRADICTION` names both
+     * requirements. No comparator symbol and no glossary is involved: the lenient key is the
+     * whole cause.
+     *
+     * Both requirements are ubiquitous, so nothing about the guards can be credited for the
+     * document being consistent — the quantity key is load-bearing on its own.
+     *
+     * `expectsEmptyPlan` is false, and deliberately: with the table pushing the two response
+     * bodies together the planner proposes one whole-body glossary alias. That merge is a
+     * RESPONSE merge, so it costs recall and cannot fabricate; and it leaves the quantity keys
+     * alone, because `glossaryIndex` keys on the whole normalized body while `quantityKey`
+     * looks up the label — the phrase before the comparator. Both halves of the gate here are
+     * the `counts.error` ones, and the BEFORE half is the fabrication-B regression.
+     */
+    id: 'distinct-shard-quantities',
+    why:
+      "A tight bound on one shard's replication lag and a loose bound on another shard's are " +
+      'two bounds on two quantities, and the sentences differ only in the qualifier that says ' +
+      'which shard. Any quantity key that drops that qualifier co-asserts the two bounds on one ' +
+      'Real variable and proves a conflict the document does not contain.',
+    doc: docOf([
+      ubiquitousReq(11, 'database', 'keep the primary shard replication lag at most 10 ms'),
+      ubiquitousReq(12, 'database', 'keep the analytics shard replication lag at least 500 ms'),
+    ]),
+    table: {
+      'keep the primary shard replication lag at most 10 ms': [1, 0.02],
+      'keep the analytics shard replication lag at least 500 ms': [1, 0.03],
+    },
+    expectsEmptyPlan: false,
+  },
+  {
+    /**
+     * FABRICATION C, the regression fixture — reproduced on the built CLI before the fix.
+     *
+     * The numeric tier reads bounds out of the GUARD slots too, and then asserted every
+     * requirement's bounds as simultaneous facts on one Real variable. Two mutually exclusive
+     * antecedents — `temp > 5` and `temp < 3` — went to Z3 together, `error
+     * FND_NUMERIC_CONTRADICTION` named both requirements, and the document says only that the
+     * vent opens when it is warm and closes when it is cold.
+     *
+     * This is `contradiction.ts`'s own "assert ALL triggers true at once manufactures spurious
+     * conflicts between mutually exclusive triggers" defect, in the tier that had no context
+     * partition of its own. The guards are distinct, so each lands in its own context group and
+     * hosts exactly one requirement.
+     *
+     * It is the ARITHMETIC twin of `symbolic-threshold-split`: the responses here also resolve to
+     * one atom at opposite polarity (`open`/`close` are seed antonyms), so aligning the two guards
+     * would fabricate a propositional conflict as well — which is why it joins the guard cases.
+     */
+    id: 'disjoint-temperature-guards',
+    why:
+      'A vent that opens when it is warmer than 5 degrees and closes when it is colder than 3. ' +
+      'Those two temperatures cannot both hold, so the two bounds on "temperature" are never ' +
+      'facts at the same time, and the document is consistent. Any tier that asserts both ' +
+      'antecedents on one Real variable proves a conflict the document does not contain.',
+    doc: docOf([
+      stateReqIn(
+        'vent controller',
+        13,
+        'the temperature is above 5 degrees celsius',
+        'open the vent',
+      ),
+      stateReqIn(
+        'vent controller',
+        14,
+        'the temperature is below 3 degrees celsius',
+        'close the vent',
+      ),
+    ]),
+    table: {
+      'open the vent': [1, 0.02],
+      'close the vent': [1, 0.03],
+      'the temperature is above 5 degrees celsius': [1, 0.02],
+      'the temperature is below 3 degrees celsius': [1, 0.03],
+    },
+    expectsEmptyPlan: true,
+  },
+  {
     id: 'distinct-agents-same-report',
     why:
       'A sensor reporting a fault and an operator reporting a fault are different events. ' +
@@ -304,3 +531,84 @@ export const fabricationCases = (): readonly FabricationCase[] => [
     expectsEmptyPlan: true,
   },
 ]
+
+/**
+ * THE CROSS-SLOT BRIDGE — a fabrication this package does NOT yet fence.
+ *
+ * `disjoint-temperature-guards` above is the fenced half: two mutually exclusive guards, one
+ * in each requirement's `preCondition`, land in two context groups and no tier compares
+ * them. That fixture is structurally incapable of exercising the other half, because a
+ * requirement owns exactly one `preCondition` — nothing in it can name both spellings of one
+ * slot, so no group containing both atoms is constructible.
+ *
+ * A requirement with a `preCondition` AND a `trigger` can. `planGroups` mints one group per
+ * distinct guard-atom SET, so req 72 below mints `{above 5, below 3}`, and `liveIn` is a
+ * subset test — so reqs 70 and 71, whose guards are single atoms, are both live there. The
+ * two exclusive bounds are then asserted as simultaneous facts, which is exactly the pattern
+ * `numeric-contradiction.ts`'s header calls unacceptable.
+ *
+ * Req 72's own guard is arithmetically unsatisfiable, so it can never fire: the document
+ * contains no requirement conflict at all, and `FND_VACUITY` says so about 72 on the same
+ * run. The blame nonetheless lands on 70 and 71, which do not conflict.
+ *
+ * It is kept OUT of {@link fabricationCases} deliberately. That corpus asserts
+ * `counts.error === 0`, and this document produces two; filing it there would turn the
+ * standing fabrication number red without fixing anything. `fabrication.test.ts` drives it
+ * as a recorded gap instead — the shape is pinned, so a fence for it announces itself by
+ * turning that test red, and the fix is then to move the document up into the corpus.
+ *
+ * Fencing it needs a per-group FEASIBILITY check: a group whose own guard bounds are jointly
+ * unsatisfiable is not a reachable context and must host no cell. No code path performs one.
+ */
+export const crossSlotBridgeDoc = (): RequirementsDocument =>
+  docOf([
+    stateReqIn(
+      'vent controller',
+      70,
+      'the temperature is above 5 degrees celsius',
+      'open the vent',
+    ),
+    [
+      'ffffffff-0000-4000-8000-000000000071',
+      {
+        id: 'ffffffff-0000-4000-8000-000000000071',
+        patternType: 'event-driven' as const,
+        systemName: 'vent controller',
+        systemResponse: 'close the vent',
+        trigger: 'the temperature is below 3 degrees celsius',
+        negated: false,
+        sentence:
+          'When the temperature is below 3 degrees celsius, the vent controller shall close the vent.',
+        priority: 'medium' as const,
+        status: 'draft' as const,
+        createdAt: TS,
+        updatedAt: TS,
+        derives: [],
+        satisfies: [],
+        verifies: [],
+        refines: [],
+      },
+    ] as const,
+    [
+      'ffffffff-0000-4000-8000-000000000072',
+      {
+        id: 'ffffffff-0000-4000-8000-000000000072',
+        patternType: 'event-driven' as const,
+        systemName: 'vent controller',
+        systemResponse: 'log the fault',
+        preCondition: 'the temperature is above 5 degrees celsius',
+        trigger: 'the temperature is below 3 degrees celsius',
+        negated: false,
+        sentence:
+          'While the temperature is above 5 degrees celsius, when the temperature is below 3 degrees celsius, the vent controller shall log the fault.',
+        priority: 'medium' as const,
+        status: 'draft' as const,
+        createdAt: TS,
+        updatedAt: TS,
+        derives: [],
+        satisfies: [],
+        verifies: [],
+        refines: [],
+      },
+    ] as const,
+  ])

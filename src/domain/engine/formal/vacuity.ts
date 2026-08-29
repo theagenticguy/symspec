@@ -14,15 +14,18 @@
  * means no model of the rest of the spec lets this guard hold — the guard is
  * unreachable, the requirement vacuous.
  *
- * ## Why it is narrow (and shipped at low confidence)
+ * ## Why it is narrow, and who it blames
  *
- * With regex-only parsing and per-`systemName`-scoped atoms (AC-4-2a), this only
- * bites when one requirement's RESPONSE atom is another's negated PRECONDITION
- * atom — e.g. "shall disable maintenance mode" (response `¬maint`) vs "while
- * maintenance mode is enabled, …" (precondition `maint`) — and both under the
- * same system so the atoms actually coincide. Real but rare
- * (research-smt.md §1.5). Findings are therefore emitted at `confidence: 'low'`
- * (Appendix B `FND_VACUITY`, warn severity, labeled lower confidence).
+ * `kind` is part of atom identity — `renderAtom` writes `sys__<scope>__<kind>__<body>` — so a
+ * RESPONSE atom is never a PRECONDITION atom, and no response can contradict a guard by naming
+ * the same condition. One shape is left: two OTHER requirements force a single `resp` atom at
+ * OPPOSITE polarity, and each of their context sets is a subset of the target's, so asserting
+ * the target's guard activates both and the conjunction goes `unsat`.
+ *
+ * The finding therefore names the requirement whose guard was asserted, while the contradiction
+ * lives entirely in the other two — a bystander, told its rule can never fire. Findings are
+ * emitted at `confidence: 'low'` and `warn` severity (Appendix B `FND_VACUITY`), so this never
+ * reaches an exit code. `vacuity.test.ts` pins both the path and the misattribution.
  *
  * ## Purity boundary
  *

@@ -27,8 +27,21 @@
  * a fabricated constraint.
  */
 
-import { normalize } from './atomize.ts'
+import { type AtomKind, normalize } from './atomize.ts'
 import type { NumericComparator } from './encode.ts'
+
+/**
+ * The EARS slot a numeric predicate was read out of, in the atomizer's own
+ * vocabulary ({@link AtomKind}) narrowed to the three slots this tier reads.
+ *
+ * A bound in a GUARD slot (`trig`/`pre`) and a bound in a RESPONSE slot are
+ * different claims about the same quantity: the first is part of the antecedent
+ * that decides where the requirement is live, the second is the obligation it
+ * imposes there. `numeric-contradiction.ts` reports which one it compared, so an
+ * author reading an unsat core can tell an obligation from a precondition without
+ * re-reading the sentence.
+ */
+export type PredicateSlot = Extract<AtomKind, 'resp' | 'trig' | 'pre'>
 
 /** A numeric predicate extracted from one slot, normalized to a base unit. */
 export interface NumericPredicate {
@@ -41,6 +54,8 @@ export interface NumericPredicate {
   readonly value: number
   /** The canonical base unit the value was normalized to (`''` if unitless). */
   readonly baseUnit: string
+  /** Which EARS slot the bound was read out of — guard role vs response role. */
+  readonly slot: PredicateSlot
   /** The original slot substring the predicate came from (evidence). */
   readonly sourceText: string
 }
@@ -190,15 +205,39 @@ function quantityKey(
 }
 
 /**
- * Candidate quantity label: the noun-ish phrase that owns the numeric bound.
- * We look immediately BEFORE the comparator phrase (e.g. "response latency
- * within 200 ms" → "response latency"). Kept deliberately shallow — a few
- * trailing words — because over-broad capture would split identical quantities.
+ * Candidate quantity label: the noun-ish phrase that owns the numeric bound —
+ * EVERY word before the comparator phrase (e.g. "the primary shard replication
+ * lag at most 10 ms" → "primary shard replication lag"), less trailing filler and
+ * one leading stopword.
+ *
+ * SOUNDNESS: this label is a DECIDE key. `quantityKey` turns it into the Real
+ * variable two bounds must share before Z3 is asked to refute them, so two slots
+ * whose labels collide are asserted to bound ONE physical thing at `error`
+ * severity. Truncating the phrase to a trailing window MERGES subjects the
+ * document keeps apart — "the primary shard replication lag" and "the analytics
+ * shard replication lag" both end in "shard replication lag" — and a merged
+ * subject co-asserts bounds no requirement placed on one quantity, which is a
+ * fabricated FND_NUMERIC_CONTRADICTION. Keeping the whole phrase can only SPLIT a
+ * key, and a split can only drop a proof: the honest failure direction, and the
+ * one `quantity-alias.ts` proposes an author-confirmed merge for.
+ *
+ * That split-only property is a claim about the BARE key, and it does not extend
+ * to `quantityKey` as a whole. `quantityKey` looks the committed glossary up on
+ * `normalize(label)` — this same string — so the label's width also decides WHICH
+ * alias entries hit, and a hit REPLACES the label with a canonical. Widening the
+ * label therefore re-partitions alias hits in BOTH directions: a committed entry
+ * whose alias is a whole verb phrase starts matching (two labels collapse onto one
+ * canonical — a MERGE, at `error` severity, authorized by the author who committed
+ * it), and an entry whose alias is a bare noun tail stops matching (the entry goes
+ * inert and its proof disappears). Neither direction is a fabrication — a
+ * committed glossary entry is the author asserting the two phrases name one thing
+ * — but the monotonicity argument above cannot be used to wave a label-width
+ * change through while a glossary is in play. Both directions are pinned as
+ * observed behavior in `app/operations/check.test.ts`.
  */
 function labelBefore(text: string, comparatorStart: number): string | null {
   const before = text.slice(0, comparatorStart).trim()
   if (before === '') return null
-  // Take up to the last 3 alphabetic words as the quantity label.
   let words = before.split(/\s+/).filter((w) => /[a-zA-Z]/.test(w))
   if (words.length === 0) return null
   // Strip TRAILING prepositions/fillers so "respond in", "respond in no" and
@@ -235,14 +274,20 @@ function labelBefore(text: string, comparatorStart: number): string | null {
   while (words.length > 1 && TRAILING_FILLER.has(words[words.length - 1]!.toLowerCase())) {
     words = words.slice(0, -1)
   }
-  const tail = words.slice(-3).join(' ')
+  const phrase = words.join(' ')
   // Strip leading verb-ish stopwords so "shall respond with latency" → "latency".
-  return tail.replace(/^(?:shall|be|is|are|the|a|an|with|of|to|have|has)\s+/i, '').trim() || null
+  return phrase.replace(/^(?:shall|be|is|are|the|a|an|with|of|to|have|has)\s+/i, '').trim() || null
 }
 
 /**
- * Extract every numeric predicate in one slot text, scoped to `systemName`.
- * Returns `[]` when no numeric predicate is present. Deterministic.
+ * Extract every numeric predicate in one slot text, scoped to `systemName` and
+ * stamped with the slot it came from. Returns `[]` when no numeric predicate is
+ * present. Deterministic.
+ *
+ * `slot` is required rather than defaulted: the caller is the only party that
+ * knows which EARS slot it handed over, and a default would let a guard-sourced
+ * bound arrive labelled as a response — a claim about the document that the
+ * evidence block then prints.
  *
  * `quantityAliases` (#3): an optional NORMALIZED label → canonical-label map
  * (built from the committed glossary, same shape as the atom glossary index) so
@@ -252,6 +297,7 @@ function labelBefore(text: string, comparatorStart: number): string | null {
 export function extractNumericPredicates(
   text: string,
   systemName: string,
+  slot: PredicateSlot,
   quantityAliases?: ReadonlyMap<string, string>,
 ): NumericPredicate[] {
   const out: NumericPredicate[] = []
@@ -306,6 +352,7 @@ export function extractNumericPredicates(
         comparator,
         value,
         baseUnit,
+        slot,
         sourceText: text.slice(idx, idx + phrase.length + (m[0]?.length ?? 0)).trim(),
       })
     }
@@ -314,12 +361,25 @@ export function extractNumericPredicates(
   return dedupe(out)
 }
 
-/** Drop exact-duplicate predicates (same quantity+comparator+value+unit). */
+/**
+ * Drop exact-duplicate predicates.
+ *
+ * The key names every field of the record that carries a claim — slot, quantity,
+ * comparator, value, base unit — so two predicates that differ anywhere both
+ * survive. `sourceText` is excluded deliberately: it is the audit substring, and
+ * two spellings of one bound in one slot are one claim.
+ *
+ * The `slot` component cannot change the outcome for any caller
+ * {@link extractNumericPredicates} has, because each call carries one slot and so
+ * every predicate it produces shares it. It is in the key because the key is the
+ * record's identity, and a key over a proper subset of the fields is a merge
+ * waiting for the first caller that folds two slots together.
+ */
 function dedupe(preds: NumericPredicate[]): NumericPredicate[] {
   const seen = new Set<string>()
   const out: NumericPredicate[] = []
   for (const p of preds) {
-    const key = `${p.quantity}|${p.comparator}|${p.value}|${p.baseUnit}`
+    const key = `${p.slot}|${p.quantity}|${p.comparator}|${p.value}|${p.baseUnit}`
     if (seen.has(key)) continue
     seen.add(key)
     out.push(p)

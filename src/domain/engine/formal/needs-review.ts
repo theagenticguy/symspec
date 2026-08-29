@@ -40,7 +40,12 @@
 import { atomize as realAtomize } from './atomize.ts'
 import type { Z3Context } from './backend.ts'
 import { getContext } from './backend.ts'
-import { type ContextGroup, contextAtomsOf, planContextGroups } from './contradiction.ts'
+import {
+  type ContextGroup,
+  contextAtomsOf,
+  contextGroupKey,
+  planContextGroups,
+} from './contradiction.ts'
 import {
   type Atomize,
   type EncodableRequirement,
@@ -112,9 +117,19 @@ export interface NeedsReviewGroup extends ContextGroup {
   readonly memberIds: string[]
 }
 
-/** The sorted, deduplicated context-atom key for one encoded requirement (matches `planContextGroups`). */
+/**
+ * The context-atom key for one encoded requirement, from `contradiction.ts`'s own
+ * {@link contextGroupKey} rather than a local re-join.
+ *
+ * The key is compared for EQUALITY against {@link ContextGroup.key} below, so the
+ * two sides must agree on the separator byte. A local copy joining on anything
+ * else matches only single-atom contexts, and a requirement carrying both a
+ * precondition and a trigger then belongs to no group by its own key — leaving
+ * `memberIds` empty for exactly that group and, since a finding needs a member to
+ * name, no `FND_NEEDS_REVIEW` at all for an inconclusive two-slot group.
+ */
 function groupKeyOf(e: EncodedRequirement): string {
-  return [...new Set(contextAtomsOf(e))].sort().join(' ')
+  return contextGroupKey(contextAtomsOf(e))
 }
 
 /**

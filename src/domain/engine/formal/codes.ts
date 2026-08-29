@@ -117,13 +117,14 @@ export const FND_CODES = [
   // is a first-class LOUD signal (not buried in residualRisk) and DEMOTES
   // `verified`. Info-tier, one per excluded requirement.
   'FND_EXCLUDED_FROM_FORMAL',
-  // Quantity-alias proposal (appended) — two same-system+same-trigger numeric
-  // bounds land on DIFFERENT quantity keys that nonetheless share a noun token
-  // (e.g. "complete the infusion within ≤30 min" vs "run the infusion for ≥60
-  // min"). The bounds may constrain ONE physical quantity the verb phrasing
-  // split apart. Propose-only: suggests `symspec glossary add` to unify the
-  // quantities so the LIA tier can compare their bounds. Never a verdict; it
-  // DEMOTES `verified` because a possible numeric conflict went unexamined.
+  // Quantity-alias proposal (appended) — two co-active numeric bounds (same
+  // system, same guard, or both unguarded) land on DIFFERENT quantity keys
+  // that nonetheless share a noun token (e.g. "complete the infusion within ≤30
+  // min" vs "run the infusion for ≥60 min"). The bounds may constrain ONE
+  // physical quantity the verb phrasing split apart. Propose-only: suggests
+  // `symspec glossary add` to unify the quantities so the LIA tier can compare
+  // their bounds. Never a verdict; it DEMOTES `verified` because a possible
+  // numeric conflict went unexamined.
   'FND_QUANTITY_ALIAS_CANDIDATE',
   // Relational-reasoning disclosure (appended) — requirements under one shared
   // trigger carry numeric bounds AND unmatched (singleton) atoms, the shape
@@ -277,12 +278,12 @@ export const FndCodeMeta = {
   FND_QUANTITY_ALIAS_CANDIDATE: {
     code: 'FND_QUANTITY_ALIAS_CANDIDATE',
     description:
-      'info — two same-system, same-trigger numeric bounds landed on different quantity keys that share a noun token (e.g. "complete the infusion within ≤30 min" vs "run the infusion for ≥60 min"), so a possible single-quantity conflict was never compared. Propose-only: if the bounds constrain ONE quantity, run the suggested `symspec glossary add` to unify them so the LIA tier can prove any conflict. DEMOTES `verified`; never a verdict.',
+      'info — two co-active numeric bounds (same system, same guard, or both unguarded) landed on different quantity keys that share a noun token (e.g. "complete the infusion within ≤30 min" vs "run the infusion for ≥60 min"), so a possible single-quantity conflict was never compared. Propose-only: if the bounds constrain ONE quantity, run the suggested `symspec glossary add` to unify them so the LIA tier can prove any conflict. DEMOTES `verified`; never a verdict.',
   },
   FND_RELATIONAL_UNCHECKED: {
     code: 'FND_RELATIONAL_UNCHECKED',
     description:
-      "info — requirements under one shared trigger carry numeric bounds alongside unmatched (singleton) atoms — the shape where aggregate/conservation or cross-quantity relational conflicts hide. symspec's numeric tier is pairwise same-quantity only and does NOT attempt aggregate sums or cross-quantity arithmetic, so this reasoning was not attempted. DEMOTES `verified` so it never outruns what was compared; never a verdict.",
+      "info — requirements under one shared guard carry numeric bounds alongside unmatched (singleton) atoms — the shape where aggregate/conservation or cross-quantity relational conflicts hide. symspec's numeric tier is pairwise same-quantity only and does NOT attempt aggregate sums or cross-quantity arithmetic, so this reasoning was not attempted. DEMOTES `verified` so it never outruns what was compared; never a verdict.",
   },
 } satisfies Record<FndCode, { readonly code: FndCode; readonly description: string }>
 

@@ -30,6 +30,9 @@ mise.local.toml
 # Project artifacts
 *.automerge
 
+# Session handoff for the next Claude Code session — working notes, not user content
+/HANDOFF.md
+
 # Claude Code scratch files (created by tools, not user content)
 _tmp_*
 

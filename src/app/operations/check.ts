@@ -725,6 +725,7 @@ const withRepairs = (
       exclusionsById,
       findings,
       docPath: path,
+      timeoutMs: input.timeoutMs,
       ...(input.solverBudgetMs > 0 ? { solverBudgetMs: input.solverBudgetMs } : {}),
       ...(recommendedBudgetMs !== undefined ? { recommendedBudgetMs } : {}),
     })

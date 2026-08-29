@@ -83,7 +83,7 @@ import { glossaryIndex, makeAtomize, normalize, termIndex } from '../formal/atom
 import { getContext } from '../formal/backend.ts'
 import { type SolverBounds, SolverBudget } from '../formal/budget.ts'
 import { type FndCode, structuralKindToFndCode } from '../formal/codes.ts'
-import { findContradictions } from '../formal/contradiction.ts'
+import { contextAtomsOf, findContradictions } from '../formal/contradiction.ts'
 import {
   excludedFromFormalFinding,
   noPairsCheckedFinding,
@@ -99,7 +99,11 @@ import {
 import { attachEvidenceToAll, type Evidence } from '../formal/finding.ts'
 import { buildSimilarityGraph, type GraphRequirement } from '../formal/graph.ts'
 import { checkCompleteness } from '../formal/incomplete.ts'
-import { findNeedsReview, SolverBudgetExceededError } from '../formal/needs-review.ts'
+import {
+  findNeedsReview,
+  type GroupChecker,
+  SolverBudgetExceededError,
+} from '../formal/needs-review.ts'
 import { extractNumericPredicates } from '../formal/numeric.ts'
 import { findNumericContradictions } from '../formal/numeric-contradiction.ts'
 import { findQuantityAliasCandidates } from '../formal/quantity-alias.ts'
@@ -208,6 +212,20 @@ export interface CheckOptions {
    * on ANY unmatched atom.
    */
   failOnUnmatched?: number
+  /**
+   * Injectable per-group solver check for the AC-4-7 needs-review tier — the same
+   * seam `findNeedsReview` exposes, threaded one level up.
+   *
+   * It lives on the PIPELINE's options because the verdict consequences of an
+   * undecided group are computed here, not in the tier: an `unknown` group decides
+   * whether `verified` demotes with `inconclusive-group`, whether the run still
+   * counts as having made a decide-tier comparison, and whether the
+   * `FND_NO_PAIRS_CHECKED` disclaimer fires. A test cannot reach the `unknown`
+   * branch through {@link timeoutMs}: z3 reads `timeout: 0` as "no timeout", and
+   * any document small enough to assert on is decided in microseconds at `1`, so
+   * the outcome would be a race rather than a fixture.
+   */
+  needsReviewCheckGroup?: GroupChecker
 }
 
 /**
@@ -236,7 +254,7 @@ export interface ResidualRisk {
    */
   semanticSuggestions: number
   /**
-   * How many candidate pairs the formal tier evaluated (mirrors
+   * How many candidate pairs the pairwise tier compared (mirrors
    * {@link CheckReport.pairsChecked} for one-glance reading).
    */
   pairsChecked: number
@@ -295,12 +313,13 @@ export interface CoverageDemotion {
     // lint/parse finding, so the solver never saw it — `verified` cannot cover
     // it. Discharged by fixing the blocking finding (rephrase), NOT by waiving.
     | 'excluded-from-formal'
-    // Same-system+same-trigger opposed numeric bounds whose labels differ only
-    // by verb landed on distinct quantity keys and were never compared — a
-    // possible single-quantity conflict went unexamined. Discharged by a
-    // `glossary add` alias (or waiving if genuinely distinct quantities).
+    // Co-active opposed numeric bounds — same system, same guard, or both
+    // unguarded — whose labels differ only by verb landed on distinct
+    // quantity keys and were never compared, so a possible single-quantity
+    // conflict went unexamined. Discharged by a `glossary add` alias (or waiving
+    // if genuinely distinct quantities).
     | 'quantity-alias-candidate'
-    // A shared trigger carries numeric bounds alongside unmatched atoms — the
+    // A shared guard carries numeric bounds alongside unmatched atoms — the
     // shape where aggregate/conservation or cross-quantity relational conflicts
     // hide, which symspec's pairwise numeric tier does not attempt. An honest
     // "not attempted" caveat so `verified` never outruns what was compared.
@@ -312,6 +331,14 @@ export interface CoverageDemotion {
     // Discharged by raising `--solver-budget-ms` (or shrinking the document),
     // never by waiving: a suppressed disclosure is not a completed comparison.
     | 'solver-budget-exhausted'
+    // AC-4-7: a per-group solver check returned `unknown` (undecidable at the
+    // per-group `--timeout-ms`, or the timeout fired — the z3-solver API does not
+    // distinguish them). That group's requirements were NOT decided, so `verified`
+    // cannot cover them however many other pairs were compared. Discharged by
+    // raising `--timeout-ms` and re-running, never by waiving the
+    // `FND_NEEDS_REVIEW` disclosure: suppressing "I could not decide" does not
+    // decide it.
+    | 'inconclusive-group'
   requirementIds: string[]
   /** The exact command (or rewrite guidance) that discharges this demotion. */
   action: string
@@ -369,7 +396,19 @@ export interface CheckReport {
   findings: CheckFinding[]
   /** AC-3-7 exclusions: statements the formal tier never saw, with evidence. */
   excluded: Exclusion[]
-  /** How many candidate pairs the formal tier evaluated (AC-8-3 counter). */
+  /**
+   * How many candidate pairs the pairwise tier COMPARED (AC-8-3 counter): the
+   * candidate pairs over gate-included requirements, minus the ones that tier
+   * skipped before either implication solve (atom-disjoint, or carrying a
+   * degenerate body). A skipped pair and a compared-but-inconclusive pair emit the
+   * same empty output, so this counter is the only place a widening prune is
+   * visible.
+   *
+   * Pairs a whole-run budget deadline cut are still counted, so this is a
+   * comparison count only on a run that finished. Truncation is reported through
+   * the `solver-budget-exhausted` demotion and its unrun-unit count instead,
+   * which demotes `verified` rather than merely shrinking a statistic.
+   */
   pairsChecked: number
   /**
    * How many findings were dropped by a committed waiver (wishlist #3). A
@@ -468,23 +507,42 @@ const PROPOSE_ONLY_FND_CODES: ReadonlySet<string> = new Set<FndCode>([
   'FND_EXCLUDED_FROM_FORMAL',
   'FND_QUANTITY_ALIAS_CANDIDATE',
   'FND_RELATIONAL_UNCHECKED',
+  // The completeness heuristic names its whole same-trigger group, so it always
+  // spans ≥2 ids — but its solver answer is fixed by the encoding, not read off
+  // the document: `encode` emits every `pre` row positive, and a disjunction of
+  // positive atoms is always falsifiable, so `¬(C1 ∨ … ∨ Cn)` is SAT for every
+  // eligible group (see `formal/incomplete.ts`). An answer no document can change
+  // verifies nothing, so it must not certify — membership here, not its `info`
+  // severity, is what keeps it out of the `verified` predicate.
+  'FND_INCOMPLETE',
+  // The per-group `unknown` (AC-4-7). It names its whole context group, so a group
+  // with ≥2 members spans ≥2 ids — and it is the tier's own statement that the
+  // solver DECLINED to decide, which `formal/needs-review.ts` says is "NEVER
+  // interpreted as no conflict". An answer of "I don't know" is the strongest
+  // possible non-verdict, so it must not certify: absence from this set is what
+  // would make an undecided group COUNT AS a decide-tier comparison.
+  'FND_NEEDS_REVIEW',
 ])
 
 /**
  * The coverage-GAP subset of the propose-only codes: findings that span ≥2
  * requirement ids yet mean "a comparison did NOT happen" (a requirement was
- * excluded from the solver, two numeric bounds landed on different keys, or
- * aggregate/relational reasoning was not attempted). They must NOT suppress the
- * `FND_NO_PAIRS_CHECKED` disclaimer through the id-count clause — doing so would
- * let the report both claim nothing was compared (`residualRisk.noPairsChecked`)
- * and hide the disclaimer that says so. Distinct from the semantic-tier propose
- * codes (similar/opposition/missing-trace-link), which DO reflect a real
- * embedding comparison and legitimately suppress the disclaimer.
+ * excluded from the solver, two numeric bounds landed on different keys,
+ * aggregate/relational reasoning was not attempted, the group's SAT answer was
+ * fixed by the encoding, or the solver returned `unknown` for the group). They must
+ * NOT suppress the `FND_NO_PAIRS_CHECKED`
+ * disclaimer through the id-count clause — doing so would let the report both
+ * claim nothing was compared (`residualRisk.noPairsChecked`) and hide the
+ * disclaimer that says so. Distinct from the semantic-tier propose codes
+ * (similar/opposition/missing-trace-link), which DO reflect a real embedding
+ * comparison and legitimately suppress the disclaimer.
  */
 const COVERAGE_GAP_FND_CODES: ReadonlySet<string> = new Set<FndCode>([
   'FND_EXCLUDED_FROM_FORMAL',
   'FND_QUANTITY_ALIAS_CANDIDATE',
   'FND_RELATIONAL_UNCHECKED',
+  'FND_INCOMPLETE',
+  'FND_NEEDS_REVIEW',
 ])
 
 /**
@@ -595,6 +653,54 @@ export function toEncodable(view: ReqView): EncodableRequirement {
     systemResponse: view.systemResponse.slice(match[0].length),
     negated: true,
   }
+}
+
+/**
+ * The CO-LIVENESS context key: BOTH guard slots, never `trigger` alone.
+ *
+ * Two requirements' obligations hold together only when their guards can hold
+ * together, and EARS spreads a guard across two slots — `state-driven` and
+ * `optional-feature` carry theirs in `preCondition`, `event-driven` in `trigger`,
+ * and an `event-driven` requirement may carry both (`renderSentence` emits
+ * "While <pre>, when <trigger>, …"). A key built from `trigger` alone collapses
+ * every `preCondition`-guarded requirement to the same empty string, so two
+ * MUTUALLY EXCLUSIVE states read as one always-on context.
+ *
+ * `''` therefore means genuinely unguarded — no precondition AND no trigger —
+ * which is the only state in which a tier may tell an author that two bounds
+ * "always hold". The consumers of that claim are `findQuantityAliasCandidates`
+ * (whose message names the context it found) and `findRelationalUnchecked`
+ * (which groups on it), and a shared derivation is what keeps the two tiers from
+ * disagreeing about what "the same context" means.
+ *
+ * `normalize` emits only `[a-z0-9_]`, so `|` cannot appear inside either half
+ * and the composite can never alias one slot pair onto another.
+ *
+ * ## The two consumers group at DIFFERENT granularities, and must
+ *
+ * A finer key is not uniformly safer — the safe direction is opposite for a prover and a
+ * discloser, so one shared granularity would be wrong for one of them:
+ *
+ * - `findQuantityAliasCandidates` proposes a committed alias that makes a numeric conflict
+ *   PROVABLE, so a too-coarse key co-asserts guards no requirement declared together and
+ *   fabricates. It groups on this composite. Finer is safer.
+ * - `findRelationalUnchecked` only ever emits `info` plus a demotion, so a too-coarse key
+ *   over-discloses (harmless) while a too-FINE key deletes a disclosure — and deleting a
+ *   demotion moves `verified` toward `true`, the direction the demotion-only doctrine forbids.
+ *   It groups per SLOT rather than per slot pair, which is strictly coarser.
+ *
+ * Measured: grouping that tier on this composite dropped `FND_RELATIONAL_UNCHECKED` for a pair
+ * sharing a trigger and differing in precondition, and a document the fabrication corpus files as
+ * a known open gap then reported `verified: true` beside two error-severity findings.
+ * `relational.ts` owns the grouping and `relational.test.ts` gates it.
+ */
+function guardKeyOf(r: {
+  readonly preCondition?: string | undefined
+  readonly trigger?: string | undefined
+}): string {
+  const pre = r.preCondition !== undefined ? normalize(r.preCondition) : ''
+  const trigger = r.trigger !== undefined ? normalize(r.trigger) : ''
+  return pre === '' && trigger === '' ? '' : `${pre}|${trigger}`
 }
 
 /**
@@ -863,7 +969,8 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       const contradictions = budgetSpent(solverBudget, 'contradiction', encodable.length)
         ? []
         : await findContradictions(encodable, contradictionOpts)
-      const subsumptions = await checkSubsumption(ctx, encodedById, includedPairs, bounds)
+      const subsumption = await checkSubsumption(ctx, encodedById, includedPairs, bounds)
+      const subsumptions = subsumption.findings
       const vacuities = await checkVacuity(ctx, encoded, bounds)
       const incompletes = await checkCompleteness(ctx, encoded, bounds)
       const similar = findSimilarUnunified(
@@ -899,7 +1006,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       // So the pipeline treats a mid-loop budget death the same way it treats
       // every other tier's truncation: record it and demote. The throw itself is
       // preserved (its contract is directly tested in
-      // `formal/__tests__/needs-review.test.ts`) and remains the behavior for a
+      // `formal/needs-review.test.ts`) and remains the behavior for a
       // direct library caller of `findNeedsReview`; only the PIPELINE, which has
       // a report to return and a demotion channel to return it through, absorbs
       // it. `verified` is false either way, so this trades no soundness.
@@ -909,6 +1016,9 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
           review = await findNeedsReview(encodable, {
             atomize,
             timeoutMs,
+            ...(options.needsReviewCheckGroup !== undefined
+              ? { checkGroup: options.needsReviewCheckGroup }
+              : {}),
             ...(solverBudget !== undefined
               ? { solverBudgetMs: Math.max(0, solverBudget.remainingMs()) }
               : {}),
@@ -944,37 +1054,48 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       // an in-flight transfer. That is the defect
       // `.erpaval/solutions/architecture/normalization-for-a-propose-signal-must-not-touch-the-decide-key.md`
       // records, and it must not arrive through a new door.
+      //
+      // Each input also carries the requirement's CONTEXT — its guard atoms, in the
+      // projection `contextAtomsOf` returns — so the tier sweeps per reachable
+      // context instead of asserting every requirement's bounds as simultaneous
+      // facts. Derived here rather than read off `encodedById` because this tier's
+      // population is `reqs`, not the AC-3-7 gate's included subset, and a
+      // gate-excluded requirement with no context would read as unconditional and
+      // co-assert its bounds with everything. `encode` is pure and Z3-free, so the
+      // extra encodings cost no solver time.
       const quantityAliases = glossaryIndex(doc.glossary)
       const numericReqPreds = reqs.map((r) => ({
         id: r.id,
+        contextAtoms: contextAtomsOf(encode(toEncodable(r), atomize)),
         predicates: [
-          ...extractNumericPredicates(r.systemResponse, r.systemName, quantityAliases),
+          ...extractNumericPredicates(r.systemResponse, r.systemName, 'resp', quantityAliases),
           ...(r.trigger !== undefined
-            ? extractNumericPredicates(r.trigger, r.systemName, quantityAliases)
+            ? extractNumericPredicates(r.trigger, r.systemName, 'trig', quantityAliases)
             : []),
           ...(r.preCondition !== undefined
-            ? extractNumericPredicates(r.preCondition, r.systemName, quantityAliases)
+            ? extractNumericPredicates(r.preCondition, r.systemName, 'pre', quantityAliases)
             : []),
         ],
       }))
       const numericContradictions = await findNumericContradictions(ctx, numericReqPreds, bounds)
 
-      // Issue #2 (reproducer a): the numeric tier keys a quantity off the noun
-      // phrase before the comparator, so ONE physical quantity described with
-      // two different verbs ("complete the infusion within ≤30 min" vs "run the
+      // Issue #2 (reproducer a): the numeric tier keys a quantity off the phrase
+      // before the comparator, so ONE physical quantity described with two
+      // different verbs ("complete the infusion within ≤30 min" vs "run the
       // infusion for ≥60 min") splits into two keys and the joint bound is never
-      // compared. Propose-only: flag same-system+same-trigger opposed bounds
-      // whose labels share an object but differ in verb, suggesting a `glossary
-      // add` alias that routes both to one quantity key (DECIDE tier). Demotes
-      // `verified`; never a verdict. Reuses the predicates already extracted
-      // (with the committed alias map applied), so a pair already unified via
-      // the glossary no longer differs and the candidate stops firing.
+      // compared. Propose-only: flag co-active opposed bounds — same system and
+      // guard, or both unguarded — whose labels share an object but differ
+      // in verb, suggesting a `glossary add` alias that routes both to one
+      // quantity key (DECIDE tier). Demotes `verified`; never a verdict. Reuses
+      // the predicates already extracted (with the committed alias map applied),
+      // so a pair already unified via the glossary no longer differs and the
+      // candidate stops firing.
       const predsById = new Map(numericReqPreds.map((p) => [p.id, p.predicates]))
       const quantityAliasCandidates = findQuantityAliasCandidates(
         reqs.map((r) => ({
           id: r.id,
           systemName: r.systemName,
-          triggerKey: r.trigger !== undefined ? normalize(r.trigger) : '',
+          guardKey: guardKeyOf(r),
           predicates: predsById.get(r.id) ?? [],
         })),
       )
@@ -982,7 +1103,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
       // Issue #2 (reproducer b + aggregate/relational families): detect the
       // STRUCTURAL SHAPE where aggregate/conservation or emergent-structural
       // (odd-cycle 2-coloring, pigeonhole, transitivity) conflicts hide — bounds
-      // or inter-entity relational language under one shared trigger that the
+      // or inter-entity relational language under one shared guard that the
       // pairwise same-quantity numeric tier does not attempt. Demotion-only: it
       // declines to certify (DEMOTES `verified`), never asserts a conflict, so
       // it cannot manufacture a false one. Per-requirement `hasUnmatchedAtom` is
@@ -995,7 +1116,12 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
         reqs.map((r) => ({
           id: r.id,
           systemName: r.systemName,
-          triggerKey: r.trigger !== undefined ? normalize(r.trigger) : '',
+          guardKey: guardKeyOf(r),
+          // The RAW slots too: this tier groups per slot rather than per slot PAIR, because a
+          // discloser wants a coarser key than the prover it shares `guardKeyOf` with. See
+          // `relational.ts`'s grouping comment for the direction argument.
+          ...(r.preCondition !== undefined ? { preCondition: r.preCondition } : {}),
+          ...(r.trigger !== undefined ? { trigger: r.trigger } : {}),
           responseText: r.systemResponse,
           hasNumericBound: (predsById.get(r.id) ?? []).length > 0,
           hasUnmatchedAtom: singletonOwnerIds.has(r.id),
@@ -1181,7 +1307,12 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
         })
       }
 
-      return { findings: [], pairsChecked: includedPairs.length }
+      // `pairsChecked` counts pairs the pairwise tier COMPARED, so the tier's own
+      // count of pairs it skipped before any implication solve comes off the
+      // candidate total. Without the subtraction the coverage note reports every
+      // atom-disjoint pair as "shared an atom and were compared", which is the
+      // one statement that would hide a prune widening to eat real pairs.
+      return { findings: [], pairsChecked: includedPairs.length - subsumption.pruned }
     },
   })
 
@@ -1424,7 +1555,7 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
         reason: 'quantity-alias-candidate',
         requirementIds: [...f.requirementIds],
         action:
-          'Two same-trigger opposed numeric bounds landed on different quantity keys. If they ' +
+          'Two co-active opposed numeric bounds landed on different quantity keys. If they ' +
           'constrain one physical quantity, commit the `symspec glossary add` alias from the ' +
           "finding's message so the numeric tier compares them; otherwise waive it. Then re-run `symspec check`.",
       })
@@ -1473,6 +1604,34 @@ export async function runCheck(doc: Doc, options: CheckOptions = {}): Promise<Ch
           'to runCheck; pre-warm an air-gapped host with `symspec download-model`.',
       })
     }
+  }
+
+  // AC-4-7 — the per-group `unknown`. Membership in PROPOSE_ONLY_FND_CODES stops an
+  // undecided group from CERTIFYING, but on its own it does not make one DEMOTE: a
+  // document with one decided pair and one undecided group would otherwise report
+  // `verified: true` while the solver said "I don't know" about part of it. An
+  // undecided group is a coverage fact, so it gets the same treatment as a truncated
+  // tier — its own demotion, naming the group's members and the raise-the-timeout
+  // action.
+  //
+  // Outside the `requirements.length >= 2` guard for the same reason truncation is:
+  // that guard encodes "a spec with <2 requirements is VACUOUSLY verified", which
+  // holds only when the tiers ran to completion. An `unknown` is a statement about
+  // the RUN.
+  //
+  // Keyed off the raw `formal` set rather than the post-waiver `kept` set, matching
+  // `excluded-from-formal`: waiving the FND_NEEDS_REVIEW disclosure hides the report
+  // line but the group is still undecided, and a suppression is not a decision.
+  for (const f of formal.filter((f) => f.code === 'FND_NEEDS_REVIEW')) {
+    demotions.push({
+      reason: 'inconclusive-group',
+      requirementIds: [...f.requirementIds],
+      action:
+        `The solver returned unknown for the context group covering ${f.requirementIds.join(', ')} ` +
+        '(undecidable within the per-group timeout, or the timeout fired), so that group was never ' +
+        'decided — an unknown is never read as "no conflict". Raise --timeout-ms and re-run ' +
+        '`symspec check`. Waiving FND_NEEDS_REVIEW cannot discharge this: the group is still undecided.',
+    })
   }
 
   // AC-1-7 — the soundness-critical demotion. A run whose `--solver-budget-ms`

@@ -157,6 +157,15 @@ export interface AtomRef {
  * atom names are byte-identical by construction rather than by comment.
  */
 export function renderAtom(ref: AtomRef): string {
+  // POSTCONDITIONS, not comments. An empty scope makes `sys____<kind>__<body>`, which merges every
+  // system whose name normalizes away into ONE namespace — two unrelated systems' responses then
+  // land on one atom and, at opposite polarity, prove a contradiction neither document contains.
+  // A scope carrying anything outside `[a-z0-9_]` makes the rendered name ambiguous to parse, and
+  // the format is parsed: `catalog.ts` and the atom-corpus gate both split on `__`.
+  if (ref.scope === '') throw new Error('renderAtom: empty scope — see normalizeScope')
+  if (!/^[a-z0-9_]+$/.test(ref.scope)) {
+    throw new Error(`renderAtom: scope outside [a-z0-9_]: ${JSON.stringify(ref.scope)}`)
+  }
   return `sys__${ref.scope}__${ref.kind}__${ref.body}`
 }
 
@@ -402,23 +411,117 @@ export function glossaryIndex(
 }
 
 /**
+ * Symbol spellings that carry a slot's entire meaning, mapped to the word phrase the symbol IS by
+ * definition. A CLOSED, reviewed table — the same category as {@link COPULA_TOKENS}, not a
+ * heuristic, and not extensible by inference.
+ *
+ * ## The fabrication this prevents
+ *
+ * Without it, step 4 below DELETES the comparator, because `>` is punctuation. Reproduced on the
+ * built CLI before this table existed:
+ *
+ * ```
+ * While the request latency is >= 30 ms, the gateway shall enable the response cache.
+ * While the request latency is <  30 ms, the gateway shall disable the response cache.
+ *   -> both guards: sys__gateway__pre__request_latency_30_ms
+ *   -> both responses: sys__gateway__resp__disable_the_response_cache, opposite polarity
+ *   -> error FND_CONTRADICTION, exit 1, `verified: true`
+ * ```
+ *
+ * Two mutually exclusive guards share one atom, so `planContextGroups` puts both requirements in
+ * ONE group, and their opposed responses prove a conflict the document does not contain. All eight
+ * spellings collapsed the same way, including `≥ ≤ != ==`.
+ *
+ * ## Why the word forms are the ones they are
+ *
+ * They are `COMPARATOR_LEXICON`'s spellings (`numeric.ts`), so `>= 30 ms` and `at least 30 ms`
+ * land on ONE atom. That merge is sound in the strong sense: the two phrasings assert the same
+ * bound, so treating them as one condition asserts nothing the author did not.
+ *
+ * ## Direction
+ *
+ * This only ADDS tokens where punctuation was deleted, so the partition it induces is strictly
+ * finer except for those deliberate symbol-to-word unifications. It cannot merge two slots that
+ * are distinct today — which is the only direction a change to the decide key may move.
+ *
+ * A committed table cannot desync from a body: `glossaryIndex` keys on `normalize(alias)` and
+ * values on `normalize(canonical)`, and `substituteTerms` runs on already-normalized tokens, so
+ * both sides pass through this same function.
+ */
+export const SYMBOL_PHRASES: ReadonlyArray<readonly [RegExp, string]> = [
+  // Multi-character before single-character, and `==` before `=`, or the shorter row wins first
+  // and `>=` degrades to `greater than` + a stray `equal to`.
+  [/>=|≥/g, ' at least '],
+  [/<=|≤/g, ' at most '],
+  [/!=|≠/g, ' not equal to '],
+  [/==/g, ' equal to '],
+  [/>/g, ' greater than '],
+  [/</g, ' less than '],
+  [/=/g, ' equal to '],
+  // SIGN, not arithmetic: only a `+`/`-` that leads a number, so `de-duplicate` and `roll-back`
+  // (letter-preceded) and `1-2` (digit-preceded) are untouched. Without the guard, every hyphenated
+  // word in the corpus would gain a `minus` token.
+  [/(?<![a-z0-9])\+(?=\d)/g, ' plus '],
+  [/(?<![a-z0-9])-(?=\d)/g, ' minus '],
+]
+
+/**
  * The conservative, near-exact normalization pipeline (AC-4-2a). Pure.
  *
  * Order is normative and load-bearing:
  *   1. lowercase
  *   2. strip a single LEADING article (`a`/`an`/`the`) — internal articles
  *      ("issue a session token") are preserved deliberately
- *   3. strip punctuation (any non-alphanumeric, non-space char → space); this
+ *   3. spell out the {@link SYMBOL_PHRASES} symbols — BEFORE step 4, which would otherwise
+ *      delete them, and before it strips non-ASCII so `≥` and `≤` are still present
+ *   4. strip punctuation (any non-alphanumeric, non-space char → space); this
  *      also normalizes input underscores so `auth_service` is idempotent
- *   4. collapse whitespace and underscore-join the surviving word tokens
+ *   5. collapse whitespace and underscore-join the surviving word tokens
  *
  * No stemming, no lemmatization, no stopword removal beyond the leading article.
  */
 export function normalize(text: string): string {
   const lowered = text.toLowerCase()
   const deArticled = lowered.replace(/^(?:a|an|the)\s+/, '')
-  const dePunct = deArticled.replace(/[^a-z0-9\s]+/g, ' ')
+  let spelled = deArticled
+  for (const [pattern, phrase] of SYMBOL_PHRASES) spelled = spelled.replace(pattern, phrase)
+  const dePunct = spelled.replace(/[^a-z0-9\s]+/g, ' ')
   return dePunct.split(/\s+/).filter(Boolean).join('_')
+}
+
+/**
+ * Normalize a SYSTEM NAME into an atom scope.
+ *
+ * Two deliberate differences from {@link normalize}, both of which only ever SPLIT namespaces:
+ *
+ * 1. **No leading-article strip.** `normalize` drops a leading `a`/`an`/`the` because an article
+ *    carries no meaning inside a slot phrase. In a system NAME it is part of the identifier:
+ *    without this, `A Gateway` and `Gateway` are one system, and two products whose names differ
+ *    only by an article share every atom they own.
+ * 2. **Never empty.** `normalize` deletes every character outside `[a-z0-9\s]`, so an entirely
+ *    non-Latin name vanishes: `normalize('ゲートウェイ') === ''` and `normalize('认证服务') === ''`.
+ *    Measured before this function existed, those two systems produced
+ *    `sys____resp__allow_access` at OPPOSITE polarity for `grant access` and `revoke access` —
+ *    one atom, two systems, a provable contradiction across documents that share nothing.
+ *
+ * The fallback is a 32-bit FNV-1a over the name's code points, spelled out here rather than taken
+ * from `node:crypto`, so the engine tier gains no import and stays byte-reproducible on any host.
+ * It is a LAST resort: any name with one surviving Latin character keeps its readable scope, and a
+ * hashed scope is deliberately ugly so it reads as "this name did not survive normalization" in an
+ * atom table rather than as a normal identifier.
+ */
+export function normalizeScope(systemName: string): string {
+  const lowered = systemName.toLowerCase()
+  const dePunct = lowered.replace(/[^a-z0-9\s]+/g, ' ')
+  const scope = dePunct.split(/\s+/).filter(Boolean).join('_')
+  if (scope !== '') return scope
+  let hash = 0x811c9dc5
+  for (const ch of systemName) {
+    hash ^= ch.codePointAt(0) ?? 0
+    // FNV-1a's 32-bit prime, as shifts so the arithmetic stays in int32 and cannot vary by host.
+    hash = (hash + (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24)) | 0
+  }
+  return `h${(hash >>> 0).toString(16).padStart(8, '0')}`
 }
 
 /**
@@ -496,7 +599,7 @@ function canonicalizeAntonymRest(rest: string): string {
  * flag and any antonym flip compose by XOR.
  */
 export function atomize(args: AtomizeArgs): Atom {
-  const scope = normalize(args.systemName)
+  const scope = normalizeScope(args.systemName)
   let body = normalize(args.text)
   let negated = args.negated ?? false
 

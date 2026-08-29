@@ -7,23 +7,35 @@
  * an input that none of the preconditions cover — an uncovered / "else-branch
  * missing" case — and symspec emits `FND_INCOMPLETE` at `info` severity.
  *
- * ## What this heuristic is (and is NOT)
+ * ## What the SAT question decides: nothing about the document
  *
- * This is a propositional lint hint, NOT a formal completeness proof. It only
- * bites when the group's preconditions happen to normalize to complementary
- * atoms under the conservative AC-4-2a normalization — for example, one
- * requirement carries `preCondition: "maintenance mode is enabled"` (atom `P`)
- * and another carries `preCondition: "maintenance mode is not enabled"` (atom
- * `¬P`). In that case `¬(P ∨ ¬P) ≡ ¬true ≡ false` is UNSAT → covered; the
- * opposite pattern (two unrelated atoms `P` and `Q`) gives `¬(P ∨ Q)` SAT
- * (set both false) → a finding.
+ * `encode` atomizes both guard slots with `negated: false`, and the atomizer flips polarity only
+ * on its `resp` branch, so EVERY `pre` row reaching this tier is positive. A disjunction of
+ * positive atoms is falsified by setting them all false, so `¬(C1 ∨ … ∨ Cn)` is SAT for every
+ * eligible group and the tier fires on eligibility alone. The `unsat` "covered" branch needs a
+ * NEGATED `pre` row, and nothing produces one.
  *
- * Honest framing: an UNSAT result means "in the propositional fragment these
- * preconditions are jointly exhaustive, given their atom encodings". A SAT
- * result means "there is a valuation making all preconditions false at once",
- * which is an indicator — not a proof — that a case is missing. The spec
- * (AC-4-5a, research-smt.md §1.5, Appendix B) documents this as a heuristic
- * "no else-branch" lint at info severity, not a correctness guarantee.
+ * "maintenance mode is not enabled" is not `¬P`, either: the copula strip leaves
+ * `maintenance_mode_not_enabled`, its own positive atom, so a partition an author wrote as
+ * complementary is two unrelated atoms to the solver.
+ *
+ * Honest framing: a SAT result here says "there is a valuation making all preconditions false at
+ * once", which under a positive-only encoding is a property of the encoding rather than of the
+ * requirements. The spec (AC-4-5a, research-smt.md §1.5, Appendix B) documents this as a
+ * heuristic "no else-branch" lint at INFO severity and not a correctness guarantee.
+ *
+ * Severity is NOT what keeps unconditional firing from being a certification. The pipeline
+ * classifies findings by id count and set membership, never by severity: `verified` rests on
+ * `f.requirementIds.length >= 2 && !PROPOSE_ONLY_FND_CODES.has(f.code)`, and the
+ * `FND_NO_PAIRS_CHECKED` disclaimer on the same id count minus `COVERAGE_GAP_FND_CODES`
+ * (`pipeline/check.ts`). This finding always names ≥2 ids — a group needs two preconditioned
+ * members to be eligible — so it is listed in BOTH sets. That listing is the containment: without
+ * it, an eligibility-only finding clears `inconclusive`, deletes the `no-decide-tier-comparison`
+ * demotion, and suppresses the disclaimer, certifying a document across which zero requirement
+ * pairs were compared. `pipeline/check.test.ts` pins that at the `runCheck` level.
+ *
+ * `incomplete.test.ts` pins the unconditional firing, the eligibility rules that DO discriminate,
+ * and the one hand-built atom table that reaches the covered branch.
  *
  * ## Grouping discipline
  *
@@ -83,7 +95,9 @@ function triggerKey(e: EncodedRequirement): string | undefined {
  * empty array when the requirement has no precondition slots (or only has
  * trigger/response atoms). Negation is preserved: a negated precondition atom
  * contributes its NEGATED literal, so `¬P` participates as `¬P` in the
- * disjunction (AC-4-2a).
+ * disjunction (AC-4-2a). `encode` emits no negated `pre` row, so a hand-built atom table is the
+ * only input that can distinguish this from returning every literal positive —
+ * `incomplete.test.ts` hands it one.
  */
 function preconditionLiterals(e: EncodedRequirement): Array<{ name: string; negated: boolean }> {
   return e.atoms.filter((a) => a.kind === 'pre').map((a) => ({ name: a.atom, negated: a.negated }))
@@ -96,7 +110,7 @@ function preconditionLiterals(e: EncodedRequirement): Array<{ name: string; nega
  * `C1, C2, … Cn`), asserts `¬(C1 ∨ C2 ∨ … ∨ Cn)` and calls `solver.check()`:
  *
  *   - `unsat` → the preconditions are jointly exhaustive (in the propositional
- *     fragment); no finding.
+ *     fragment); no finding. Requires a negated `pre` literal, which `encode` never emits.
  *   - `sat`   → there exists a model making all preconditions false simultaneously;
  *     a case might be missing; emit `FND_INCOMPLETE`.
  *   - `unknown` → inconclusive; treated conservatively as "can't prove covered",

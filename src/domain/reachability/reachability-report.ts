@@ -75,9 +75,9 @@ export interface ReachabilityProjection {
  *
  * Enumerated so `check`'s repair mapping can be exhaustive over them by test, the same
  * discipline `FOLD_ERROR_CODES` uses for the mutation fold. Prefixed `reachability-` so
- * they cannot collide with v4's eight, which is a real risk: v4's union is
- * a string literal type and a duplicate reason would silently merge two different
- * remedies under one name.
+ * they cannot collide with the pipeline's own `CoverageDemotion['reason']` members,
+ * which is a real risk: that union is a string literal type and a duplicate reason
+ * would silently merge two different remedies under one name.
  */
 export const REACHABILITY_DEMOTION_REASONS = [
   'reachability-not-checked',

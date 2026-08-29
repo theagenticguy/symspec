@@ -81,7 +81,7 @@ export function excludedFromFormalFinding(
 
 /**
  * Build the `FND_RELATIONAL_UNCHECKED` info finding. Emitted when requirements
- * under one shared trigger carry numeric bounds alongside unmatched (singleton)
+ * under one shared guard carry numeric bounds alongside unmatched (singleton)
  * atoms — the structural shape where aggregate/conservation constraints (N
  * reservations summing past a capacity) or cross-quantity relational conflicts
  * (triangle inequality, end = start + duration, rate cascades) hide. symspec's
@@ -96,8 +96,8 @@ export function relationalUncheckedFinding(requirementIds: readonly string[]): C
     severity: 'info',
     requirementIds: [...requirementIds],
     message:
-      'These requirements share a trigger and carry numeric bounds alongside atoms no other ' +
-      "requirement references. symspec's numeric tier compares bounds PAIRWISE on the same " +
+      'These requirements share a guard condition and carry numeric bounds alongside atoms no ' +
+      "other requirement references. symspec's numeric tier compares bounds PAIRWISE on the same " +
       'per-quantity key only — it does NOT sum bounds across requirements (aggregate/conservation) ' +
       'nor relate distinct quantities (e.g. end = start + duration, rate cascades, pigeonhole/' +
       'cardinality). Such reasoning was NOT attempted, so a `verified` result here does not cover ' +

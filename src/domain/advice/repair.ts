@@ -110,6 +110,16 @@ export interface RepairContext {
    * numbers are equal rather than merely both plausible.
    */
   readonly recommendedBudgetMs?: number
+  /**
+   * The per-group `--timeout-ms` the run used, for the raise-the-timeout command on
+   * an `inconclusive-group` demotion.
+   *
+   * There is no measured recommendation to prefer here, unlike the whole-run budget:
+   * a group came back `unknown`, which says nothing about how much longer it would
+   * have needed. So the command doubles, and an agent that still gets `unknown`
+   * doubles again.
+   */
+  readonly timeoutMs?: number
   /** The document path, so every command is copy-pasteable as-is. */
   readonly docPath: string
 }
@@ -134,6 +144,18 @@ const NO_REPAIR: Repair = { ops: [], commands: [] }
  */
 const raisedBudget = (current: number | undefined, recommended: number | undefined): number =>
   recommended ?? (current === undefined ? 10_000 : Math.max(2_000, current * 2))
+
+/**
+ * The per-group timeout to recommend after an `unknown`.
+ *
+ * A doubling with a floor, and no measured alternative: the whole-run budget has one
+ * (`data.budgetHint` extrapolates from completed work), but an `unknown` group
+ * completed nothing, so there is nothing to extrapolate from. The floor is the tier's
+ * own 2000ms default doubled, so a run that passed a tiny `--timeout-ms` is not sent
+ * back with a tiny suggestion.
+ */
+const raisedTimeout = (current: number | undefined): number =>
+  Math.max(4_000, (current ?? 2_000) * 2)
 
 /**
  * Build the runnable repair for one demotion.
@@ -226,6 +248,20 @@ export const repairForDemotion = (demotion: CoverageDemotion, context: RepairCon
         ops: [],
         commands: [
           `symspec check ${context.docPath} --solver-budget-ms ${raisedBudget(context.solverBudgetMs, context.recommendedBudgetMs)}`,
+        ],
+      }
+
+    case 'inconclusive-group':
+      // The solver said `unknown` for this group. NO OPS, and that is the honest
+      // shape: no document edit decides an undecidable group, and a waiver of the
+      // raising FND_NEEDS_REVIEW would hide the disclosure while leaving the group
+      // undecided. The lever is the PER-GROUP timeout, so the repair is the same
+      // invocation with more of it — the `--timeout-ms` analogue of
+      // `solver-budget-exhausted`'s `--solver-budget-ms`.
+      return {
+        ops: [],
+        commands: [
+          `symspec check ${context.docPath} --timeout-ms ${raisedTimeout(context.timeoutMs)}`,
         ],
       }
 

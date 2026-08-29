@@ -1,0 +1,186 @@
+eval-rounds/eval-feedback-exclude-include	resp	sys__gallery_service__resp__exclude_that_tile_the_default_gallery_view	<- exclude that tile from the default gallery view
+eval-rounds/eval-feedback-exclude-include	resp	sys__gallery_service__resp__exclude_that_tile_the_default_gallery_view [NEG]	<- include that tile in the default gallery view
+eval-rounds/eval-feedback-exclude-include	trig	sys__gallery_service__trig__curator_hides_a_tile	<- the curator hides a tile
+eval-rounds/eval-issue2-infusion-proven-via-glossary	resp	sys__infusion_pump__resp__complete_the_infusion_within_at_most_30_minutes	<- complete the infusion within at most 30 minutes
+eval-rounds/eval-issue2-infusion-proven-via-glossary	resp	sys__infusion_pump__resp__run_the_infusion_for_at_least_60_minutes	<- run the infusion for at least 60 minutes
+eval-rounds/eval-issue2-infusion-proven-via-glossary	trig	sys__infusion_pump__trig__infusion_started	<- an infusion is started
+eval-rounds/eval-issue2-infusion-quantity-alias	resp	sys__infusion_pump__resp__complete_the_infusion_within_at_most_30_minutes	<- complete the infusion within at most 30 minutes
+eval-rounds/eval-issue2-infusion-quantity-alias	resp	sys__infusion_pump__resp__run_the_infusion_for_at_least_60_minutes	<- run the infusion for at least 60 minutes
+eval-rounds/eval-issue2-infusion-quantity-alias	trig	sys__infusion_pump__trig__infusion_started	<- an infusion is started
+eval-rounds/eval-issue2-ring-odd-cycle	resp	sys__controller__resp__assign_sensor_five_to_a_channel_that_differs_from_the_channel_of_sensor_one	<- assign sensor five to a channel that differs from the channel of sensor one
+eval-rounds/eval-issue2-ring-odd-cycle	resp	sys__controller__resp__assign_sensor_four_to_a_channel_that_differs_from_the_channel_of_sensor_five	<- assign sensor four to a channel that differs from the channel of sensor five
+eval-rounds/eval-issue2-ring-odd-cycle	resp	sys__controller__resp__assign_sensor_one_to_a_channel_that_differs_from_the_channel_of_sensor_two	<- assign sensor one to a channel that differs from the channel of sensor two
+eval-rounds/eval-issue2-ring-odd-cycle	resp	sys__controller__resp__assign_sensor_three_to_a_channel_that_differs_from_the_channel_of_sensor_four	<- assign sensor three to a channel that differs from the channel of sensor four
+eval-rounds/eval-issue2-ring-odd-cycle	resp	sys__controller__resp__assign_sensor_two_to_a_channel_that_differs_from_the_channel_of_sensor_three	<- assign sensor two to a channel that differs from the channel of sensor three
+eval-rounds/eval-issue2-ring-odd-cycle	resp	sys__controller__resp__route_sensor_traffic_across_two_channels	<- route sensor traffic across two channels
+eval-rounds/eval-issue2-ring-odd-cycle	trig	sys__controller__trig__ring_bus_initializes	<- the ring bus initializes
+eval-rounds/eval-r2-reactor-keeps-online	pre	sys__controller__pre__coolant_pump_engaged	<- the coolant pump is engaged
+eval-rounds/eval-r2-reactor-keeps-online	pre	sys__controller__pre__reactor_online	<- the reactor is online
+eval-rounds/eval-r2-reactor-keeps-online	resp	sys__controller__resp__allow_power_the_distribution_grid	<- grant power to the distribution grid
+eval-rounds/eval-r2-reactor-keeps-online	resp	sys__controller__resp__allow_power_the_distribution_grid [NEG]	<- deny power to the distribution grid
+eval-rounds/eval-r2-reactor-keeps-online	resp	sys__controller__resp__keep_the_reactor_online	<- keeps the reactor online
+eval-rounds/eval-r2-reactor-keeps-online	resp	sys__controller__resp__mark_the_coolant_pump_engaged	<- mark the coolant pump engaged
+eval-rounds/eval-r2-reactor-keeps-online	trig	sys__controller__trig__temperature_sensor_reports_overheating	<- the temperature sensor reports overheating
+eval-rounds/eval-r3-commit-rollback	pre	sys__engine__pre__transaction_reconciled	<- the transaction is reconciled
+eval-rounds/eval-r3-commit-rollback	pre	sys__engine__pre__transaction_validated	<- the transaction is validated
+eval-rounds/eval-r3-commit-rollback	resp	sys__engine__resp__commit_the_settlement	<- commit the settlement
+eval-rounds/eval-r3-commit-rollback	resp	sys__engine__resp__commit_the_settlement [NEG]	<- rolls back the settlement
+eval-rounds/eval-r3-commit-rollback	resp	sys__engine__resp__mark_the_transaction_reconciled	<- mark the transaction reconciled
+eval-rounds/eval-r3-commit-rollback	resp	sys__engine__resp__mark_the_transaction_validated	<- mark the transaction validated
+eval-rounds/eval-r3-commit-rollback	resp	sys__engine__resp__timestamp_the_transaction	<- timestamp the transaction
+eval-rounds/eval-r3-commit-rollback	trig	sys__engine__trig__payment_request_arrives	<- a payment request arrives
+eval-rounds/eval-r3-privchain	pre	sys__controller__pre__session_authenticated	<- the session is authenticated
+eval-rounds/eval-r3-privchain	pre	sys__controller__pre__session_privileged	<- the session is privileged
+eval-rounds/eval-r3-privchain	pre	sys__controller__pre__session_trusted	<- the session is trusted
+eval-rounds/eval-r3-privchain	pre	sys__controller__pre__session_verified	<- the session is verified
+eval-rounds/eval-r3-privchain	resp	sys__controller__resp__allow_access_the_vault	<- grant access to the vault
+eval-rounds/eval-r3-privchain	resp	sys__controller__resp__allow_access_the_vault [NEG]	<- deny access to the vault
+eval-rounds/eval-r3-privchain	resp	sys__controller__resp__audit_the_vault_access	<- audit the vault access
+eval-rounds/eval-r3-privchain	resp	sys__controller__resp__clear_the_session	<- clear the session
+eval-rounds/eval-r3-privchain	resp	sys__controller__resp__mark_the_session_authenticated	<- mark the session authenticated
+eval-rounds/eval-r3-privchain	resp	sys__controller__resp__mark_the_session_privileged	<- mark the session privileged
+eval-rounds/eval-r3-privchain	resp	sys__controller__resp__mark_the_session_trusted	<- mark the session trusted
+eval-rounds/eval-r3-privchain	resp	sys__controller__resp__mark_the_session_verified	<- mark the session verified
+eval-rounds/eval-r3-privchain	resp	sys__controller__resp__record_the_vault_access_in_the_ledger	<- record the vault access in the ledger
+eval-rounds/eval-r3-privchain	resp	sys__controller__resp__refresh_the_session_token	<- refresh the session token
+eval-rounds/eval-r3-privchain	trig	sys__controller__trig__user_signs_in	<- a user signs in
+eval-rounds/eval-r3-privchain	trig	sys__controller__trig__user_signs_out	<- a user signs out
+eval-rounds/eval-r3-publish-retract	pre	sys__controller__pre__article_approved	<- the article is approved
+eval-rounds/eval-r3-publish-retract	pre	sys__controller__pre__article_escalated	<- the article is escalated
+eval-rounds/eval-r3-publish-retract	pre	sys__controller__pre__article_flagged	<- the article is flagged
+eval-rounds/eval-r3-publish-retract	resp	sys__controller__resp__extend_the_article	<- publish the article
+eval-rounds/eval-r3-publish-retract	resp	sys__controller__resp__extend_the_article [NEG]	<- retract the article
+eval-rounds/eval-r3-publish-retract	resp	sys__controller__resp__mark_the_article_approved	<- mark the article approved
+eval-rounds/eval-r3-publish-retract	resp	sys__controller__resp__mark_the_article_escalated	<- mark the article escalated
+eval-rounds/eval-r3-publish-retract	resp	sys__controller__resp__mark_the_article_flagged	<- mark the article flagged
+eval-rounds/eval-r3-publish-retract	trig	sys__controller__trig__audit_request_received	<- an audit request is received
+eval-rounds/eval-r3-quarantine-release	pre	sys__gateway__pre__artifact_scanned	<- the artifact is scanned
+eval-rounds/eval-r3-quarantine-release	resp	sys__gateway__resp__mark_the_artifact_scanned	<- mark the artifact scanned
+eval-rounds/eval-r3-quarantine-release	resp	sys__gateway__resp__quarantine_the_artifact	<- quarantine the artifact
+eval-rounds/eval-r3-quarantine-release	resp	sys__gateway__resp__quarantine_the_artifact [NEG]	<- release the artifact
+eval-rounds/eval-r3-quarantine-release	resp	sys__gateway__resp__record_the_scan_timestamp	<- record the scan timestamp
+eval-rounds/eval-r3-quarantine-release	trig	sys__gateway__trig__artifact_uploaded	<- an artifact is uploaded
+eval-rounds/eval-r3-seal-expose	pre	sys__vault__pre__document_restricted	<- the document is restricted
+eval-rounds/eval-r3-seal-expose	resp	sys__vault__resp__classify_the_document_as_restricted	<- classify the document as restricted
+eval-rounds/eval-r3-seal-expose	resp	sys__vault__resp__conceal_the_record	<- seal the record
+eval-rounds/eval-r3-seal-expose	resp	sys__vault__resp__conceal_the_record [NEG]	<- exposes the record
+eval-rounds/eval-r3-seal-expose	resp	sys__vault__resp__encrypt_the_payload	<- encrypt the payload
+eval-rounds/eval-r3-seal-expose	trig	sys__vault__trig__document_submitted	<- a document is submitted
+eval-rounds/eval-r3-suspend-resume	pre	sys__gateway__pre__gateway_safe_mode_engaged	<- the gateway safe mode is engaged
+eval-rounds/eval-r3-suspend-resume	resp	sys__gateway__resp__mark_the_gateway_safe_mode_engaged	<- mark the gateway safe mode engaged
+eval-rounds/eval-r3-suspend-resume	resp	sys__gateway__resp__resume_the_data_feed	<- resumes the data feed
+eval-rounds/eval-r3-suspend-resume	resp	sys__gateway__resp__resume_the_data_feed [NEG]	<- suspends the data feed
+eval-rounds/eval-r3-suspend-resume	trig	sys__gateway__trig__maintenance_request_received	<- a maintenance request is received
+eval-rounds/eval-verified-demotion-backstop	pre	sys__ballast_controller__pre__dive_sequence_initiated	<- the dive sequence is initiated
+eval-rounds/eval-verified-demotion-backstop	pre	sys__ballast_controller__pre__surfacing_sequence_initiated	<- the surfacing sequence is initiated
+eval-rounds/eval-verified-demotion-backstop	resp	sys__ballast_controller__resp__drain_the_ballast_tank [NEG]	<- floods the ballast tank
+eval-rounds/eval-verified-demotion-backstop	resp	sys__ballast_controller__resp__ignite_the_gas_generator	<- ignite the gas generator
+eval-rounds/eval-verified-demotion-backstop	resp	sys__ballast_controller__resp__vent_the_ballast_tank	<- vents the ballast tank
+eval-rounds/eval-verified-demotion-backstop	trig	sys__ballast_controller__trig__emergency_blow_commanded	<- the emergency blow is commanded
+fabrication/a-committed-GLOSSARY-must-not-invert-a-state-bridge	pre	sys__latch_service__pre__door_open	<- the door is open
+fabrication/a-committed-GLOSSARY-must-not-invert-a-state-bridge	pre	sys__latch_service__pre__latch_engaged	<- the latch is engaged
+fabrication/a-committed-GLOSSARY-must-not-invert-a-state-bridge	resp	sys__latch_service__resp__hold_the_latch_engaged	<- hold the latch engaged
+fabrication/a-committed-GLOSSARY-must-not-invert-a-state-bridge	resp	sys__latch_service__resp__keep_the_latch_engaged	<- keep the latch engaged
+fabrication/a-committed-GLOSSARY-must-not-invert-a-state-bridge	resp	sys__latch_service__resp__log_the_state	<- log the state
+fabrication/a-committed-table-must-not-invert-a-state-bridge	pre	sys__latch_service__pre__door_open	<- the door is open
+fabrication/a-committed-table-must-not-invert-a-state-bridge	pre	sys__latch_service__pre__latch_engaged	<- the latch is engaged
+fabrication/a-committed-table-must-not-invert-a-state-bridge	resp	sys__latch_service__resp__keep_the_latch_engaged	<- keep the latch engaged
+fabrication/a-committed-table-must-not-invert-a-state-bridge	resp	sys__latch_service__resp__keep_the_latch_engaged	<- keeps the latch engaged
+fabrication/a-committed-table-must-not-invert-a-state-bridge	resp	sys__latch_service__resp__log_the_state	<- log the state
+fabrication/compound-guard-shared-threshold	pre	sys__gateway__pre__request_latency_at_least_30_ms_and_the_cache_is_cold	<- the request latency is >= 30 ms and the cache is cold
+fabrication/compound-guard-shared-threshold	pre	sys__gateway__pre__request_latency_at_least_30_ms_and_the_cache_is_warm	<- the request latency is >= 30 ms and the cache is warm
+fabrication/compound-guard-shared-threshold	resp	sys__gateway__resp__disable_the_response_cache	<- disable the response cache
+fabrication/compound-guard-shared-threshold	resp	sys__gateway__resp__disable_the_response_cache [NEG]	<- enable the response cache
+fabrication/disjoint-temperature-guards	pre	sys__vent_controller__pre__temperature_above_5_degrees_celsius	<- the temperature is above 5 degrees celsius
+fabrication/disjoint-temperature-guards	pre	sys__vent_controller__pre__temperature_below_3_degrees_celsius	<- the temperature is below 3 degrees celsius
+fabrication/disjoint-temperature-guards	resp	sys__vent_controller__resp__close_the_vent	<- close the vent
+fabrication/disjoint-temperature-guards	resp	sys__vent_controller__resp__close_the_vent [NEG]	<- open the vent
+fabrication/distinct-agents-same-report	resp	sys__alarm_service__resp__lower_the_siren	<- raise the siren
+fabrication/distinct-agents-same-report	resp	sys__alarm_service__resp__lower_the_siren [NEG]	<- raise the siren
+fabrication/distinct-agents-same-report	trig	sys__alarm_service__trig__operator_reports_a_fault	<- the operator reports a fault
+fabrication/distinct-agents-same-report	trig	sys__alarm_service__trig__sensor_reports_a_fault	<- the sensor reports a fault
+fabrication/distinct-shard-quantities	resp	sys__database__resp__keep_the_analytics_shard_replication_lag_at_least_500_ms	<- keep the analytics shard replication lag at least 500 ms
+fabrication/distinct-shard-quantities	resp	sys__database__resp__keep_the_primary_shard_replication_lag_at_most_10_ms	<- keep the primary shard replication lag at most 10 ms
+fabrication/mutually-exclusive-guards-opposed-response	resp	sys__vault_service__resp__conceal_the_vault	<- seal the vault
+fabrication/mutually-exclusive-guards-opposed-response	resp	sys__vault_service__resp__conceal_the_vault [NEG]	<- seal the vault
+fabrication/mutually-exclusive-guards-opposed-response	trig	sys__vault_service__trig__shift_begins	<- the shift begins
+fabrication/mutually-exclusive-guards-opposed-response	trig	sys__vault_service__trig__shift_ends	<- the shift ends
+fabrication/negating-prefix-different-objects	resp	sys__index_service__resp__de_duplicate_the_ledger	<- de-duplicate the ledger
+fabrication/negating-prefix-different-objects	resp	sys__index_service__resp__duplicate_the_shard	<- duplicate the shard
+fabrication/negating-prefix-different-objects	trig	sys__index_service__trig__batch_lands	<- the batch lands
+fabrication/same-object-opposed-verbs	resp	sys__relay_service__resp__receive_the_packet	<- receive the packet
+fabrication/same-object-opposed-verbs	resp	sys__relay_service__resp__transmit_the_packet	<- transmit the packet
+fabrication/same-object-opposed-verbs	trig	sys__relay_service__trig__link_opens	<- the link opens
+fabrication/same-object-opposed-verbs-opposite-polarity	resp	sys__gateway_service__resp__receive_the_packet [NEG]	<- receive the packet
+fabrication/same-object-opposed-verbs-opposite-polarity	resp	sys__gateway_service__resp__transmit_the_packet	<- transmit the packet
+fabrication/same-object-opposed-verbs-opposite-polarity	trig	sys__gateway_service__trig__audit_begins	<- the audit begins
+fabrication/symbolic-threshold-split	pre	sys__gateway__pre__request_latency_at_least_30_ms	<- the request latency is >= 30 ms
+fabrication/symbolic-threshold-split	pre	sys__gateway__pre__request_latency_less_than_30_ms	<- the request latency is < 30 ms
+fabrication/symbolic-threshold-split	resp	sys__gateway__resp__disable_the_response_cache	<- disable the response cache
+fabrication/symbolic-threshold-split	resp	sys__gateway__resp__disable_the_response_cache [NEG]	<- enable the response cache
+generated-t1/contradiction-t1-0	resp	sys__auth_service__resp__allow_access	<- grant access
+generated-t1/contradiction-t1-0	resp	sys__auth_service__resp__allow_access [NEG]	<- revoke access
+generated-t1/contradiction-t1-0	trig	sys__auth_service__trig__user_submits_valid_credentials	<- the user submits valid credentials
+generated-t1/missing-link-t1-4	resp	sys__auth_service__resp__issue_a_session_token_after_authentication	<- issue a session token after authentication
+generated-t1/missing-link-t1-4	resp	sys__auth_service__resp__issue_a_session_token_on_login	<- issue a session token on login
+generated-t1/temporal-t1-2	resp	sys__controller__resp__close_the_relief_valve	<- open the relief valve
+generated-t1/temporal-t1-2	resp	sys__controller__resp__close_the_relief_valve [NEG]	<- open the relief valve
+generated-t1/temporal-t1-2	trig	sys__controller__trig__sensor_reports_overheat	<- the sensor reports overheat
+generated-t2/contradiction-t2-0	resp	sys__auth_service__resp__issue_a_session_token	<- issue a session token
+generated-t2/contradiction-t2-0	resp	sys__auth_service__resp__issue_a_session_token [NEG]	<- issue a session token
+generated-t2/contradiction-t2-0	trig	sys__auth_service__trig__user_submits_valid_credentials	<- the user submits valid credentials
+generated-t2/missing-link-t2-4	resp	sys__auth_service__resp__issue_a_session_token_after_authentication	<- issue a session token after authentication
+generated-t2/missing-link-t2-4	resp	sys__auth_service__resp__issue_a_session_token_on_login	<- issue a session token on login
+generated-t2/numeric-t2-1	resp	sys__api__resp__respond_over_3000_ms	<- respond over 3000 ms
+generated-t2/numeric-t2-1	resp	sys__api__resp__respond_within_2_seconds	<- respond within 2 seconds
+generated-t2/temporal-t2-2	resp	sys__controller__resp__close_the_relief_valve	<- open the relief valve
+generated-t2/temporal-t2-2	resp	sys__controller__resp__close_the_relief_valve [NEG]	<- open the relief valve
+generated-t2/temporal-t2-2	trig	sys__controller__trig__sensor_reports_overheat	<- the sensor reports overheat
+generated-t3/ambiguity-t3-3	resp	sys__backend__resp__persist_the_record	<- persist the record
+generated-t3/ambiguity-t3-3	resp	sys__gateway__resp__forward_it_to_the_backend	<- forward it to the backend
+generated-t3/ambiguity-t3-3	trig	sys__gateway__trig__request_arrives	<- the request arrives
+generated-t3/contradiction-t3-0	resp	sys__auth_service__resp__issue_a_session_token	<- issue a session token
+generated-t3/contradiction-t3-0	resp	sys__auth_service__resp__issue_a_session_token [NEG]	<- issue a login credential
+generated-t3/contradiction-t3-0	resp	sys__auth_service__resp__log_the_authentication_attempt	<- log the authentication attempt
+generated-t3/contradiction-t3-0	resp	sys__billing_service__resp__record_the_invoice	<- record the invoice
+generated-t3/contradiction-t3-0	trig	sys__auth_service__trig__user_submits_valid_credentials	<- the user submits valid credentials
+generated-t3/missing-link-t3-4	resp	sys__auth_service__resp__issue_a_session_token_after_authentication	<- issue a session token after authentication
+generated-t3/missing-link-t3-4	resp	sys__auth_service__resp__issue_a_session_token_on_login	<- issue a session token on login
+generated-t3/missing-link-t3-4	resp	sys__auth_service__resp__log_the_authentication_attempt	<- log the authentication attempt
+generated-t3/missing-link-t3-4	resp	sys__scheduler__resp__enqueue_the_job	<- enqueue the job
+generated-t3/numeric-t3-1	resp	sys__api__resp__respond_in_no_less_than_2000_ms	<- respond in no less than 2000 ms
+generated-t3/numeric-t3-1	resp	sys__api__resp__respond_within_1_second	<- respond within 1 second
+generated-t3/numeric-t3-1	resp	sys__billing_service__resp__record_the_invoice	<- record the invoice
+generated-t3/numeric-t3-1	resp	sys__notifier__resp__send_a_confirmation_email	<- send a confirmation email
+generated-t3/temporal-t3-2	resp	sys__cache__resp__evict_the_stale_entry	<- evict the stale entry
+generated-t3/temporal-t3-2	resp	sys__controller__resp__close_the_relief_valve	<- open the relief valve
+generated-t3/temporal-t3-2	resp	sys__controller__resp__close_the_relief_valve [NEG]	<- open the relief valve
+generated-t3/temporal-t3-2	resp	sys__notifier__resp__send_a_confirmation_email	<- send a confirmation email
+generated-t3/temporal-t3-2	trig	sys__controller__trig__sensor_reports_overheat	<- the sensor reports overheat
+generated-t4/ambiguity-t4-3	resp	sys__backend__resp__persist_the_record	<- persist the record
+generated-t4/ambiguity-t4-3	resp	sys__cache__resp__evict_the_stale_entry	<- evict the stale entry
+generated-t4/ambiguity-t4-3	resp	sys__gateway__resp__forward_it_to_the_backend	<- forward it to the backend
+generated-t4/ambiguity-t4-3	resp	sys__scheduler__resp__enqueue_the_job	<- enqueue the job
+generated-t4/ambiguity-t4-3	trig	sys__gateway__trig__request_arrives	<- the request arrives
+generated-t4/contradiction-t4-0	resp	sys__auth_service__resp__issue_a_session_token	<- issue a session token
+generated-t4/contradiction-t4-0	resp	sys__auth_service__resp__issue_a_session_token [NEG]	<- issue a login credential
+generated-t4/contradiction-t4-0	resp	sys__auth_service__resp__log_the_authentication_attempt	<- log the authentication attempt
+generated-t4/contradiction-t4-0	resp	sys__billing_service__resp__record_the_invoice	<- record the invoice
+generated-t4/contradiction-t4-0	resp	sys__cache__resp__evict_the_stale_entry	<- evict the stale entry
+generated-t4/contradiction-t4-0	resp	sys__notifier__resp__send_a_confirmation_email	<- send a confirmation email
+generated-t4/contradiction-t4-0	trig	sys__auth_service__trig__user_submits_valid_credentials	<- the user submits valid credentials
+generated-t4/missing-link-t4-4	resp	sys__auth_service__resp__issue_a_session_token_after_authentication	<- issue a session token after authentication
+generated-t4/missing-link-t4-4	resp	sys__auth_service__resp__issue_a_session_token_on_login	<- issue a session token on login
+generated-t4/missing-link-t4-4	resp	sys__auth_service__resp__log_the_authentication_attempt	<- log the authentication attempt
+generated-t4/missing-link-t4-4	resp	sys__scheduler__resp__enqueue_the_job	<- enqueue the job
+generated-t4/numeric-t4-1	resp	sys__api__resp__respond_in_no_less_than_2000_ms	<- respond in no less than 2000 ms
+generated-t4/numeric-t4-1	resp	sys__api__resp__respond_within_1_second	<- respond within 1 second
+generated-t4/numeric-t4-1	resp	sys__billing_service__resp__record_the_invoice	<- record the invoice
+generated-t4/numeric-t4-1	resp	sys__cache__resp__evict_the_stale_entry	<- evict the stale entry
+generated-t4/numeric-t4-1	resp	sys__notifier__resp__send_a_confirmation_email	<- send a confirmation email
+generated-t4/numeric-t4-1	resp	sys__scheduler__resp__enqueue_the_job	<- enqueue the job
+generated-t4/temporal-t4-2	resp	sys__cache__resp__evict_the_stale_entry	<- evict the stale entry
+generated-t4/temporal-t4-2	resp	sys__controller__resp__close_the_relief_valve	<- open the relief valve
+generated-t4/temporal-t4-2	resp	sys__controller__resp__close_the_relief_valve [NEG]	<- open the relief valve
+generated-t4/temporal-t4-2	resp	sys__notifier__resp__send_a_confirmation_email	<- send a confirmation email
+generated-t4/temporal-t4-2	trig	sys__controller__trig__sensor_reports_overheat	<- the sensor reports overheat

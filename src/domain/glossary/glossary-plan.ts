@@ -54,7 +54,7 @@ import {
   buildAntonymIndexWithDoc,
 } from '../engine/formal/antonyms.ts'
 import { GUARD_KINDS, glossaryIndex, normalize, renderAtom } from '../engine/formal/atomize.ts'
-import { contextAtomsOf, planContextGroups } from '../engine/formal/contradiction.ts'
+import { contextAtomsOf, liveIn, planContextGroups } from '../engine/formal/contradiction.ts'
 import type { Embedder } from '../engine/formal/embed.ts'
 import type { EncodedRequirement } from '../engine/formal/encode.ts'
 import { ESTABLISH_VERBS } from '../engine/formal/guard-implication.ts'
@@ -788,12 +788,17 @@ const nodesOf = (doc: Doc): NodeScan => {
 /**
  * Every pair of requirement ids that is CO-ACTIVE in some context group.
  *
- * A requirement is live in a group when every one of its guard atoms is asserted there, which
- * is precisely the condition `findContradictions` creates by `add()`ing the group's context
- * atoms. So this set is the set of pairs the contradiction tier can compare at all — and
- * `planContextGroups` is imported rather than re-derived, for the same reason the node set
- * comes from `encodeIncluded`: a second implementation of the grouping rule could drift from
- * the one that decides.
+ * Liveness is `contradiction.ts`'s own {@link liveIn} — every one of a requirement's guard atoms
+ * asserted in the group — which is precisely the condition `findContradictions` creates by
+ * `add()`ing the group's context atoms. So this set is the set of pairs the contradiction tier can
+ * compare at all, and both the grouping and the liveness test are imported rather than re-derived,
+ * for the same reason the node set comes from `encodeIncluded`: a second implementation of the rule
+ * that decides could drift from it.
+ *
+ * The extra `length > 0` clause is this function's own question, not part of liveness: the PAYOFF
+ * of a guard alignment is which GUARDED pairs newly meet. An unconditional requirement is live in
+ * every group already (`[] ⊆ anything`), so counting it would report the same pair under every
+ * group and no alignment could ever change that number.
  *
  * Pure and Z3-free. `contradiction.ts` imports `getContext`, but `backend.ts` reaches
  * `z3-solver` through `await import(...)`, so nothing here boots the WASM module.
@@ -801,11 +806,10 @@ const nodesOf = (doc: Doc): NodeScan => {
 const coactivePairs = (encoded: readonly EncodedRequirement[]): Set<string> => {
   const out = new Set<string>()
   for (const group of planContextGroups(encoded)) {
-    const asserted = new Set(group.contextAtoms)
     const live = encoded
       .filter((e) => {
         const context = contextAtomsOf(e)
-        return context.length > 0 && context.every((a) => asserted.has(a))
+        return context.length > 0 && liveIn(group, context)
       })
       .map((e) => e.id)
       .sort()

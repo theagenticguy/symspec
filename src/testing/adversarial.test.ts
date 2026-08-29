@@ -60,6 +60,7 @@ import { type CheckPayload, checkOp } from '../app/operations/check.ts'
 import { runOperation } from '../app/runtime/operation.ts'
 import type { RequirementsDoc as EngineDoc } from '../domain/engine/core/schema.ts'
 import { emptyDocument, type RequirementsDocument } from '../domain/requirements/document.ts'
+import { foldOps } from '../domain/requirements/mutate.ts'
 import { DocPath, DocStore, makeDocPath } from '../ports/doc-store.ts'
 import { embedderLayerOf } from '../ports/embedder.ts'
 import { ErrDocNotFound } from '../ports/errors.ts'
@@ -299,5 +300,97 @@ describe('ADVERSARIAL — the greenfield holds the v4 15/15 scoreboard', () => {
       // And the fixed point is exactly `verified` — zero demotions iff verified.
       expect(payload.progress.demotions === 0).toBe(payload.verified)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The propose→decide loop closes on ONE pair of phrases
+// ---------------------------------------------------------------------------
+
+/**
+ * THE LOOP-CLOSURE GATE — the command the propose half prints is the table the decide half
+ * is scored against.
+ *
+ * `eval-issue2-infusion-quantity-alias` abstains and hands the author a `symspec glossary`
+ * command. `eval-issue2-infusion-proven-via-glossary` commits a glossary entry and proves
+ * `FND_NUMERIC_CONTRADICTION`. That is the only loop in this tool where an info-severity
+ * suggestion converts into an error-severity proof, and the two rounds are scored
+ * independently — so anything that moves the phrase the quantity keyer produces moves the
+ * command the first round prints while the second round keeps its own hand-written alias, and
+ * both rounds stay green while the loop is broken for every real author.
+ *
+ * Neither phrase is typed out here. The pair is parsed out of a real propose-round run, folded
+ * through the same mutation path `symspec glossary` uses, and compared against the decide
+ * round's committed table — so a stale literal on either side is what fails.
+ */
+describe('the glossary command the alias candidate prints IS the table the proof round commits', () => {
+  const TS = '2026-01-01T00:00:00.000Z'
+
+  const roundNamed = (id: string) => {
+    const found = evalRoundCases().find((c) => c.id === id)
+    if (found === undefined) throw new Error(`no eval round named ${id}`)
+    return found
+  }
+  const propose = roundNamed('eval-issue2-infusion-quantity-alias')
+  const decide = roundNamed('eval-issue2-infusion-proven-via-glossary')
+
+  /**
+   * The `{canonical, alias}` a `symspec glossary "<a>" "<b>"` invocation commits.
+   *
+   * `glossaryOp` takes canonical FIRST and alias second, so the order in the printed command
+   * is the order the committed table records — which is why this gate can assert the pair
+   * rather than the set.
+   */
+  const parseGlossaryCommand = (command: string): { canonical: string; alias: string } => {
+    const parsed = /^symspec glossary "([^"]+)" "([^"]+)"$/.exec(command)
+    if (parsed === null) throw new Error(`not a runnable glossary invocation: ${command}`)
+    return { canonical: parsed[1] as string, alias: parsed[2] as string }
+  }
+
+  /** The single glossary command the propose round publishes, through its demotion repair. */
+  const suggestedCommand = async (): Promise<string> => {
+    const payload = await report(propose.id, propose.doc)
+    expect(
+      payload.findings.map((f) => f.code),
+      'the propose round no longer raises the candidate, so this gate has nothing to read',
+    ).toContain('FND_QUANTITY_ALIAS_CANDIDATE')
+    const demotion = payload.coverage.demotions.find((d) => d.reason === 'quantity-alias-candidate')
+    const commands = (demotion?.repair?.commands ?? []).filter((c) =>
+      c.startsWith('symspec glossary'),
+    )
+    expect(commands, 'the candidate must publish exactly one glossary discharge').toHaveLength(1)
+    return commands[0] as string
+  }
+
+  it('commits, byte for byte, the table the proof round has committed', async () => {
+    const { canonical, alias } = parseGlossaryCommand(await suggestedCommand())
+    const folded = foldOps(asV3(propose.doc), [{ op: 'glossary', canonical, alias }], TS, {
+      continueOnError: false,
+    })
+    expect(
+      folded.results.every((r) => r.ok),
+      `the suggested command is not a legal mutation: ${JSON.stringify(folded.results)}`,
+    ).toBe(true)
+    expect(folded.document.glossary).toEqual(asV3(decide.doc).glossary)
+  })
+
+  it('and running it on the propose round PROVES the conflict it abstained on', async () => {
+    // The payoff, and the half a string comparison cannot make: the command does not merely
+    // match a fixture, it discharges. Run over the PROPOSE round's own document, so the
+    // requirement ids the proof names are the ones that were abstained on.
+    const { canonical, alias } = parseGlossaryCommand(await suggestedCommand())
+    const folded = foldOps(asV3(propose.doc), [{ op: 'glossary', canonical, alias }], TS, {
+      continueOnError: false,
+    })
+    const payload = await check(folded.document)
+    const proven = payload.findings.filter((f) => f.code === 'FND_NUMERIC_CONTRADICTION')
+    expect(proven.length, 'the discharged alias must turn abstention into a proof').toBeGreaterThan(
+      0,
+    )
+    const localized = proven.some((f) => {
+      const ids = new Set(f.requirementIds)
+      return propose.culpritIds.every((id) => ids.has(id))
+    })
+    expect(localized, `the proof must name ${propose.culpritIds.join(', ')}`).toBe(true)
   })
 })

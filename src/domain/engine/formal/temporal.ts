@@ -100,6 +100,13 @@
  * in different requirements share one pending (dedupe) while two different ones
  * can never collide (soundness). Z3's SAT/UNSAT verdict and unsat core are
  * reproducible; no randomness, no approximation on the reported (UNSAT) path.
+ *
+ * Reproducible means reproducible from the requirement SET, which is stronger than
+ * reproducible from an identical call. The unsat core Z3 returns is a function of
+ * the sequence it was fed, and a spec can admit more than one minimal core, so
+ * {@link findTemporalContradictions} sorts the requirements on id before asserting
+ * them — otherwise the reported culprits would be a function of where in the file
+ * an author put a rule.
  */
 
 import type { Z3Context } from './backend.ts'
@@ -349,14 +356,23 @@ export async function findTemporalContradictions(
     return []
   }
 
-  const ids = reqTemporals.map((r) => r.id)
-  const solver = buildBoundedSolver(ctx, reqTemporals, k, bounds)
+  // The solver-facing sequence is id-sorted, never document-ordered. A spec can
+  // admit more than one minimal unsat core — `G(t → F p)` plus two `G(¬p)` gives
+  // `{a,b}` and `{a,c}`, either of which is a real inconsistency — and which one
+  // `unsatCore()` names is a function of the sequence the solver was fed. The
+  // culprit ids are output bytes (`requirementIds`, and the ids in `message`), so
+  // a document-ordered sequence would make the blamed requirement a function of
+  // file position. Reporting either overlapping core is sound; the unreported one
+  // is a MISS, the honest direction. Which one it is must not be a line number.
+  const ordered = [...reqTemporals].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  const ids = ordered.map((r) => r.id)
+  const solver = buildBoundedSolver(ctx, ordered, k, bounds)
   const guards = ids.map((id) => ctx.Bool.const(id))
   const res = await solver.check(...guards)
   if (res !== 'unsat') return []
 
   const coreIds = dequoteCore(solver.unsatCore(), new Set(ids))
-  const minimal = await minimizeTemporalCore(ctx, reqTemporals, coreIds, k, bounds)
+  const minimal = await minimizeTemporalCore(ctx, ordered, coreIds, k, bounds)
   const culprits = (minimal.length > 0 ? minimal : ids).slice().sort()
 
   return [
@@ -604,6 +620,13 @@ function relevantBodyIndices(
  * exonerated culprit). The whole-run budget is deliberately not consulted:
  * minimization only runs after `unsat` is already proved, and an owed finding is
  * reported at full precision (same rationale as `minimizeNumericCore`).
+ *
+ * The visit order is canonicalized on requirement id, for the same reason
+ * `minimizeNumericCore` does it: deletion keeps whichever minimal subset the input
+ * order reaches, and `core` arrives in `unsatCore()` order. `findTemporalContradictions`
+ * already feeds the solver an id-sorted sequence, so this is belt-and-suspenders —
+ * it makes the result a function of the core's MEMBERSHIP even if a future solver
+ * returned the same core in a different order.
  */
 async function minimizeTemporalCore(
   ctx: Z3Context,
@@ -612,7 +635,7 @@ async function minimizeTemporalCore(
   k: number,
   bounds: SolverBounds = {},
 ): Promise<string[]> {
-  let current = [...new Set(core)]
+  let current = [...new Set(core)].sort()
   for (const candidate of [...current]) {
     const trial = current.filter((id) => id !== candidate)
     if (trial.length < 2) continue
